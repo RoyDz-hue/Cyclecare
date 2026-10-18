@@ -31,20 +31,62 @@ class AuthErrorSanitizationTest {
         assertEquals(SupabaseConfig.DEFAULT_URL, current.url)
         assertEquals(SupabaseConfig.DEFAULT_PUBLISHABLE_KEY, current.apiKey)
 
-        val unrelated = SupabaseConfig.resolveClientSettings("https://another-project.supabase.co", SupabaseConfig.DEFAULT_PUBLISHABLE_KEY)
-        assertEquals(SupabaseConfig.DEFAULT_URL, unrelated.url)
-        assertEquals(SupabaseConfig.DEFAULT_PUBLISHABLE_KEY, unrelated.apiKey)
+        val stagingKey = "sb_publishable_staging_client_key_1234567890"
+        val staging = SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", stagingKey)
+        assertEquals("https://staging-project.supabase.co", staging.url)
+        assertEquals(stagingKey, staging.apiKey)
 
-        val placeholder = SupabaseConfig.resolveClientSettings("https://your-project.supabase.co", "sb_publishable_test_key_12345678901234567890")
-        assertEquals(SupabaseConfig.DEFAULT_URL, placeholder.url)
-        assertEquals(SupabaseConfig.DEFAULT_PUBLISHABLE_KEY, placeholder.apiKey)
+        val invalidHost = SupabaseConfig.resolveClientSettings("https://example.invalid", stagingKey)
+        assertFalse(invalidHost.isConfigured)
+        assertEquals("", invalidHost.url)
+        assertEquals("", invalidHost.apiKey)
+
+        val rotatedKey = "sb_publishable_rotated_public_key_1234567890"
+        val rotatedProduction = SupabaseConfig.resolveClientSettings(SupabaseConfig.DEFAULT_URL, rotatedKey)
+        assertEquals(SupabaseConfig.DEFAULT_URL, rotatedProduction.url)
+        assertEquals(rotatedKey, rotatedProduction.apiKey)
+
+        val mismatch = SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", SupabaseConfig.DEFAULT_PUBLISHABLE_KEY)
+        assertFalse(mismatch.isConfigured)
+        assertEquals("", mismatch.url)
 
         val localWithProductionKey = SupabaseConfig.resolveClientSettings("http://127.0.0.1:54321", SupabaseConfig.DEFAULT_PUBLISHABLE_KEY)
-        assertEquals(SupabaseConfig.DEFAULT_URL, localWithProductionKey.url)
-
-        val localWithLocalKey = SupabaseConfig.resolveClientSettings("http://127.0.0.1:54321", "sb_publishable_local_test_key_1234567890")
+        assertFalse(localWithProductionKey.isConfigured)
+        val localKey = "sb_publishable_local_test_key_1234567890"
+        val localWithLocalKey = SupabaseConfig.resolveClientSettings("http://127.0.0.1:54321", localKey)
         assertEquals("http://127.0.0.1:54321", localWithLocalKey.url)
-        assertEquals("sb_publishable_local_test_key_1234567890", localWithLocalKey.apiKey)
+        assertEquals(localKey, localWithLocalKey.apiKey)
+
+        val noEnvironment = SupabaseConfig.resolveClientSettings(null, null)
+        assertEquals(SupabaseConfig.DEFAULT_URL, noEnvironment.url)
+        assertEquals(SupabaseConfig.DEFAULT_PUBLISHABLE_KEY, noEnvironment.apiKey)
+    }
+
+    @Test
+    fun secretAndServiceRoleKeysAreDisabledWithoutLeakingTheirValue() {
+        val secret = SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", "sb_secret_not-for-mobile_1234567890")
+        assertFalse(secret.isConfigured)
+        assertFalse(secret.apiKey.contains("not-for-mobile"))
+        val serviceRole = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.signature"
+        val rejected = SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", serviceRole)
+        assertFalse(rejected.isConfigured)
+        assertFalse(rejected.apiKey.contains("service_role"))
+    }
+
+    @Test
+    fun legacyPublicKeysMustBeAnonymousAndRespectTheirDeclaredProject() {
+        fun legacy(payload: String): String {
+            val encoded = android.util.Base64.encodeToString(payload.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            return "eyJhbGciOiJIUzI1NiJ9.$encoded.signature"
+        }
+        val key = legacy("""{"role":"anon","ref":"staging-project"}""")
+        assertTrue(SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", key).isConfigured)
+        assertFalse(SupabaseConfig.resolveClientSettings(SupabaseConfig.DEFAULT_URL, key).isConfigured)
+        for (payload in listOf("""{"role":"authenticated"}""", """{"role":"service_role"}""", """{}""")) {
+            assertFalse(SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", legacy(payload)).isConfigured)
+        }
+        assertFalse(SupabaseConfig.resolveClientSettings("https://staging-project.supabase.co", "").isConfigured)
+        assertFalse(SupabaseConfig.resolveClientSettings("", "sb_publishable_local_test_key_1234567890").isConfigured)
     }
 
     @Test

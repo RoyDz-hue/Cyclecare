@@ -4,7 +4,7 @@
 
 The approved deployment receipt at `/workspace/cyclecare-fixes/approved-deployment/deployment-receipt.json` records migration `cyclecare_uuid_compatible_repairs_20261018` (version `20261018112033`), `ai-gateway` v12 and `image-generation` v5 on project `apjqcocxtylsofgxhetb`. Both functions have JWT verification enabled. The receipt is historical evidence, not a live health check or permission to deploy subsequent edits.
 
-The current Admin/Android alignment pass is **local only**. It does not change production provider selection, secrets, payments, hosting or GitHub. New source edits require a separately approved rollout. Local tests do not establish signed-in production acceptance, clinical validity or provider-generation success.
+Admin/Android alignment and inspection fixes are reviewed source changes for the separately approved GitHub feature branches, not a production rollout. They do not change production provider selection, secrets, payments or hosting. Publication requires separate approval. Local tests do not establish signed-in production acceptance, clinical validity or provider-generation success.
 
 ## Database migrations: do not replay the local history
 
@@ -37,6 +37,8 @@ Never put provider, service-role, payment, PAT or signing credentials in Android
 
 Android requires JDK/Android SDK support for API 36. Only the public Supabase URL and anon key belong in `.env.android`; see `.env.android.example`.
 
+Core-library desugaring preserves `java.time` compatibility with the declared minimum Android API 24; do not remove it or suppress NewApi errors to make lint pass. Explicit backend URL/key settings must validate as public-client configuration. Invalid or partial settings disable the connection instead of redirecting requests to production. A fully absent configuration retains the documented production default. Accepted staging URLs remain bound to their supplied key; legacy JWT project references are checked when present, while opaque publishable-key ownership must be verified by the selected project's authentication service.
+
 ```bash
 ./gradlew testDebugUnitTest assembleDebug
 cd admin-pwa
@@ -48,6 +50,8 @@ npm run build
 A debug APK is not a store release. A release requires an approved private upload keystore, signing configuration and actual device acceptance. The encrypted local database uses an Android-Keystore-wrapped random SQLCipher passphrase. Account namespaces, legacy-data quarantine, guest-to-account transitions and upgrade recovery still need device tests. Android backup and device transfer are disabled for private app data.
 
 Admin builds use only `VITE_SUPABASE_URL` and the public `VITE_SUPABASE_ANON_KEY`. A signed-in administrator's token authorizes management requests. Building `dist/` does not publish it. The root `netlify.toml` is the current combined-source build configuration; separate repository hosting must be reviewed against the intended repository root before publication.
+
+The standalone Admin repository uses the `admin-pwa/netlify.toml` source file at its repository root: no nested base directory, build `npm run build`, publish `dist`. The combined tree's outer configuration retains `base = "admin-pwa"`. Keep hosting dashboard overrides consistent with the selected layout. Run Admin session-refresh and provider-save concurrency regressions before publishing; a valid access-token rotation is not a new user session, while logout/relogin must invalidate outstanding operations.
 
 ## Health sync and deletion
 

@@ -50,6 +50,8 @@ import com.example.ui.viewmodel.CycleUiState
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
+internal const val CALENDAR_FERTILITY_NOTICE = "CycleCare shows calendar-based estimates of fertile timing. These estimates cannot confirm ovulation or guarantee conception days, and must not be used as contraception. If you become pregnant, Pregnancy Mode offers general weekly information; confirm dates and care with a qualified clinician."
+
 data class WeekMilestone(
     val week: Int,
     val fruit: String,
@@ -397,7 +399,7 @@ fun PregnancyScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "CycleCare monitors your fertile window and ovulation peak to help you identify your best conception days. If you conceive, switch on Pregnancy Mode above to track weekly baby milestones, sizes, and maternity tips!",
+                            text = CALENDAR_FERTILITY_NOTICE,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

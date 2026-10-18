@@ -111,7 +111,7 @@ data class OnboardingUiState(
             !hasCycleStartEstimate -> "No estimate yet"
             isPeriodActiveToday -> "Menstrual Phase"
             dayOfCycle < (cycleLengthDays - 14) - 4 -> "Follicular Phase"
-            dayOfCycle in ((cycleLengthDays - 14) - 4)..((cycleLengthDays - 14) + 1) -> "Fertile Window"
+            dayOfCycle in ((cycleLengthDays - 14) - 4)..((cycleLengthDays - 14) + 1) -> "Estimated fertile window"
             else -> "Luteal Phase"
         }
 

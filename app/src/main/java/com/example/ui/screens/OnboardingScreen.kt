@@ -944,7 +944,7 @@ private fun Step4InteractiveRhythmQuest(
                         Surface(shape = CircleShape, color = Color(0xFFC89D54), modifier = Modifier.size(8.dp)) {}
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Fertile ~Day ${cycleLengthDays - 14}",
+                            text = "Estimated fertile timing ~Day ${cycleLengthDays - 14}",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
                         )
                     }

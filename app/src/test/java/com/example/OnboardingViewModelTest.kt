@@ -21,6 +21,16 @@ class OnboardingViewModelTest {
     }
 
     @Test
+    fun fertilePhaseIsLabeledAsAnEstimateNotAConfirmedEvent() {
+        val viewModel = OnboardingViewModel()
+        viewModel.setExactDate(java.time.LocalDate.now().minusDays(10))
+        val phase = viewModel.uiState.value.currentPhaseName
+
+        assertTrue(phase.contains("estimate", ignoreCase = true))
+        assertFalse(phase.equals("Fertile Window", ignoreCase = true))
+    }
+
+    @Test
     fun testAgeAndTermsConsentEnablesPrivacyProgression() {
         val viewModel = OnboardingViewModel()
 
