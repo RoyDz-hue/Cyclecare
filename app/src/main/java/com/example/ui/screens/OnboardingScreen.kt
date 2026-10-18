@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -68,10 +70,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.ui.viewmodel.OnboardingViewModel
+import com.example.ui.theme.rememberSystemMotionEnabled
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -80,20 +84,29 @@ fun OnboardingScreen(
     onComplete: (
         goals: List<String>,
         lastPeriod: LocalDate,
+        periodStartChoice: String,
         cycleLength: Int,
+        cycleLengthOption: String,
         periodDuration: Int,
         pin: String,
         enableLock: Boolean,
-        remindFertile: Boolean
+        remindFertile: Boolean,
+        typicalSymptoms: List<String>,
+        typicalEnergy: String,
+        typicalSleep: String,
+        hasCompletedDeepBaseline: Boolean,
+        isCloudSyncAllowed: Boolean
     ) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val systemMotionEnabled = rememberSystemMotionEnabled()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp)
+            .systemBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
             .testTag("onboarding_screen"),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -103,7 +116,7 @@ fun OnboardingScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (uiState.step in 2..4) {
+            if (uiState.step in 2..6) {
                 IconButton(
                     onClick = { viewModel.previousStep() },
                     modifier = Modifier.testTag("onboarding_back_button")
@@ -139,7 +152,10 @@ fun OnboardingScreen(
         Box(modifier = Modifier.weight(1f)) {
             AnimatedContent(
                 targetState = uiState.step,
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                transitionSpec = {
+                    val duration = if (systemMotionEnabled) 180 else 0
+                    fadeIn(animationSpec = tween(duration)) togetherWith fadeOut(animationSpec = tween(duration))
+                },
                 label = "onboarding_step_transition"
             ) { currentStep ->
                 when (currentStep) {
@@ -149,6 +165,8 @@ fun OnboardingScreen(
                         onAgeVerifiedChange = { viewModel.setAgeVerified(it) },
                         isTermsAgreed = uiState.isTermsAgreed,
                         onTermsAgreedChange = { viewModel.setTermsAgreed(it) },
+                        isCloudSyncAllowed = uiState.isCloudSyncAllowed,
+                        onCloudSyncAllowedChange = { viewModel.setCloudSyncAllowed(it) },
                         onOpenTerms = { viewModel.setShowTermsDialog(true) },
                         onOpenPrivacy = { viewModel.setShowPrivacyDialog(true) }
                     )
@@ -156,21 +174,44 @@ fun OnboardingScreen(
                         selectedGoals = uiState.selectedGoals,
                         onToggle = { goal -> viewModel.toggleGoal(goal) }
                     )
-                    4 -> Step4FirstDataLowFriction(
-                        selectedExactDate = uiState.selectedExactDate,
-                        onPickExactDateClick = { viewModel.setDatePickerDialogVisible(true) },
-                        isNotSureSelected = uiState.isNotSureSelected,
-                        onNotSureClick = { viewModel.setNotSureSelected(true) },
+                    4 -> Step4InteractiveRhythmQuest(
+                        selectedGoals = uiState.selectedGoals,
+                        showCycleQuestions = uiState.needsCycleFollowup,
+                        showPeriodQuestion = uiState.needsPeriodFollowup,
+                        showSymptomQuestion = uiState.needsSymptomFollowup,
+                        selectedSymptoms = uiState.selectedTypicalSymptoms,
+                        onToggleSymptom = { viewModel.toggleTypicalSymptom(it) },
+                        selectedExactStartDate = uiState.selectedExactDate,
+                        onPickExactStartDateClick = { viewModel.setDatePickerDialogVisible(true) },
                         selectedApproximateChip = uiState.selectedApproximateChip,
                         onSelectApproximateChip = { viewModel.selectApproximateChip(it) },
-                        lastPeriodAnswered = uiState.lastPeriodAnswered,
+                        selectedExactEndDate = uiState.selectedPeriodEndDate,
+                        onPickExactEndDateClick = { viewModel.setEndDatePickerDialogVisible(true) },
+                        selectedPeriodDurationOption = uiState.selectedPeriodDurationOption,
+                        periodDurationDays = uiState.periodDurationDays,
+                        isPeriodOngoing = uiState.isPeriodOngoing,
+                        onSelectPeriodDuration = { option, days, isOngoing -> viewModel.selectPeriodDurationOption(option, days, isOngoing) },
                         selectedCycleOption = uiState.selectedCycleOption,
-                        onSelectCycleOption = { label, days -> viewModel.selectCycleOption(label, days) }
+                        cycleLengthDays = uiState.cycleLengthDays,
+                        onSelectCycleOption = { label, days -> viewModel.selectCycleOption(label, days) },
+                        hasSelectedCycleLength = uiState.selectedCycleOption.isNotBlank(),
+                        hasCycleStartEstimate = uiState.hasCycleStartEstimate,
+                        effectiveStartDate = uiState.effectiveLastPeriodDate,
+                        effectiveEndDate = uiState.effectivePeriodEndDate
                     )
                     5 -> Step5ImmediateValue(
-                        dayOfCycle = uiState.dayOfCycle,
                         remindFertileWindow = uiState.remindFertileWindow,
+                        showFertilityReminder = uiState.needsFertilityFollowup,
                         onToggleRemindFertile = { viewModel.setRemindFertile(it) }
+                    )
+                    6 -> Step6LearnAboutMe(
+                        selectedSymptoms = uiState.selectedTypicalSymptoms,
+                        onToggleSymptom = { viewModel.toggleTypicalSymptom(it) },
+                        showSymptomSection = !uiState.needsSymptomFollowup,
+                        selectedEnergy = uiState.selectedTypicalEnergy,
+                        onSelectEnergy = { viewModel.selectTypicalEnergy(it) },
+                        selectedSleep = uiState.selectedTypicalSleep,
+                        onSelectSleep = { viewModel.selectTypicalSleep(it) }
                     )
                 }
             }
@@ -194,11 +235,18 @@ fun OnboardingScreen(
                         onComplete(
                             uiState.selectedGoals.toList(),
                             uiState.effectiveLastPeriodDate,
+                            uiState.periodStartChoice,
                             uiState.cycleLengthDays,
-                            5,
+                            uiState.selectedCycleOption,
+                            uiState.periodDurationDays,
                             "",
                             false,
-                            uiState.remindFertileWindow
+                            uiState.remindFertileWindow == true,
+                            uiState.selectedTypicalSymptoms.toList(),
+                            uiState.selectedTypicalEnergy,
+                            uiState.selectedTypicalSleep,
+                            uiState.hasCompletedDeepBaseline,
+                            uiState.isCloudSyncAllowed
                         )
                     }
                 },
@@ -216,7 +264,8 @@ fun OnboardingScreen(
                         2 -> "Continue privately"
                         3 -> "Continue"
                         4 -> "Continue"
-                        5 -> "Start using CycleCare"
+                        5 -> "Calibrate my pattern"
+                        6 -> "Start using CycleCare"
                         else -> "Continue"
                     },
                     fontWeight = FontWeight.Bold,
@@ -224,7 +273,7 @@ fun OnboardingScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(
-                    imageVector = if (uiState.step == 5) Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
+                    imageVector = if (uiState.step == 6) Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
                     contentDescription = null
                 )
             }
@@ -237,22 +286,6 @@ fun OnboardingScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         textAlign = TextAlign.Center
-                    )
-                }
-
-                TextButton(
-                    onClick = {
-                        if (uiState.canProceedFromPrivacy) {
-                            viewModel.nextStep()
-                        }
-                    },
-                    enabled = uiState.canProceedFromPrivacy,
-                    modifier = Modifier.padding(top = 2.dp).testTag("account_sync_button")
-                ) {
-                    Text(
-                        text = "I want an account for sync & recovery",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (uiState.canProceedFromPrivacy) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     )
                 }
             }
@@ -290,6 +323,37 @@ fun OnboardingScreen(
         }
     }
 
+    // Material 3 Date Picker Dialog for Period End Date
+    if (uiState.showEndDatePickerDialog) {
+        val endDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = System.currentTimeMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { viewModel.setEndDatePickerDialogVisible(false) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        endDatePickerState.selectedDateMillis?.let { millis ->
+                            val localDate = Instant.ofEpochMilli(millis)
+                                .atZone(ZoneId.systemDefault())
+                                .toLocalDate()
+                            viewModel.setExactEndDate(localDate)
+                        } ?: viewModel.setEndDatePickerDialogVisible(false)
+                    }
+                ) {
+                    Text("Done", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.setEndDatePickerDialogVisible(false) }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = endDatePickerState)
+        }
+    }
+
     // Terms & Conditions Dialog
     if (uiState.showTermsDialog) {
         PolicySummaryDialog(
@@ -309,10 +373,10 @@ fun OnboardingScreen(
         PolicySummaryDialog(
             title = "Privacy Policy",
             summaryPoints = listOf(
-                "Private by Default" to "Your cycle, symptom, and mood data are stored securely on your device. We do not transmit or sell personal health records to data brokers or third-party advertisers.",
-                "No Creepy Tracking" to "We never track you across other applications or monetize your private biological cycles.",
-                "Optional Cloud Sync" to "If you choose to enable cloud recovery in the future, your data is securely encrypted in transit and at rest under strict access controls.",
-                "Complete Data Control" to "You can clear your local database at any time directly in CycleCare settings."
+                "Private by Default" to "Your cycle, symptom, and mood data are stored safely on your device. We never sell personal health records to third-party advertisers.",
+                "Zero Ad Tracking" to "We never track you across other applications or monetize your private health data.",
+                "Secure Protection" to "Your personal cycle information remains strictly confidential under your control.",
+                "Complete Data Control" to "You can erase all your records at any time directly in CycleCare settings."
             ),
             onDismiss = { viewModel.setShowPrivacyDialog(false) }
         )
@@ -367,6 +431,8 @@ private fun Step2PrivacyFirst(
     onAgeVerifiedChange: (Boolean) -> Unit,
     isTermsAgreed: Boolean,
     onTermsAgreedChange: (Boolean) -> Unit,
+    isCloudSyncAllowed: Boolean,
+    onCloudSyncAllowedChange: (Boolean) -> Unit,
     onOpenTerms: () -> Unit,
     onOpenPrivacy: () -> Unit
 ) {
@@ -379,14 +445,14 @@ private fun Step2PrivacyFirst(
     ) {
         Surface(
             shape = CircleShape,
-            color = Color(0xFFE8F5E9),
+            color = Color(0xFFD5EBDD),
             modifier = Modifier.size(68.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.Security,
                     contentDescription = null,
-                    tint = Color(0xFF2E7D32),
+                    tint = Color(0xFF4D6B58),
                     modifier = Modifier.size(34.dp)
                 )
             }
@@ -510,6 +576,38 @@ private fun Step2PrivacyFirst(
                                     .testTag("link_view_privacy")
                             )
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Cloud Backup & Device Sync Preference (Asked once during onboarding)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .testTag("checkbox_cloud_sync_row")
+                ) {
+                    Checkbox(
+                        checked = isCloudSyncAllowed,
+                        onCheckedChange = { onCloudSyncAllowedChange(it) },
+                        colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.testTag("checkbox_cloud_sync")
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "Allow cloud backup and sync",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.clickable { onCloudSyncAllowedChange(!isCloudSyncAllowed) }
+                        )
+                        Text(
+                            text = "Backs up your records safely so they remain protected if you switch devices.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -672,37 +770,61 @@ private fun Step3SoftGoalSelection(
 }
 
 /**
- * Screen 4 — First Data (Low Friction)
+ * Screen 4 — Interactive Rhythm Quest (Game-like, Tactile, Zero Text Clutter)
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Step4FirstDataLowFriction(
-    selectedExactDate: LocalDate?,
-    onPickExactDateClick: () -> Unit,
-    isNotSureSelected: Boolean,
-    onNotSureClick: () -> Unit,
+private fun Step4InteractiveRhythmQuest(
+    selectedGoals: Set<String>,
+    showCycleQuestions: Boolean,
+    showPeriodQuestion: Boolean,
+    showSymptomQuestion: Boolean,
+    selectedSymptoms: Set<String>,
+    onToggleSymptom: (String) -> Unit,
+    selectedExactStartDate: LocalDate?,
+    onPickExactStartDateClick: () -> Unit,
     selectedApproximateChip: String?,
     onSelectApproximateChip: (String) -> Unit,
-    lastPeriodAnswered: Boolean,
+    selectedExactEndDate: LocalDate?,
+    onPickExactEndDateClick: () -> Unit,
+    selectedPeriodDurationOption: String,
+    periodDurationDays: Int,
+    isPeriodOngoing: Boolean,
+    onSelectPeriodDuration: (String, Int, Boolean) -> Unit,
     selectedCycleOption: String,
-    onSelectCycleOption: (String, Int) -> Unit
+    cycleLengthDays: Int,
+    onSelectCycleOption: (String, Int) -> Unit,
+    hasSelectedCycleLength: Boolean,
+    hasCycleStartEstimate: Boolean,
+    effectiveStartDate: LocalDate,
+    effectiveEndDate: LocalDate
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
+    val shortDateFormatter = DateTimeFormatter.ofPattern("MMM d")
 
-    val approximateChips = listOf(
-        "Today",
-        "A few days ago",
-        "About a week ago",
-        "About two weeks ago",
-        "It varies / I don’t know"
+    val startChips = listOf(
+        "Today" to "Today",
+        "A few days ago" to "3–5 days ago",
+        "About a week ago" to "6–8 days ago",
+        "About two weeks ago" to "13–15 days ago",
+        "I don’t know" to "Not sure yet"
+    )
+
+    val durationChips = listOf(
+        "3 days" to 3,
+        "4 days" to 4,
+        "5 days" to 5,
+        "6 days" to 6,
+        "7+ days" to 7
     )
 
     val cycleOptions = listOf(
-        "21–24 days" to 23,
-        "25–28 days" to 28,
-        "29–32 days" to 30,
-        "33–35 days" to 34,
-        "It changes" to 29,
+        "24 days" to 24,
+        "26 days" to 26,
+        "28 days" to 28,
+        "30 days" to 30,
+        "32 days" to 32,
+        "35+ days" to 35,
+        "It changes" to 28,
         "I don’t know" to 28
     )
 
@@ -710,101 +832,174 @@ private fun Step4FirstDataLowFriction(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .testTag("step_4_interactive_quest")
     ) {
-        // Question 1
+        // Quest Header
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+            modifier = Modifier.padding(bottom = 6.dp)
+        ) {
+            Text(
+                text = "Step 4 of 6 • Your Rhythm Baseline",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+
         Text(
-            text = "When did your last period start?",
+            text = "A few optional details",
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
         )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = if (showCycleQuestions || showPeriodQuestion || showSymptomQuestion) {
+                "These questions follow the goals you selected. Estimates are welcome; exact dates are optional, and you can leave anything blank."
+            } else {
+                "No extra details are needed for the goals you chose. You can continue and update your preferences later."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Primary action: Pick exact date (opens calendar)
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (selectedExactDate != null) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface
-            ),
-            border = androidx.compose.foundation.BorderStroke(
-                width = if (selectedExactDate != null) 1.5.dp else 1.dp,
-                color = if (selectedExactDate != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onPickExactDateClick() }
+        // Preview only after the user has chosen the values it would display.
+        if (hasCycleStartEstimate && hasSelectedCycleLength && selectedPeriodDurationOption.isNotBlank()) {
+            Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = "Calendar",
-                        tint = MaterialTheme.colorScheme.primary
+            Column(modifier = Modifier.padding(14.dp)) {
+                // Interactive dynamic multi-segment track
+                val bleedWeight = periodDurationDays.toFloat().coerceAtLeast(1f)
+                val follicularWeight = ((cycleLengthDays - 14 - 4) - periodDurationDays).coerceAtLeast(3).toFloat()
+                val fertileWeight = 6f
+                val lutealWeight = (cycleLengthDays - (cycleLengthDays - 14 + 2)).coerceAtLeast(5).toFloat()
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(bleedWeight)
+                            .fillMaxSize()
+                            .background(Color(0xFF803A46))
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                    Box(
+                        modifier = Modifier
+                            .weight(follicularWeight)
+                            .fillMaxSize()
+                            .background(Color(0xFF4D6B58))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(fertileWeight)
+                            .fillMaxSize()
+                            .background(Color(0xFFC89D54))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(lutealWeight)
+                            .fillMaxSize()
+                            .background(Color(0xFF6E2E3B))
+                    )
+                }
+
+                Text(
+                    text = if (hasCycleStartEstimate) {
+                        "Calendar-only estimate from your selected dates and settings. It does not confirm ovulation or create past health logs."
+                    } else {
+                        "This diagram is illustrative. No personal cycle estimate or past health logs will be created until you add information."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Phase Legend & Live Equalizer Values
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = CircleShape, color = Color(0xFF803A46), modifier = Modifier.size(8.dp)) {}
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (selectedExactDate != null) "Selected: ${selectedExactDate.format(dateFormatter)}"
-                            else "Pick exact date",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = if (selectedExactDate != null) FontWeight.Bold else FontWeight.Medium,
-                                color = if (selectedExactDate != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
+                            text = "Period ${periodDurationDays}d",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
                         )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = CircleShape, color = Color(0xFFC89D54), modifier = Modifier.size(8.dp)) {}
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (selectedExactDate != null) "Tap to change date" else "Opens calendar",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Fertile ~Day ${cycleLengthDays - 14}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = CircleShape, color = Color(0xFF6E2E3B), modifier = Modifier.size(8.dp)) {}
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Cycle ${cycleLengthDays}d",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
                         )
                     }
                 }
-                if (selectedExactDate != null) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
+            }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Cycle-date questions appear only for cycle, period, or fertility goals.
+        if (showCycleQuestions) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "1. About when did your last period start?",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
                 }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Soft secondary option: I’m not sure of the exact day
-        if (!isNotSureSelected && selectedExactDate == null) {
-            OutlinedButton(
-                onClick = onNotSureClick,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
                 Text(
-                    text = "I’m not sure of the exact day",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-
-        // Only if she chooses "I'm not sure...", show these chips:
-        AnimatedVisibility(visible = isNotSureSelected) {
-            Column(modifier = Modifier.padding(top = 10.dp)) {
-                Text(
-                    text = "Roughly when was it?",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    text = "Choose the range closest to when you remember it. Calendar estimates use a representative day; an exact date is optional. Choose Not sure yet if you prefer no estimate.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    approximateChips.forEach { chip ->
-                        val isSelected = selectedApproximateChip == chip
+                    startChips.forEach { (chipKey, chipLabel) ->
+                        val isSelected = (selectedExactStartDate == null && selectedApproximateChip == chipKey)
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(14.dp))
@@ -812,43 +1007,320 @@ private fun Step4FirstDataLowFriction(
                                     if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surface
                                 )
-                                .then(
-                                    if (isSelected) Modifier.border(
-                                        1.5.dp,
-                                        MaterialTheme.colorScheme.primary,
-                                        RoundedCornerShape(14.dp)
-                                    )
-                                    else Modifier.border(
-                                        1.dp,
-                                        MaterialTheme.colorScheme.outlineVariant,
-                                        RoundedCornerShape(14.dp)
-                                    )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(14.dp)
                                 )
-                                .clickable { onSelectApproximateChip(chip) }
+                                .clickable { onSelectApproximateChip(chipKey) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = chipLabel,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                if (isSelected) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Calendar exact pick pill
+                    val isExactSelected = (selectedExactStartDate != null)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (isExactSelected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isExactSelected) 1.5.dp else 1.dp,
+                                color = if (isExactSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable { onPickExactStartDateClick() }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Calendar",
+                                tint = if (isExactSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = chip,
+                                text = if (selectedExactStartDate != null) selectedExactStartDate.format(shortDateFormatter) else "Calendar",
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    fontWeight = if (isExactSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isExactSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             )
+                            if (isExactSelected) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Quest 2: End Date / Duration
+        if (showPeriodQuestion) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "2. About when did your last period end?",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Ongoing pill
+                    val isOngoingSelected = isPeriodOngoing
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (isOngoingSelected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isOngoingSelected) 1.5.dp else 1.dp,
+                                color = if (isOngoingSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                val currentDay = (ChronoUnit.DAYS.between(effectiveStartDate, LocalDate.now()) + 1).toInt().coerceIn(1, 10)
+                                onSelectPeriodDuration("Still ongoing", currentDay, true)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "🔴 Bleeding today",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isOngoingSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isOngoingSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            )
+                            if (isOngoingSelected) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Duration pills
+                    durationChips.forEach { (label, days) ->
+                        val isSelected = !isPeriodOngoing && selectedExactEndDate == null && selectedPeriodDurationOption == label
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surface
+                                )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { onSelectPeriodDuration(label, days, false) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                if (isSelected) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // End Date Calendar pick pill
+                    val isEndCalendarSelected = (selectedExactEndDate != null && !isPeriodOngoing)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (isEndCalendarSelected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isEndCalendarSelected) 1.5.dp else 1.dp,
+                                color = if (isEndCalendarSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable { onPickExactEndDateClick() }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Calendar",
+                                tint = if (isEndCalendarSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (selectedExactEndDate != null) selectedExactEndDate.format(shortDateFormatter) else "Pick end date",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isEndCalendarSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isEndCalendarSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            )
+                            if (isEndCalendarSelected) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Question 2 (appears after the first answer)
-        AnimatedVisibility(visible = lastPeriodAnswered) {
-            Column {
-                Text(
-                    text = "And about how long does your cycle usually take?",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
+        }
+
+        if (showSymptomQuestion) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Which experiences do you usually notice?",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = "Choose any that fit, or leave this blank. You can change these later.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            "Cramps", "Headaches", "Tiredness", "Mood changes", "Bloating",
+                            "Breast tenderness", "Back pain", "Acne", "Appetite changes",
+                            "Nothing noticeable", "I'm not sure"
+                        ).forEach { experience ->
+                            val isSelected = selectedSymptoms.contains(experience)
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+                                    .border(
+                                        if (isSelected) 1.5.dp else 1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                        RoundedCornerShape(14.dp)
+                                    )
+                                    .clickable { onToggleSymptom(experience) }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                Text(
+                                    text = experience,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quest 3: Cycle Length
+        if (showCycleQuestions) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "3. About how long is your cycle?",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 FlowRow(
@@ -864,33 +1336,41 @@ private fun Step4FirstDataLowFriction(
                                     if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surface
                                 )
-                                .then(
-                                    if (isSelected) Modifier.border(
-                                        1.5.dp,
-                                        MaterialTheme.colorScheme.primary,
-                                        RoundedCornerShape(14.dp)
-                                    )
-                                    else Modifier.border(
-                                        1.dp,
-                                        MaterialTheme.colorScheme.outlineVariant,
-                                        RoundedCornerShape(14.dp)
-                                    )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(14.dp)
                                 )
                                 .clickable { onSelectCycleOption(label, days) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
                                 )
-                            )
+                                if (isSelected) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
     }
 }
 
@@ -899,17 +1379,10 @@ private fun Step4FirstDataLowFriction(
  */
 @Composable
 private fun Step5ImmediateValue(
-    dayOfCycle: Int,
-    remindFertileWindow: Boolean,
+    remindFertileWindow: Boolean?,
+    showFertilityReminder: Boolean,
     onToggleRemindFertile: (Boolean) -> Unit
 ) {
-    val phaseInsight = when {
-        dayOfCycle in 10..16 -> "Your fertile window may be approaching soon."
-        dayOfCycle <= 5 -> "Your body is in its natural menstrual reset phase."
-        dayOfCycle in 6..9 -> "You are in your follicular phase with energy rising."
-        else -> "You are moving through your luteal phase."
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -920,166 +1393,261 @@ private fun Step5ImmediateValue(
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(76.dp)
+            modifier = Modifier.size(72.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.AutoAwesome,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(34.dp)
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Headline
+        Spacer(modifier = Modifier.height(18.dp))
         Text(
-            text = "That’s enough to get started.",
+            text = "Your profile is ready to grow with you.",
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center
         )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "CycleCare will use the preferences you chose and learn from entries you decide to make. You do not need to guess dates or fill in anything you are unsure about.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Dynamic insight card
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+        if (showFertilityReminder) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "You’re roughly around Day $dayOfCycle of your cycle.",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    ),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = phaseInsight,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Reassurance
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                .padding(14.dp)
-        ) {
-            Text(
-                text = "🌿 As you use CycleCare, we’ll gently learn your personal pattern — without asking for everything upfront.",
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Optional soft question
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Would you like a gentle reminder when your fertile window may be near?",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (remindFertileWindow) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surface
-                            )
-                            .then(
-                                if (remindFertileWindow) Modifier.border(
-                                    1.5.dp,
-                                    MaterialTheme.colorScheme.primary,
-                                    RoundedCornerShape(12.dp)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Would you like a reminder when your estimated fertile window may be near?",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        listOf("Yes, please" to true, "No, thanks" to false).forEach { (label, value) ->
+                            val selected = remindFertileWindow == value
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+                                    .border(
+                                        if (selected) 1.5.dp else 1.dp,
+                                        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { onToggleRemindFertile(value) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
                                 )
-                                else Modifier.border(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant,
-                                    RoundedCornerShape(12.dp)
-                                )
-                            )
-                            .clickable { onToggleRemindFertile(true) }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Yes, please",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = if (remindFertileWindow) FontWeight.Bold else FontWeight.Normal,
-                                color = if (remindFertileWindow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (!remindFertileWindow) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surface
-                            )
-                            .then(
-                                if (!remindFertileWindow) Modifier.border(
-                                    1.5.dp,
-                                    MaterialTheme.colorScheme.primary,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                else Modifier.border(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant,
-                                    RoundedCornerShape(12.dp)
-                                )
-                            )
-                            .clickable { onToggleRemindFertile(false) }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Not now",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = if (!remindFertileWindow) FontWeight.Bold else FontWeight.Normal,
-                                color = if (!remindFertileWindow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        )
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Screen 6 — "Learn About Me" Progressive Calibration
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Step6LearnAboutMe(
+    selectedSymptoms: Set<String>,
+    onToggleSymptom: (String) -> Unit,
+    showSymptomSection: Boolean,
+    selectedEnergy: String,
+    onSelectEnergy: (String) -> Unit,
+    selectedSleep: String,
+    onSelectSleep: (String) -> Unit
+) {
+    val symptomOptions = listOf(
+        "Cramps",
+        "Headaches",
+        "Tiredness",
+        "Mood changes",
+        "Bloating",
+        "Breast tenderness",
+        "Back pain",
+        "Acne",
+        "Appetite changes",
+        "Nothing noticeable",
+        "I'm not sure"
+    )
+
+    val energyOptions = listOf(
+        "Steady & High" to "HIGH",
+        "Moderate / Balanced" to "NORMAL",
+        "Dips pre-period" to "LOW",
+        "Fluctuates often" to "VARIABLE"
+    )
+
+    val sleepOptions = listOf(
+        "Generally deep & restful" to "GOOD",
+        "Restless before period" to "FAIR",
+        "Hard to fall asleep" to "POOR",
+        "Variable" to "VARIABLE"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .testTag("step_6_learn_about_me")
+    ) {
+        Text(
+            text = "Your personal baseline",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Choose only what feels useful. Leaving anything blank is fine.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Repeated only when no symptom follow-up was shown in Step 4.
+        if (showSymptomSection) {
+        Text(
+            text = "What do you usually notice around your period?",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            symptomOptions.forEach { symptom ->
+                val isSelected = selectedSymptoms.contains(symptom)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface
+                        )
+                        .then(
+                            if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                            else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                        )
+                        .clickable { onToggleSymptom(symptom) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = symptom,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+            }
+        }
+
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        // Section 2: Energy rhythm
+        Text(
+            text = "How about your typical energy rhythm?",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            energyOptions.forEach { (label, key) ->
+                val isSelected = selectedEnergy == key
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface
+                        )
+                        .then(
+                            if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                            else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                        )
+                        .clickable { onSelectEnergy(key) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        // Section 3: Sleep quality
+        Text(
+            text = "And your usual sleep pattern?",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            sleepOptions.forEach { (label, key) ->
+                val isSelected = selectedSleep == key
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface
+                        )
+                        .then(
+                            if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                            else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                        )
+                        .clickable { onSelectSleep(key) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }

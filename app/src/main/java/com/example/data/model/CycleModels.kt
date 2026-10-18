@@ -13,28 +13,28 @@ enum class CyclePhase(
         title = "Menstruation",
         subtitle = "Rest & Reset",
         description = "Uterine lining sheds as hormone levels reach baseline.",
-        colorHex = 0xFFD32F2F, // Muted crimson
+        colorHex = 0xFF8A3B4A, // Deep rose
         advice = "Prioritize restorative rest, gentle stretching, and iron-rich nourishing foods."
     ),
     FOLLICULAR(
         title = "Follicular Phase",
         subtitle = "Energy Rising",
         description = "Estrogen gradually rises, prompting egg follicles to develop.",
-        colorHex = 0xFF7B1FA2, // Deep plum / orchid
+        colorHex = 0xFF55745F, // Botanical sage
         advice = "Embrace rising stamina with creative projects, social connection, and active workouts."
     ),
     OVULATION(
         title = "Fertile & Ovulation",
         subtitle = "Peak Fertility",
         description = "Luteinizing hormone surge triggers the release of a mature ovum.",
-        colorHex = 0xFFE65100, // Warm terracotta / amber
+        colorHex = 0xFF9B6B2C, // Muted brass
         advice = "Highest fertility window. Confidence and communication naturally peak."
     ),
     LUTEAL(
         title = "Luteal Phase",
         subtitle = "Nurture & Balance",
         description = "Progesterone peaks to support the uterine lining, then declines if unfertilized.",
-        colorHex = 0xFF303F9F, // Deep indigo
+        colorHex = 0xFF695873, // Quiet plum
         advice = "Incorporate magnesium, complex carbohydrates, warm herbal infusions, and mindful pacing."
     )
 }
@@ -214,5 +214,40 @@ data class ParsedLogInterpretation(
     val energyLevelResult: String? get() = energyResult
     val moodLevelResult: String? get() = moodResult
 }
+
+data class ExplainMyBodyResult(
+    val summary: String,
+    val whatMightBeHappening: String,
+    val whatSupportsThat: String,
+    val whatElseCouldExplain: String,
+    val whatYouCanDo: String,
+    val whatToWatch: String,
+    val whenToGetChecked: String,
+    val safetyLevel: SafetyLevel = SafetyLevel.LOW
+)
+
+data class CycleSummaryData(
+    val cycleNumber: Int,
+    val cycleLengthDays: Int,
+    val periodDurationDays: Int,
+    val differenceFromAverageDays: Int,
+    val mostFrequentSymptom: String,
+    val averageEnergyLevel: String,
+    val recurringPatternText: String,
+    val deviationNoticeText: String? = null
+)
+
+data class MonthlyTimelineEntry(
+    val monthTitle: String,
+    val cycleLengthDays: Int,
+    val periodBleedingDays: Int,
+    val dominantEnergy: String,
+    val dominantSymptom: String,
+    val patternNoticed: String? = null
+)
+
+typealias PeriodDateRange = com.example.data.repository.PeriodDateRange
+typealias PeriodDates = com.example.data.repository.PeriodDates
+typealias PeriodDateValidationResult = com.example.data.repository.PeriodDateValidationResult
 
 

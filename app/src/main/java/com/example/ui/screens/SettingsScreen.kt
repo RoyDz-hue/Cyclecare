@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import com.example.R
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,22 +16,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.FileDownload
-import com.example.data.model.UserTonePreference
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
@@ -57,11 +66,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.UserTonePreference
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
 
@@ -74,11 +85,33 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val settings = uiState.settings
+    val cycleLengthChoice = uiState.onboardingProfile?.cycleLengthOption?.trim()?.lowercase().orEmpty()
+    val cycleLengthIsSet = cycleLengthChoice.isNotBlank() && cycleLengthChoice != "unknown" &&
+        !cycleLengthChoice.contains("don't know") && !cycleLengthChoice.contains("don’t know") &&
+        !cycleLengthChoice.contains("changes")
     var showWipeDialog by remember { mutableStateOf(false) }
-    var showExportDialog by remember { mutableStateOf(false) }
-    var tempPin by remember { mutableStateOf(settings.appLockPin) }
+    var showCloudDeleteDialog by remember { mutableStateOf(false) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    var tempPin by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            val exported = runCatching {
+                val stream = context.contentResolver.openOutputStream(uri) ?: error("No file stream")
+                stream.use { it.write(viewModel.buildDataExportJson().toByteArray(Charsets.UTF_8)) }
+            }
+            exportMessage = if (exported.isSuccess) "Your cycle data was exported." else "Could not save the export. Please try again."
+        }
+    }
 
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .navigationBarsPadding()
+    ) {
         TopAppBar(
             title = {
                 Text(
@@ -103,7 +136,184 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Section 1: Cycle Calibration
+            // Section 0: Cloud Sync / Backup Card (Supabase)
+            item {
+                Spacer(modifier = Modifier.height(10.dp))
+                if (uiState.authMode != "EMAIL") {
+                    Card(
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("anonymous_upsell_card")
+                    ) {
+                        Column(modifier = Modifier.padding(18.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Security,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Using CycleCare as Guest",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "Keep your profile when you register",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = "Create or sign in with email to link this guest profile. Google linking is not available for guests yet; using Google would open a different account, and these entries would not be merged.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Button(
+                                onClick = { viewModel.setShowAuthSheet(true) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("register_account_cta_button"),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text(
+                                    text = "Create or sign in with email",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Card(
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("registered_account_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Account Protected",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = uiState.userEmail ?: "Signed in",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            TextButton(
+                                onClick = { viewModel.signOut() },
+                                modifier = Modifier.testTag("sign_out_button")
+                            ) {
+                                Text(
+                                    text = "Sign Out",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Section: Vault & Sacred Collectibles Shortcut
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onNavigateBack()
+                            viewModel.setVaultOpen(true)
+                        }
+                        .testTag("open_vault_from_settings_card")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.cycle_coin),
+                            contentDescription = null,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "CycleCare Vault & Collectibles",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "${uiState.economyProfile.coinBalance} Coins • ${uiState.economyProfile.rank.title} Rank • 3D Talismans",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            // Section 1: Cycle Settings
             item {
                 Spacer(modifier = Modifier.height(10.dp))
                 Card(
@@ -116,14 +326,14 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Cycle Parameters", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            Text(text = "Cycle settings", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         }
                         Spacer(modifier = Modifier.height(16.dp))
 
                         SettingStepperRow(
-                            label = "Average Cycle Length",
-                            subtitle = "Typical range: 21 to 45 days",
-                            valueText = "${settings.averageCycleLength} days",
+                            label = "Average cycle length",
+                            subtitle = "An estimate is fine; cycles can vary.",
+                            valueText = if (cycleLengthIsSet) "${settings.averageCycleLength} days" else "Not set",
                             onDecrease = {
                                 if (settings.averageCycleLength > 21) {
                                     viewModel.updateSettings(settings.copy(averageCycleLength = settings.averageCycleLength - 1))
@@ -139,8 +349,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         SettingStepperRow(
-                            label = "Bleeding Duration",
-                            subtitle = "Active period bleeding days",
+                            label = "Period duration",
+                            subtitle = "Typical number of bleeding days",
                             valueText = "${settings.periodDuration} days",
                             onDecrease = {
                                 if (settings.periodDuration > 2) {
@@ -158,7 +368,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Tone Preference Card
+            // Tone Preference & Crystal Sound Feedback Card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("tone_preference_card"),
@@ -170,11 +380,11 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Communication Tone", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            Text(text = "Communication tone and app sounds", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "How CycleCare speaks to you across daily guidance and insights",
+                            text = "How CycleCare speaks and responds to your touch",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -218,6 +428,33 @@ fun SettingsScreen(
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "App sounds",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = "Optional confirmation sounds. Off by default.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = uiState.isSoundEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.setSoundEnabled(enabled)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -249,22 +486,22 @@ fun SettingsScreen(
                                 Text(text = "Locks app when leaving foreground", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
-                                checked = settings.isAppLockEnabled,
+                                checked = uiState.isPinEnabled,
                                 onCheckedChange = { enabled ->
-                                    viewModel.updateSettings(settings.copy(isAppLockEnabled = enabled))
+                                    viewModel.setPinProtectionEnabled(enabled)
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
                         }
 
-                        if (settings.isAppLockEnabled) {
+                        if (uiState.isPinEnabled) {
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedTextField(
                                 value = tempPin,
                                 onValueChange = {
                                     if (it.length <= 4) {
                                         tempPin = it
-                                        viewModel.updateSettings(settings.copy(appLockPin = it))
+                                        viewModel.saveQuickUnlockPin(it)
                                     }
                                 },
                                 label = { Text("Set 4-Digit Passcode") },
@@ -272,6 +509,26 @@ fun SettingsScreen(
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "Fingerprint / Biometric Unlock", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                Text(text = "Unlock instantly using your biometric sensor", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = uiState.isFingerprintEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.setFingerprintProtectionEnabled(enabled)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
                         }
                     }
@@ -291,7 +548,7 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Discreet Notification Mode", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            Text(text = "Private notification text", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         }
                         Spacer(modifier = Modifier.height(14.dp))
 
@@ -301,9 +558,9 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Discreet Lock Screen Text", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                Text(text = "Hide cycle details on your lock screen", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                                 Text(
-                                    text = if (settings.isDiscreetNotificationMode) "“A private check-in is waiting.”" else "Explicit period dates shown",
+                                    text = if (settings.isDiscreetNotificationMode) "Notifications use neutral wording." else "Notifications may include cycle details.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -330,17 +587,27 @@ fun SettingsScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Text(text = "Data Sovereignty", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(text = "Your data", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Export or erase health data on this device. Synced copies are not deleted from this screen.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Spacer(modifier = Modifier.height(12.dp))
 
                         OutlinedButton(
-                            onClick = { showExportDialog = true },
-                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { exportLauncher.launch("cyclecare-data-${java.time.LocalDate.now()}.json") },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Export Health Summary (JSON)")
+                            Text("Export my data (JSON)")
+                        }
+                        exportMessage?.let { message ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -350,7 +617,7 @@ fun SettingsScreen(
                                 onNavigateBack()
                                 viewModel.openOnboarding()
                             },
-                            modifier = Modifier.fillMaxWidth().testTag("restart_onboarding_button"),
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("restart_onboarding_button"),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -362,20 +629,26 @@ fun SettingsScreen(
 
                         OutlinedButton(
                             onClick = { showWipeDialog = true },
-                            modifier = Modifier.fillMaxWidth().testTag("wipe_data_button"),
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("wipe_data_button"),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                         ) {
                             Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Wipe All Local Data")
+                            Text("Erase data on this device")
                         }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(onClick = { showCloudDeleteDialog = true }, enabled = !uiState.isDeletingCloudHealth,
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("delete_cloud_health_button"), shape = RoundedCornerShape(12.dp)) {
+                            Text(if (uiState.isDeletingCloudHealth) "Deleting cloud health copy…" else "Delete cloud health copy")
+                        }
+                        uiState.cloudHealthDeletionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Section 5: Local Privacy Declaration
+            // Section 5: Privacy Declaration
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -386,11 +659,11 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF2E7D32), modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Zero-Cloud Guarantee", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                            Text(text = "Privacy & Security", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "CycleCare operates local-first. Your cycle and symptom logs are never mined or transferred to third-party ad networks.",
+                            text = "Your cycle and health records are strictly private and never sold or shared with third-party advertisers.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -398,15 +671,24 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(30.dp))
             }
+
+
         }
+    }
+
+    if (showCloudDeleteDialog) {
+        AlertDialog(onDismissRequest = { showCloudDeleteDialog = false }, title = { Text("Delete cloud health copy?") },
+            text = { Text("This deletes the connected account’s cloud health logs, cycle records and health-profile fields, and turns sync and AI sharing off. Local records remain. Account identity, payment, economy and audit records are retained; provider-side AI records are not erased. Success requires the new backend deletion service.") },
+            confirmButton = { TextButton(onClick = { showCloudDeleteDialog = false; viewModel.deleteCloudHealthCopy() }) { Text("Delete cloud health copy") } },
+            dismissButton = { TextButton(onClick = { showCloudDeleteDialog = false }) { Text("Cancel") } })
     }
 
     // Wipe Confirmation Dialog
     if (showWipeDialog) {
         AlertDialog(
             onDismissRequest = { showWipeDialog = false },
-            title = { Text("Erase All Health Data?") },
-            text = { Text("This will permanently delete all cycle records, symptoms, notes, and personal patterns from this device. This action cannot be undone.") },
+            title = { Text("Erase this device’s health records?") },
+            text = { Text("This permanently deletes cycle records, symptoms, notes, and personal patterns from this device. It does not delete a synced cloud copy. This action cannot be undone on this device.") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -416,7 +698,7 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Delete Everything")
+                    Text("Erase local records")
                 }
             },
             dismissButton = {
@@ -425,25 +707,6 @@ fun SettingsScreen(
         )
     }
 
-    // Export Dialog
-    if (showExportDialog) {
-        AlertDialog(
-            onDismissRequest = { showExportDialog = false },
-            title = { Text("Export Health Summary") },
-            text = {
-                Text(
-                    "CycleCare Export:\n" +
-                    "• Cycle Length: ${settings.averageCycleLength} days\n" +
-                    "• Bleeding Duration: ${settings.periodDuration} days\n" +
-                    "• Status: 100% on-device encrypted local storage\n\n" +
-                    "Sensitive health records are securely ready for personal export."
-                )
-            },
-            confirmButton = {
-                Button(onClick = { showExportDialog = false }) { Text("Close") }
-            }
-        )
-    }
 }
 
 @Composable
@@ -467,16 +730,20 @@ private fun SettingStepperRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
                 onClick = onDecrease,
-                modifier = Modifier.size(34.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Remove, contentDescription = "Decrease $label", modifier = Modifier.size(18.dp))
             }
-            Text(text = valueText, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 10.dp))
+            Text(
+                text = valueText,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
             IconButton(
                 onClick = onIncrease,
-                modifier = Modifier.size(34.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Add, contentDescription = "Increase $label", tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
     }

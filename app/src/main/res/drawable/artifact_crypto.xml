@@ -1,0 +1,58 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Outer Glow Ring -->
+    <path
+        android:pathData="M100,18 A82,82 0 1,1 99.9,18 Z"
+        android:strokeWidth="6"
+        android:strokeColor="#8000E5FF" />
+
+    <!-- Futuristic Cyber Sphere Surface -->
+    <path
+        android:pathData="M100,24 A76,76 0 1,1 99.9,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="100"
+                android:centerY="100"
+                android:gradientRadius="76">
+                <item android:offset="0.0" android:color="#FF2A0845" />
+                <item android:offset="0.5" android:color="#FF16002C" />
+                <item android:offset="1.0" android:color="#FF0B0017" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Checkered Cyber Equator Bands -->
+    <path
+        android:pathData="M30,80 L170,80 M30,120 L170,120"
+        android:strokeWidth="4"
+        android:strokeColor="#FF00E5FF" />
+
+    <!-- Central Diamond Core (Prismatic Violet Glow) -->
+    <path
+        android:pathData="M100,60 L135,100 L100,140 L65,100 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="65"
+                android:startY="60"
+                android:endX="135"
+                android:endY="140">
+                <item android:offset="0.0" android:color="#FFD500F9" />
+                <item android:offset="0.5" android:color="#FF651FFF" />
+                <item android:offset="1.0" android:color="#FF00E5FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Core Frame Outline -->
+    <path
+        android:pathData="M100,60 L135,100 L100,140 L65,100 Z"
+        android:strokeWidth="3"
+        android:strokeColor="#FFFFFFFF" />
+</vector>

@@ -40,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -158,6 +160,12 @@ fun CalendarScreen(
                                 val hasLog = logsMap.containsKey(cellDate.toString())
                                 val isSelected = cellDate == selectedDate
                                 val isToday = cellDate == today
+                                val estimateColor = when {
+                                    prediction?.isPeriod == true -> Color(0xFFFFD9DE)
+                                    prediction?.isOvulation == true -> Color(0xFFFFE8B5)
+                                    prediction?.isFertile == true -> Color(0xFFEADCF8)
+                                    else -> null
+                                }
 
                                 Box(
                                     modifier = Modifier
@@ -168,18 +176,32 @@ fun CalendarScreen(
                                         .background(
                                             when {
                                                 isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                                estimateColor != null -> estimateColor
                                                 isToday -> MaterialTheme.colorScheme.surfaceVariant
                                                 else -> Color.Transparent
                                             }
                                         )
                                         .then(
-                                            if (isSelected) Modifier.border(
-                                                1.5.dp,
-                                                MaterialTheme.colorScheme.primary,
-                                                RoundedCornerShape(12.dp)
-                                            ) else Modifier
+                                            when {
+                                                isSelected -> Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                                                isToday -> Modifier.border(1.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(12.dp))
+                                                else -> Modifier
+                                            }
                                         )
                                         .clickable { viewModel.selectDate(cellDate) }
+                                        .semantics {
+                                            contentDescription = buildString {
+                                                append(cellDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d")))
+                                                when {
+                                                    prediction?.isPeriod == true -> append(", estimated period day")
+                                                    prediction?.isOvulation == true -> append(", estimated ovulation day")
+                                                    prediction?.isFertile == true -> append(", estimated fertile-window day")
+                                                }
+                                                if (hasLog) append(", health information logged")
+                                                if (isToday) append(", today")
+                                                if (isSelected) append(", selected")
+                                            }
+                                        }
                                         .testTag("calendar_day_$dayNumber"),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -191,7 +213,11 @@ fun CalendarScreen(
                                             text = "$dayNumber",
                                             style = MaterialTheme.typography.bodyMedium.copy(
                                                 fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                color = when {
+                                                    isSelected -> MaterialTheme.colorScheme.primary
+                                                    estimateColor != null -> Color(0xFF202124)
+                                                    else -> MaterialTheme.colorScheme.onSurface
+                                                }
                                             )
                                         )
 
@@ -201,24 +227,24 @@ fun CalendarScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier.padding(top = 2.dp)
                                         ) {
-                                            if (prediction.isPeriod) {
+                                            if (prediction?.isPeriod == true) {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(6.dp)
                                                         .clip(CircleShape)
                                                         .background(Color(0xFFE53935))
                                                 )
-                                            } else if (prediction.isOvulation) {
+                                            } else if (prediction?.isOvulation == true) {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(6.dp)
                                                         .clip(CircleShape)
                                                         .background(Color(0xFFFFB300))
                                                 )
-                                            } else if (prediction.isFertile) {
+                                            } else if (prediction?.isFertile == true) {
                                                 Box(
                                                     modifier = Modifier
-                                                        .size(5.dp)
+                                                        .size(6.dp)
                                                         .clip(CircleShape)
                                                         .background(Color(0xFF8E24AA))
                                                 )
@@ -297,7 +323,7 @@ fun CalendarScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = "Day ${selectedDatePrediction.dayOfCycle} • ${selectedDatePrediction.phase.title}",
+                                    text = "Calendar estimate · day ${selectedDatePrediction.dayOfCycle} • ${selectedDatePrediction.phase.title}",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = phaseColor
@@ -306,7 +332,7 @@ fun CalendarScreen(
                             }
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Pregnancy chance: ${selectedDatePrediction.pregnancyChance}",
+                                text = "Date-based estimate only · not a pregnancy probability or ovulation confirmation",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -360,14 +386,14 @@ private fun LegendItem(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
-                .size(8.dp)
+                .size(12.dp)
                 .clip(CircleShape)
                 .background(color)
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }

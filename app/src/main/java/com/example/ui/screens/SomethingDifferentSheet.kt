@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,18 +12,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -47,12 +49,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.model.ParsedLogInterpretation
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
 
@@ -63,6 +63,7 @@ fun SomethingDifferentSheet(
     uiState: CycleUiState
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scrollState = rememberScrollState()
     var textInput by remember { mutableStateOf("") }
     val interpretation = uiState.currentInterpretation
 
@@ -89,6 +90,9 @@ fun SomethingDifferentSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 36.dp)
         ) {
@@ -98,21 +102,30 @@ fun SomethingDifferentSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
                             text = "Something feels different?",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = "Tell me in your own words. We'll handle the rest.",
@@ -122,7 +135,10 @@ fun SomethingDifferentSheet(
                     }
                 }
 
-                IconButton(onClick = { viewModel.closeSomethingDifferentSheet() }) {
+                IconButton(
+                    onClick = { viewModel.closeSomethingDifferentSheet() },
+                    modifier = Modifier.size(44.dp)
+                ) {
                     Icon(Icons.Default.Close, contentDescription = "Close")
                 }
             }
@@ -147,7 +163,11 @@ fun SomethingDifferentSheet(
                 trailingIcon = {
                     if (textInput.isNotBlank()) {
                         IconButton(onClick = { viewModel.parseNaturalLanguageInput(textInput) }) {
-                            Icon(Icons.Default.Send, contentDescription = "Parse", tint = MaterialTheme.colorScheme.primary)
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Parse",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }
@@ -155,9 +175,93 @@ fun SomethingDifferentSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            // Conversational Unpacking: "Ask Without Knowing What to Ask"
+            var activeUnpackDomain by remember { mutableStateOf<String?>(null) }
+            Text(
+                text = "Unpack what feels different:",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "Physical" to listOf("Cramps", "Headache", "Back pain", "Breast tenderness"),
+                    "Mood" to listOf("Anxious", "Irritable", "Tearful", "Low motivation"),
+                    "Energy & Sleep" to listOf("Heavy fatigue", "Brain fog", "Restless sleep"),
+                    "Pelvic" to listOf("Discharge change", "Spotting", "Deep pressure"),
+                    "Stomach" to listOf("Bloating", "Nausea", "Appetite surge")
+                ).forEach { (domain, _) ->
+                    val isDomainActive = activeUnpackDomain == domain
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isDomainActive) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            )
+                            .border(
+                                1.dp,
+                                if (isDomainActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable {
+                                activeUnpackDomain = if (isDomainActive) null else domain
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = domain,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = if (isDomainActive) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isDomainActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Sub-items for active domain
+            if (activeUnpackDomain != null) {
+                val subOptions = when (activeUnpackDomain) {
+                    "Physical" -> listOf("Cramps", "Headache", "Back pain", "Breast tenderness")
+                    "Mood" -> listOf("Anxious", "Irritable", "Tearful", "Low motivation")
+                    "Energy & Sleep" -> listOf("Heavy fatigue", "Brain fog", "Restless sleep")
+                    "Pelvic" -> listOf("Discharge change", "Spotting", "Deep pressure")
+                    "Stomach" -> listOf("Bloating", "Nausea", "Appetite surge")
+                    else -> emptyList()
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    subOptions.forEach { subItem ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                                .clickable {
+                                    textInput = if (textInput.isBlank()) subItem else "$textInput, $subItem"
+                                    viewModel.parseNaturalLanguageInput(textInput)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(text = "• $subItem", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
             // Shortcut Chips
             Text(
-                text = "Or tap a quick shortcut:",
+                text = "Or quick common sensations:",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -188,17 +292,29 @@ fun SomethingDifferentSheet(
             if (interpretation != null && interpretation.items.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(20.dp))
                 Card(
-                    modifier = Modifier.fillMaxWidth().testTag("interpretation_preview_card"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("interpretation_preview_card"),
                     shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Psychology, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            Icon(
+                                Icons.Default.Psychology,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "I understood:",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             )
                         }
                         Spacer(modifier = Modifier.height(10.dp))
@@ -212,7 +328,8 @@ fun SomethingDifferentSheet(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "• ${item.label} (${item.detail})",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -223,7 +340,7 @@ fun SomethingDifferentSheet(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color.White.copy(alpha = 0.7f))
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
                                     .padding(10.dp)
                             ) {
                                 Text(
@@ -242,7 +359,10 @@ fun SomethingDifferentSheet(
                         ) {
                             Button(
                                 onClick = { viewModel.confirmParsedLog(interpretation) },
-                                modifier = Modifier.weight(1f).height(46.dp).testTag("confirm_parsed_log_button"),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("confirm_parsed_log_button"),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
@@ -253,7 +373,7 @@ fun SomethingDifferentSheet(
 
                             OutlinedButton(
                                 onClick = { textInput = "" },
-                                modifier = Modifier.height(46.dp),
+                                modifier = Modifier.height(48.dp),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
                                 Text("Clear")

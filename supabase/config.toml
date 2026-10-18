@@ -1,0 +1,28 @@
+project_id = "cyclecare"
+
+[functions.ai-gateway]
+verify_jwt = true
+
+[functions.admin-provider-status]
+verify_jwt = true
+
+[functions.image-generation]
+verify_jwt = true
+
+[functions.payhero-stk]
+verify_jwt = true
+
+[functions.payhero-callback]
+verify_jwt = false
+
+[functions.paypal-create-order]
+verify_jwt = true
+
+[functions.paypal-capture]
+verify_jwt = true
+
+[functions.okx-create]
+verify_jwt = true
+
+[functions.okx-webhook]
+verify_jwt = true

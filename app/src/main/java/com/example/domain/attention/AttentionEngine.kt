@@ -26,49 +26,43 @@ object AttentionEngine {
                 category = "Safety",
                 headline = safety.title,
                 message = safety.message,
-                whyThisAppeared = "You logged symptoms that meet clinical criteria for professional review.",
+                whyThisAppeared = "This notice is based on the symptom entry you saved today.",
                 careSuggestion = safety.actionAdvice,
                 isUrgent = true
             )
         }
 
-        // Priority 2: Approaching Period & Sleep Deviation
-        val daysUntilPeriod = (settings.averageCycleLength - (prediction?.dayOfCycle ?: 1)).coerceAtLeast(0)
-        val recentSleepLogs = recentLogs.take(3).filter { it.sleepHours > 0 }
-        val avgRecentSleep = if (recentSleepLogs.isNotEmpty()) recentSleepLogs.map { it.sleepHours }.average() else 7.5
+        // Do not infer cycle timing from a missing or invalid date anchor.
+        if (prediction == null) return null
 
-        if (daysUntilPeriod in 1..3 && avgRecentSleep < 6.8) {
+        // Priority 2: Approaching Period & Sleep Deviation
+        val daysUntilPeriod = (settings.averageCycleLength - prediction.dayOfCycle).coerceAtLeast(0)
+        val recentSleepLogs = recentLogs
+            .sortedByDescending { it.dateString }
+            .take(3)
+            .filter { it.sleepHours > 0 && (kotlin.math.abs(it.sleepHours - 7.5f) > 0.01f || it.sleepQuality.uppercase() !in setOf("", "GOOD")) }
+        val avgRecentSleep = recentSleepLogs.takeIf { it.isNotEmpty() }?.map { it.sleepHours }?.average()
+
+        if (daysUntilPeriod in 1..3 && avgRecentSleep != null && avgRecentSleep < 6.8) {
             return TodayAttentionItem(
                 id = "period_sleep_taper",
                 category = "Today's Picture",
-                headline = "Your period is about $daysUntilPeriod days away",
-                message = "You've also been sleeping a bit less than usual over the last few nights. Lower energy is common as progesterone drops.",
-                whyThisAppeared = "Upcoming cycle phase transition combined with recorded sleep under 7 hours.",
+                headline = "Calendar estimate: period in about $daysUntilPeriod days",
+                message = "You also saved sleep entries averaging ${"%.1f".format(avgRecentSleep)} hours across the latest logged dates. The relationship between these entries is not established.",
+                whyThisAppeared = "Calendar date estimate plus non-default sleep values saved in your logs.",
                 careSuggestion = "Prioritize a calming evening routine and gentle wind-down tonight."
             )
         }
 
-        // Priority 3: Something Changed (Cycle Length Deviation)
-        if (settings.averageCycleLength > 32) {
-            return TodayAttentionItem(
-                id = "cycle_variation_notice",
-                category = "Something to Notice",
-                headline = "Your cycle has been longer recently",
-                message = "Your current cycle length of ${settings.averageCycleLength} days is slightly higher than a typical median. Stress, sleep, or travel can naturally shift ovulation.",
-                whyThisAppeared = "Your recorded cycle length is above 32 days.",
-                careSuggestion = "Keep logging your fluid or temperatures to confirm ovulation timing."
-            )
-        }
-
         // Priority 4: Approaching Fertile Window
-        if (prediction?.isFertile == true && !prediction.isPeriod) {
+        if (prediction.isFertile && !prediction.isPeriod) {
             return TodayAttentionItem(
                 id = "fertile_window_notice",
                 category = "Cycle Milestone",
                 headline = "You may be entering your fertile window",
-                message = "Estrogen is peaking, often accompanied by clear or stretchy cervical fluid and higher baseline stamina.",
-                whyThisAppeared = "Estimated Day ${prediction.dayOfCycle} corresponds to your typical ovulatory window.",
-                careSuggestion = "Track any cervical fluid or ovulation tests if fertility is one of your focus areas."
+                message = "This calendar estimate places the date within a possible fertile window. It cannot confirm ovulation or prevent pregnancy.",
+                whyThisAppeared = "Estimated cycle day ${prediction.dayOfCycle} from your saved date and settings.",
+                careSuggestion = "If fertility matters to you, use appropriate clinical guidance rather than relying on a calendar estimate."
             )
         }
 

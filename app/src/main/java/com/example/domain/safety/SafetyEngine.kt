@@ -4,125 +4,94 @@ import com.example.data.local.CycleDayLog
 import com.example.data.model.SafetyEvaluation
 import com.example.data.model.SafetyLevel
 
+/** Local-only safety triage. This is a conservative prompt for care, not a diagnosis. */
 object SafetyEngine {
+    fun evaluate(log: CycleDayLog?): SafetyEvaluation {
+        if (log == null) return low("No acute symptoms are recorded.")
+        val symptoms = values(log.symptomsCsv)
+        val vaginal = values(log.vaginalHealthCsv)
+        val urinary = values(log.urinaryHealthCsv)
+        val fainting = "fainting" in symptoms
+        val heavy = log.flowLevel.trim().uppercase() == "UNUSUALLY_HEAVY"
+        if (fainting && heavy) return urgent(
+            "Fainting and unusually heavy bleeding were recorded together.",
+            "Please seek urgent medical care now, especially if symptoms are continuing, worsening, or you feel unsafe."
+        )
+        if (heavy && log.painIntensity >= 8) return urgent(
+            "Unusually heavy bleeding and severe pain were recorded together.",
+            "Please seek urgent medical care now. Do not rely on this app to assess the cause."
+        )
+        if (fainting) return urgent(
+            "A fainting episode was recorded.",
+            "Please seek prompt medical evaluation and avoid driving if you feel faint or unwell."
+        )
+        if ("sores_lesions" in vaginal) return seek(
+            "New sores or lesions were recorded.",
+            "Arrange a clinical assessment, and avoid products that irritate the area."
+        )
+        if (heavy) return seek(
+            "Unusually heavy bleeding was recorded.",
+            "Please contact a healthcare professional promptly; seek urgent help if it is worsening or you feel faint."
+        )
+        if ("severe_cramps" in symptoms || log.painIntensity >= 7) return seek(
+            "Severe pain was recorded.",
+            "Arrange a clinical review, particularly if pain is new, persistent, or worsening."
+        )
+        if ("urinary_burning" in urinary && ("urinary_urgency" in urinary || "urinary_frequency" in urinary)) return seek(
+            "Several urinary symptoms were recorded together.",
+            "Consider prompt clinical advice for assessment. Seek urgent help for fever, flank pain, or worsening illness."
+        )
+        if (vaginal.any { it in setOf("vaginal_itching", "vaginal_burning", "unusual_odor") }) return review(
+            "Vaginal irritation or discharge changes were recorded.",
+            "Avoid douching and scented irritants; seek clinical advice if symptoms persist or worsen."
+        )
+        return if (symptoms.isNotEmpty() || log.painIntensity in 3..6) {
+            SafetyEvaluation(SafetyLevel.MONITOR, "Symptoms to monitor", "Symptoms were recorded without an urgent combination.", "Notice whether they persist, change, or worsen.")
+        } else low("No acute symptoms are recorded.")
+    }
 
     /**
-     * Deterministic evaluation of red flags and clinical caution indicators.
-     * AI is NEVER permitted to downgrade or suppress these deterministic findings.
+     * Evaluates NEW text before any network request or account/context gating. It never writes.
+     * Existing-log findings are retained, while explicitly negated input is not promoted to a flag.
      */
-    fun evaluate(log: CycleDayLog?): SafetyEvaluation {
-        if (log == null) {
-            return SafetyEvaluation(
-                level = SafetyLevel.LOW,
-                title = "Routine Health Status",
-                message = "No acute symptoms recorded.",
-                actionAdvice = "Continue regular wellness tracking."
-            )
+    fun evaluateInput(rawInput: String, existingLog: CycleDayLog? = null): SafetyEvaluation {
+        val text = rawInput.trim().lowercase()
+        val base = evaluate(existingLog)
+        if (text.isBlank()) return base
+        val positive = positiveText(text)
+        val savedSymptoms = values(existingLog?.symptomsCsv.orEmpty())
+        val fainting = containsAny(positive, "faint", "passed out", "lost consciousness") || "fainting" in savedSymptoms
+        val heavy = containsAny(positive, "unusually heavy", "very heavy", "soaking", "soaked", "heavy bleeding", "lots of blood") || existingLog?.flowLevel?.trim()?.uppercase() == "UNUSUALLY_HEAVY"
+        val severePain = containsAny(positive, "severe pain", "severe pelvic pain", "severe cramps", "unbearable pain", "excruciating", "pain is killing", "can't stand the pain") || (existingLog?.painIntensity ?: 0) >= 7 || "severe_cramps" in savedSymptoms
+        val sores = containsAny(positive, "sores", "lesions", "blisters")
+        val urinaryBurning = containsAny(positive, "burning when i pee", "burning urination", "burning to pee")
+        val urinaryOther = containsAny(positive, "urgent to pee", "urinary urgency", "peeing often", "frequent urination")
+        val candidate = when {
+            fainting && heavy -> urgent("Fainting and unusually heavy bleeding were mentioned together.", "Please seek urgent medical care now, especially if symptoms are continuing or worsening.")
+            heavy && severePain -> urgent("Unusually heavy bleeding and severe pain were mentioned together.", "Please seek urgent medical care now; this app cannot assess the cause.")
+            fainting -> urgent("A fainting episode was mentioned.", "Please seek prompt medical evaluation and avoid driving if you feel faint or unwell.")
+            sores -> seek("New sores or lesions were mentioned.", "Arrange a clinical assessment and avoid products that irritate the area.")
+            heavy -> seek("Unusually heavy bleeding was mentioned.", "Please contact a healthcare professional promptly; seek urgent help if it worsens or you feel faint.")
+            severePain -> seek("Severe pain was mentioned.", "Arrange a clinical review, particularly if pain is new, persistent, or worsening.")
+            urinaryBurning && urinaryOther -> seek("Several urinary symptoms were mentioned together.", "Consider prompt clinical advice for assessment; seek urgent help for fever, flank pain, or worsening illness.")
+            else -> base
         }
-
-        val symptoms = log.symptomsCsv.split(",").filter { it.isNotBlank() }
-        val vaginal = log.vaginalHealthCsv.split(",").filter { it.isNotBlank() }
-        val urinary = log.urinaryHealthCsv.split(",").filter { it.isNotBlank() }
-
-        // 1. URGENT CRITICAL CHECKS
-        if (symptoms.contains("fainting") && log.flowLevel == "UNUSUALLY_HEAVY") {
-            return SafetyEvaluation(
-                level = SafetyLevel.URGENT,
-                title = "Immediate Medical Attention Advised",
-                message = "Fainting combined with unusually heavy bleeding is a medical emergency that can indicate severe blood loss or ectopic pregnancy.",
-                actionAdvice = "Please seek emergency medical care immediately or contact local emergency services.",
-                isRedFlag = true
-            )
-        }
-
-        if (log.flowLevel == "UNUSUALLY_HEAVY" && log.painIntensity >= 8) {
-            return SafetyEvaluation(
-                level = SafetyLevel.URGENT,
-                title = "Severe Bleeding & Acute Pain",
-                message = "Bleeding through a pad or tampon in under an hour alongside severe pain (8+/10) warrants immediate emergency clinical evaluation.",
-                actionAdvice = "Visit an urgent care center or emergency department immediately.",
-                isRedFlag = true
-            )
-        }
-
-        if (symptoms.contains("fainting")) {
-            return SafetyEvaluation(
-                level = SafetyLevel.URGENT,
-                title = "Fainting Episode Reported",
-                message = "Sudden loss of consciousness during a cycle requires urgent professional evaluation to rule out acute anemia or hemodynamic instability.",
-                actionAdvice = "Rest with feet elevated, avoid driving, and consult an urgent healthcare provider.",
-                isRedFlag = true
-            )
-        }
-
-        // 2. SEEK PROFESSIONAL ADVICE CHECKS
-        if (vaginal.contains("sores_lesions")) {
-            return SafetyEvaluation(
-                level = SafetyLevel.SEEK_PROFESSIONAL_ADVICE,
-                title = "New Sores or Lesions Detected",
-                message = "New blisters, sores, or skin breaches in the pelvic area require clinical examination, proper testing, and targeted treatment.",
-                actionAdvice = "Schedule an appointment with a gynecologist or sexual health clinic. Avoid topical irritants.",
-                isRedFlag = true
-            )
-        }
-
-        if (log.flowLevel == "UNUSUALLY_HEAVY") {
-            return SafetyEvaluation(
-                level = SafetyLevel.SEEK_PROFESSIONAL_ADVICE,
-                title = "Unusually Heavy Menstrual Flow",
-                message = "Soaking through one or more menstrual products in less than 2 hours is considered menorrhagia.",
-                actionAdvice = "Monitor hourly pad/tampon counts. If prolonged for more than 2-4 hours, seek urgent medical assessment.",
-                isRedFlag = true
-            )
-        }
-
-        if (symptoms.contains("severe_cramps") || log.painIntensity >= 7) {
-            return SafetyEvaluation(
-                level = SafetyLevel.SEEK_PROFESSIONAL_ADVICE,
-                title = "Severe Pelvic Pain (Level ${log.painIntensity}/10)",
-                message = "Intense, debilitating pain that does not respond to standard pain management may indicate endometriosis, ovarian cyst rupture, or pelvic infection.",
-                actionAdvice = "Seek a clinical review. Use heat therapy for comfort, but do not ignore persistent severe pain.",
-                isRedFlag = true
-            )
-        }
-
-        if (urinary.contains("urinary_burning") && urinary.contains("urinary_urgency")) {
-            return SafetyEvaluation(
-                level = SafetyLevel.SEEK_PROFESSIONAL_ADVICE,
-                title = "Urinary Symptoms Suggestive of Infection",
-                message = "Burning urination combined with urgency and frequency commonly indicates a Urinary Tract Infection (UTI).",
-                actionAdvice = "Increase water intake and consult a physician or clinic promptly for a simple urine analysis and antibiotics if needed.",
-                isRedFlag = false
-            )
-        }
-
-        // 3. REVIEW CHECKS
-        if (vaginal.contains("vaginal_itching") || vaginal.contains("vaginal_burning") || vaginal.contains("unusual_odor")) {
-            return SafetyEvaluation(
-                level = SafetyLevel.REVIEW,
-                title = "Vaginal Irritation / Discharge Changes",
-                message = "Itching, burning, and changes in odor or texture can occur with yeast infections, bacterial vaginosis (BV), or mild contact irritation.",
-                actionAdvice = "Avoid douching, scented soaps, or tight synthetic fabrics. If symptoms persist beyond 2-3 days, consult a healthcare provider for a swab.",
-                isRedFlag = false
-            )
-        }
-
-        // 4. MONITOR CHECKS
-        if (symptoms.isNotEmpty() || log.painIntensity in 3..6) {
-            return SafetyEvaluation(
-                level = SafetyLevel.MONITOR,
-                title = "Mild to Moderate Cyclical Symptoms",
-                message = "Symptoms recorded are common during hormonal transitions across follicular, ovulatory, and luteal phases.",
-                actionAdvice = "Stay well hydrated, practice gentle movement, and log how these symptoms evolve over the next 24 hours.",
-                isRedFlag = false
-            )
-        }
-
-        return SafetyEvaluation(
-            level = SafetyLevel.LOW,
-            title = "Normal Wellness Baseline",
-            message = "No acute or concerning symptoms flagged.",
-            actionAdvice = "Maintain hydration, balanced nutrition, and restorative rest."
-        )
+        return if (base.level.ordinal > candidate.level.ordinal) base else candidate
     }
+
+    private fun positiveText(text: String): String {
+        // Negation stops at punctuation/conjunctions, so a second positive symptom survives.
+        return text.split(Regex("[,.;!?]|\\b(?:but|and|however)\\b")).joinToString(" ") { clause ->
+            if (Regex("\\b(no|not|never|without|haven't|dont|don't|didn't|doesn't|isn't|aren't)\\b").containsMatchIn(clause)) "" else clause
+        }
+    }
+    private fun containsAny(text: String, vararg terms: String) = terms.any {
+        Regex("\\b" + Regex.escape(it) + "[a-z]*\\b").containsMatchIn(text)
+    }
+
+    private fun values(csv: String) = csv.split(',').map { it.trim().lowercase().replace(' ', '_') }.filter(String::isNotBlank).toSet()
+    private fun low(message: String) = SafetyEvaluation(SafetyLevel.LOW, "Routine health status", message, "Continue tracking and seek care for severe or worsening symptoms.")
+    private fun review(message: String, advice: String) = SafetyEvaluation(SafetyLevel.REVIEW, "Review recommended", message, advice)
+    private fun seek(message: String, advice: String) = SafetyEvaluation(SafetyLevel.SEEK_PROFESSIONAL_ADVICE, "Professional advice recommended", message, advice, true)
+    private fun urgent(message: String, advice: String) = SafetyEvaluation(SafetyLevel.URGENT, "Urgent medical attention advised", message, advice, true)
 }

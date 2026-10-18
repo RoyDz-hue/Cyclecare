@@ -1,0 +1,81 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { authenticatedUserId, isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
+import { aiProviderStatus, normalizeAiProvider } from "../_shared/request-contract.js";
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return jsonResponse({ ok: true });
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+
+  const userId = await authenticatedUserId(req);
+  if (!userId) return jsonResponse({ error: "Authentication required" }, 401);
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+  const secretKey = supabaseSecretKey();
+  if (!supabaseUrl || !secretKey) return jsonResponse({ error: "Backend is not configured" }, 503);
+
+  try {
+    const adminClient = createClient(supabaseUrl, secretKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: role, error: roleError } = await adminClient
+      .from("cyclecare_admin_roles")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (roleError) return jsonResponse({ error: "Administrator access could not be verified" }, 503);
+    if (!role) return jsonResponse({ error: "Administrator access required" }, 403);
+
+    const { data: runtime, error: configError } = await adminClient
+      .from("cyclecare_runtime_config")
+      .select("active_ai_provider, active_mpesa_provider, updated_at")
+      .eq("id", true)
+      .maybeSingle();
+    if (configError || !runtime) return jsonResponse({ error: "Runtime configuration is not initialized" }, 503);
+    const activeAi = normalizeAiProvider(runtime.active_ai_provider);
+    if (!activeAi) return jsonResponse({ error: "Runtime AI provider is unsupported; no provider was selected" }, 503);
+
+    const payheroReady = isConfiguredSecret(Deno.env.get("PAYHERO_API_USERNAME"))
+      && isConfiguredSecret(Deno.env.get("PAYHERO_API_PASSWORD"))
+      && Number(Deno.env.get("PAYHERO_CHANNEL_ID")) > 0;
+    const paypalReady = isConfiguredSecret(Deno.env.get("PAYPAL_CLIENT_ID"))
+      && isConfiguredSecret(Deno.env.get("PAYPAL_CLIENT_SECRET"));
+    const providerStatus = (provider: string, configured: boolean) => ({
+      ...aiProviderStatus(provider, configured),
+      key_present: configured,
+    });
+    const ai = {
+      COHERE: providerStatus("COHERE", isConfiguredSecret(Deno.env.get("COHERE_API_KEY"))),
+      GEMINI: providerStatus("GEMINI", isConfiguredSecret(Deno.env.get("GEMINI_API_KEY"))),
+      OPENROUTER: providerStatus("OPENROUTER", isConfiguredSecret(Deno.env.get("OPENROUTER_API_KEY"))),
+      HYBRID: {
+        configured: false,
+        validated: false,
+        reason: "Disabled: no consent-safe multi-provider contract; the gateway selects exactly one approved provider per request.",
+      },
+    };
+
+    return jsonResponse({
+      active: {
+        ai: activeAi,
+        mpesa: runtime.active_mpesa_provider,
+        updated_at: runtime.updated_at,
+      },
+      ai,
+      image_generation: {
+        POLLINATIONS: { configured: isConfiguredSecret(Deno.env.get("POLLINATIONS_API_KEY")), validated: false, key_present: isConfiguredSecret(Deno.env.get("POLLINATIONS_API_KEY")) },
+      },
+      mpesa: {
+        PAYHERO: { configured: payheroReady, available: true },
+        PAYNEXUS: {
+          configured: false,
+          available: false,
+          reason: "Not enabled: callback signature and payment-verification contract still require validation.",
+        },
+      },
+      paypal: { configured: paypalReady },
+    });
+  } catch {
+    return jsonResponse({ error: "Could not load provider status" }, 503);
+  }
+});

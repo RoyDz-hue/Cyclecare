@@ -6,11 +6,13 @@ import com.example.data.model.ParsedLogItem
 object NaturalLanguageLogParser {
 
     /**
-     * Parses freeform, messy human language into a structured interpretation preview card.
+     * Parses freeform human language (including East African Sheng/Swahili colloquialisms)
+     * into a structured interpretation preview card.
      * Guaranteed 100% offline execution with zero accidental writes.
      */
     fun parse(input: String): ParsedLogInterpretation {
         val text = input.trim().lowercase()
+        val positiveText = text.replace(Regex("\\b(no|not|never|without|haven\'t|dont|don\'t|didn\'t|doesn\'t|isn\'t|aren\'t)\\s+(any\\s+)?([a-z]+(?:\\s+[a-z]+){0,3})"), " ")
         val items = mutableListOf<ParsedLogItem>()
         val symptomsDetected = mutableListOf<String>()
 
@@ -20,10 +22,12 @@ object NaturalLanguageLogParser {
         var painRating = 0
         var followUp: String? = null
 
-        // 1. Detect Flow / Period
-        if (text.contains("started") || text.contains("period") || text.contains("bleeding") || text.contains("flow")) {
-            val isHeavy = text.contains("heavy") || text.contains("soaking") || text.contains("lots of blood")
-            val isLight = text.contains("light") || text.contains("spotting") || text.contains("a little")
+        // 1. Detect Flow / Period (English + Swahili/Sheng: damu, hedhi, mwezi)
+        if (positiveText.contains("started") || positiveText.contains("period") || positiveText.contains("bleeding") ||
+            positiveText.contains("flow") || positiveText.contains("damu") || positiveText.contains("hedhi")
+        ) {
+            val isHeavy = positiveText.contains("heavy") || positiveText.contains("soaking") || positiveText.contains("lots of blood") || positiveText.contains("nyingi")
+            val isLight = positiveText.contains("light") || positiveText.contains("spotting") || positiveText.contains("a little") || positiveText.contains("kidogo")
             flowResult = when {
                 isHeavy -> "HEAVY"
                 isLight -> "LIGHT"
@@ -37,7 +41,7 @@ object NaturalLanguageLogParser {
                     iconEmoji = "🩸"
                 )
             )
-        } else if (text.contains("spotting")) {
+        } else if (positiveText.contains("spotting")) {
             flowResult = "SPOTTING"
             items.add(
                 ParsedLogItem(
@@ -49,10 +53,11 @@ object NaturalLanguageLogParser {
             )
         }
 
-        // 2. Detect Pain & Cramps
+        // 2. Detect Pain & Cramps (English + Swahili/Sheng: tumbo, maumivu, mbaya)
         val hasCramps = text.contains("cramp") || text.contains("stomach is killing") || text.contains("stomach hurts") ||
-                text.contains("pelvic") || text.contains("belly hurts")
-        val isSeverePain = text.contains("killing me") || text.contains("unbearable") || text.contains("terrible") || text.contains("severe")
+            text.contains("pelvic") || text.contains("belly hurts") || text.contains("tumbo") || text.contains("tummy")
+        val isSeverePain = text.contains("killing me") || text.contains("unbearable") || text.contains("terrible") ||
+            text.contains("severe") || text.contains("mbaya sana") || text.contains("kali")
         if (hasCramps) {
             painRating = if (isSeverePain) 8 else 4
             symptomsDetected.add("cramps")
@@ -69,9 +74,11 @@ object NaturalLanguageLogParser {
             }
         }
 
-        // 3. Detect Headache / Migraine
-        if (text.contains("headache") || text.contains("migraine") || text.contains("head hurts") || text.contains("head is pounding")) {
-            val isMigraine = text.contains("migraine") || text.contains("pounding")
+        // 3. Detect Headache / Migraine (English + Swahili: kichwa)
+        if (text.contains("headache") || text.contains("migraine") || text.contains("head hurts") ||
+            text.contains("head is pounding") || text.contains("kichwa")
+        ) {
+            val isMigraine = text.contains("migraine") || text.contains("pounding") || text.contains("kali")
             symptomsDetected.add(if (isMigraine) "migraine" else "headache")
             items.add(
                 ParsedLogItem(
@@ -83,11 +90,12 @@ object NaturalLanguageLogParser {
             )
         }
 
-        // 4. Detect Fatigue / Energy
+        // 4. Detect Fatigue / Energy (English + Swahili: nimechoka, uchovu)
         if (text.contains("exhausted") || text.contains("drained") || text.contains("killing me") || text.contains("no energy") ||
-            text.contains("so tired") || text.contains("tired") || text.contains("sluggish") || text.contains("fatigue")
+            text.contains("so tired") || text.contains("tired") || text.contains("sluggish") || text.contains("fatigue") ||
+            text.contains("nimechoka") || text.contains("uchovu")
         ) {
-            val isVeryLow = text.contains("exhausted") || text.contains("drained") || text.contains("no energy")
+            val isVeryLow = text.contains("exhausted") || text.contains("drained") || text.contains("no energy") || text.contains("sana")
             energyResult = if (isVeryLow) "VERY_LOW" else "LOW"
             symptomsDetected.add("fatigue")
             items.add(
@@ -98,7 +106,7 @@ object NaturalLanguageLogParser {
                     iconEmoji = "🥱"
                 )
             )
-        } else if (text.contains("energetic") || text.contains("feeling good") || text.contains("high energy")) {
+        } else if (text.contains("energetic") || text.contains("feeling good") || text.contains("high energy") || text.contains("nguvu")) {
             energyResult = "GOOD"
             items.add(
                 ParsedLogItem(
@@ -111,36 +119,36 @@ object NaturalLanguageLogParser {
         }
 
         // 5. Detect Mood
-        if (text.contains("irritable") || text.contains("annoyed") || text.contains("snappy") || text.contains("angry")) {
+        if (text.contains("irritable") || text.contains("annoyed") || text.contains("snappy") || text.contains("angry") || text.contains("hasira")) {
             moodResult = "UNCOMFORTABLE"
             items.add(ParsedLogItem(category = "Mood", label = "Irritable / Sensitive", detail = "Heightened emotional response", iconEmoji = "😤"))
-        } else if (text.contains("anxious") || text.contains("overwhelmed") || text.contains("stressed")) {
+        } else if (text.contains("anxious") || text.contains("overwhelmed") || text.contains("stressed") || text.contains("wasiwasi")) {
             moodResult = "LOW"
             items.add(ParsedLogItem(category = "Mood", label = "Anxious / Overwhelmed", detail = "Feeling nervous or stressed", iconEmoji = "😰"))
-        } else if (text.contains("sad") || text.contains("down") || text.contains("crying") || text.contains("low mood")) {
+        } else if (text.contains("sad") || text.contains("down") || text.contains("crying") || text.contains("low mood") || text.contains("huzuni")) {
             moodResult = "LOW"
             items.add(ParsedLogItem(category = "Mood", label = "Low Mood", detail = "Feeling down or tender", iconEmoji = "😔"))
-        } else if (text.contains("happy") || text.contains("great") || text.contains("calm")) {
+        } else if (text.contains("happy") || text.contains("great") || text.contains("calm") || text.contains("furaha")) {
             moodResult = "GOOD"
             items.add(ParsedLogItem(category = "Mood", label = "Positive Mood", detail = "Calm and peaceful", iconEmoji = "😊"))
         }
 
-        // 6. Detect Bloating / Nausea / Backache
-        if (text.contains("bloat")) {
+        // 6. Detect Bloating / Nausea / Backache (mgongo)
+        if (text.contains("bloat") || text.contains("kujaa")) {
             symptomsDetected.add("bloating")
             items.add(ParsedLogItem(category = "Symptom", label = "Bloating", detail = "Abdominal fullness", iconEmoji = "🎈"))
         }
-        if (text.contains("nausea") || text.contains("sick to my stomach") || text.contains("queasy")) {
+        if (text.contains("nausea") || text.contains("sick to my stomach") || text.contains("queasy") || text.contains("kichefuchefu")) {
             symptomsDetected.add("nausea")
             items.add(ParsedLogItem(category = "Symptom", label = "Nausea", detail = "Queasy / sensitive stomach", iconEmoji = "🤢"))
         }
-        if (text.contains("back") || text.contains("lower back")) {
+        if (text.contains("back") || text.contains("lower back") || text.contains("mgongo")) {
             symptomsDetected.add("back_pain")
             items.add(ParsedLogItem(category = "Symptom", label = "Back Pain", detail = "Ache in lower back", iconEmoji = "🩹"))
         }
 
         // 7. Detect Sleep
-        if (text.contains("slept badly") || text.contains("couldn't sleep") || text.contains("insomnia") || text.contains("woke up")) {
+        if (text.contains("slept badly") || text.contains("couldn't sleep") || text.contains("insomnia") || text.contains("woke up") || text.contains("usingizi")) {
             items.add(ParsedLogItem(category = "Sleep", label = "Restless Sleep", detail = "Interrupted or poor quality", iconEmoji = "🌙"))
         }
 
@@ -150,7 +158,7 @@ object NaturalLanguageLogParser {
                 ParsedLogItem(
                     category = "Wellness",
                     label = "General Bodily Shift",
-                    detail = "Recorded: \"${input.take(45)}\"",
+                    detail = "Possible observation: \"${input.take(45)}\"",
                     iconEmoji = "✨"
                 )
             )

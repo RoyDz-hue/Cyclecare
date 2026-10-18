@@ -1,22 +1,151 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.data.local.CycleCareDatabase
 import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
 import com.example.data.local.OnboardingProfile
+import com.example.data.local.OwnerDataGate
 import com.example.data.model.CyclePhase
 import com.example.data.model.DayPrediction
+import com.example.security.AuthPreferences
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
-class CycleRepository(private val database: CycleCareDatabase) {
-    private val dao = database.cycleDao()
-    private val onboardingDao = database.onboardingDao()
+/**
+ * Data structure storing 'period_start_date' and 'period_end_date'.
+ * Used across the onboarding step logic and cycle algorithms to validate and track period boundaries.
+ */
+data class PeriodDateRange(
+    val period_start_date: LocalDate,
+    val period_end_date: LocalDate
+) {
+    val startDate: LocalDate get() = period_start_date
+    val endDate: LocalDate get() = period_end_date
 
-    val allLogs: Flow<List<CycleDayLog>> = dao.getAllLogs()
-    val settingsFlow: Flow<CycleSettings?> = dao.getSettingsFlow()
-    val onboardingProfileFlow: Flow<OnboardingProfile?> = onboardingDao.getProfileFlow()
+    val startDateString: String get() = period_start_date.toString()
+    val endDateString: String get() = period_end_date.toString()
+
+    /**
+     * Calculates the total bleeding/period duration in days inclusive.
+     * Always at least 1 day.
+     */
+    val durationDays: Int
+        get() = (ChronoUnit.DAYS.between(period_start_date, period_end_date) + 1).toInt().coerceAtLeast(1)
+
+    /**
+     * Validates whether period_end_date is on or after period_start_date (end >= start).
+     */
+    fun isValid(): Boolean = !period_end_date.isBefore(period_start_date)
+
+    companion object {
+        fun fromStrings(period_start_date: String, period_end_date: String): PeriodDateRange? {
+            return try {
+                val start = LocalDate.parse(period_start_date)
+                val end = LocalDate.parse(period_end_date)
+                PeriodDateRange(start, end)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+}
+
+typealias PeriodDates = PeriodDateRange
+
+/**
+ * Result of validating a period start and end date pair for the onboarding step logic.
+ */
+data class PeriodDateValidationResult(
+    val isValid: Boolean,
+    val errorMessage: String? = null,
+    val durationDays: Int = 0,
+    val range: PeriodDateRange? = null
+)
+
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+class CycleRepository(database: CycleCareDatabase) {
+    private val activeDatabase = MutableStateFlow(database)
+    private var lifecyclePreferences: AuthPreferences? = null
+    private var lifecycleContext: Context? = null
+    private var lifecycleIdentity: String? = null
+
+    /** Preferred account-bound construction; signed-in users never fall back to legacy storage. */
+    constructor(context: Context, authPreferences: AuthPreferences) : this(
+        CycleCareDatabase.getDatabase(context.applicationContext, authPreferences.userId)
+    ) {
+        lifecycleContext = context.applicationContext
+        lifecyclePreferences = authPreferences
+        lifecycleIdentity = authPreferences.userId
+    }
+    private val dao get() = activeDatabase.value.cycleDao()
+    private val onboardingDao get() = activeDatabase.value.onboardingDao()
+
+    fun activateCurrentOwner() {
+        val context = lifecycleContext ?: return
+        val preferences = lifecyclePreferences ?: return
+        val owner = preferences.userId
+        if (lifecycleIdentity == owner) return
+        lifecycleIdentity = owner
+        storedPeriodDateRange = null
+        activeDatabase.value = CycleCareDatabase.getDatabase(context, owner)
+    }
+
+    internal fun activateDatabaseForTest(database: CycleCareDatabase, owner: String?) {
+        lifecycleIdentity = owner
+        storedPeriodDateRange = null
+        activeDatabase.value = database
+    }
+
+    // In-memory cache for validated period date boundaries
+    private var storedPeriodDateRange: PeriodDateRange? = null
+
+    data class ScopedLogSnapshot(val database: CycleCareDatabase, val logs: List<CycleDayLog>)
+    val scopedLogs: Flow<ScopedLogSnapshot> = activeDatabase.flatMapLatest { db -> flow {
+        emit(ScopedLogSnapshot(db, emptyList()))
+        db.cycleDao().getAllLogs().collect { emit(ScopedLogSnapshot(db, it)) }
+    } }
+    fun isCurrentSnapshot(snapshot: ScopedLogSnapshot): Boolean = snapshot.database === activeDatabase.value
+
+    val allLogs: Flow<List<CycleDayLog>> = activeDatabase.flatMapLatest { db -> flow {
+        emit(emptyList())
+        emitAll(db.cycleDao().getAllLogs())
+    } }
+    val settingsFlow: Flow<CycleSettings?> = activeDatabase.flatMapLatest { it.cycleDao().getSettingsFlow() }
+    val onboardingProfileFlow: Flow<OnboardingProfile?> = activeDatabase.flatMapLatest { it.onboardingDao().getProfileFlow() }
+
+    fun storePeriodDates(period_start_date: LocalDate, period_end_date: LocalDate): Boolean {
+        if (!validatePeriodDates(period_start_date, period_end_date)) {
+            return false
+        }
+        storedPeriodDateRange = PeriodDateRange(period_start_date, period_end_date)
+        return true
+    }
+
+    fun storePeriodDates(range: PeriodDateRange): Boolean {
+        return storePeriodDates(range.period_start_date, range.period_end_date)
+    }
+
+    fun getStoredPeriodDates(): PeriodDateRange? = storedPeriodDateRange
+
+    fun validatePeriodDates(
+        period_start_date: LocalDate?,
+        period_end_date: LocalDate?
+    ): Boolean = Companion.validatePeriodDates(period_start_date, period_end_date)
+
+    fun validatePeriodDates(range: PeriodDateRange?): Boolean =
+        Companion.validatePeriodDates(range)
+
+    fun validatePeriodDatePair(
+        period_start_date: LocalDate?,
+        period_end_date: LocalDate?
+    ): PeriodDateValidationResult =
+        Companion.validatePeriodDatePair(period_start_date, period_end_date)
 
     suspend fun getOnboardingProfile(): OnboardingProfile? = onboardingDao.getProfile()
 
@@ -25,56 +154,36 @@ class CycleRepository(private val database: CycleCareDatabase) {
     }
 
     suspend fun getSettings(): CycleSettings {
+        val selectedDatabase = activeDatabase.value
+        val dao = selectedDatabase.cycleDao()
+        val onboardingDao = selectedDatabase.onboardingDao()
         var settings = dao.getSettings()
         val profile = onboardingDao.getProfile()
         if (settings == null) {
-            val defaultLastPeriod = LocalDate.now().minusDays(10).toString()
             settings = CycleSettings(
                 isOnboardingCompleted = profile?.isCompleted == true,
-                selectedGoalsCsv = profile?.selectedGoalsCsv ?: "🌸 Understand my cycle,🩷 Track my periods",
-                lastPeriodStartDate = profile?.lastPeriodDateString ?: defaultLastPeriod,
+                selectedGoalsCsv = profile?.selectedGoalsCsv.orEmpty(),
+                lastPeriodStartDate = profile?.lastPeriodDateString.orEmpty(),
                 averageCycleLength = profile?.cycleLengthDays ?: 28,
                 periodDuration = profile?.periodDurationDays ?: 5,
                 lutealPhaseDays = 14,
-                remindFertile = profile?.remindFertileWindow ?: true
+                remindFertile = profile?.remindFertileWindow ?: false
             )
             dao.saveSettings(settings)
-
-            // Seed sample logs only if onboarding was already completed
-            if (profile?.isCompleted == true) {
-                val periodStart = LocalDate.now().minusDays(10)
-                dao.insertOrUpdateLog(
-                    CycleDayLog(
-                        dateString = periodStart.toString(),
-                        flowLevel = "MODERATE",
-                        energyLevel = "LOW",
-                        moodLevel = "UNCOMFORTABLE",
-                        symptomsCsv = "cramps,headache",
-                        waterGlasses = 6,
-                        sleepHours = 7.5f,
-                        sleepQuality = "FAIR",
-                        painIntensity = 4,
-                        notes = "Cycle day 1. Prioritized warm tea and rest."
-                    )
-                )
-            }
         }
         return settings
     }
 
-    /**
-     * Completes onboarding by saving the OnboardingProfile to Room, updating CycleSettings,
-     * and generating initial cycle data matching the user's entered period date.
-     */
     suspend fun completeOnboardingWithProfile(
         profile: OnboardingProfile,
         pin: String = "",
         enableLock: Boolean = false
     ) {
-        // 1. Save onboarding profile
+        val selectedDatabase = activeDatabase.value
+        val dao = selectedDatabase.cycleDao()
+        val onboardingDao = selectedDatabase.onboardingDao()
         onboardingDao.insertOrUpdateProfile(profile)
 
-        // 2. Update cycle settings
         val current = dao.getSettings() ?: CycleSettings()
         val updated = current.copy(
             isOnboardingCompleted = true,
@@ -83,43 +192,19 @@ class CycleRepository(private val database: CycleCareDatabase) {
             averageCycleLength = profile.cycleLengthDays,
             periodDuration = profile.periodDurationDays,
             remindFertile = profile.remindFertileWindow,
-            isAppLockEnabled = enableLock,
-            appLockPin = pin
+            isAppLockEnabled = enableLock
         )
         dao.saveSettings(updated)
 
-        // 3. Generate initial cycle data matching the user's entered period date
-        val periodStartDate = try {
-            if (profile.lastPeriodDateString.isNotBlank()) {
-                LocalDate.parse(profile.lastPeriodDateString)
-            } else {
-                LocalDate.now().minusDays(10)
-            }
-        } catch (e: Exception) {
-            LocalDate.now().minusDays(10)
-        }
-
-        val periodDuration = profile.periodDurationDays.coerceIn(3, 7)
-        val flowLevels = listOf("MODERATE", "HEAVY", "MODERATE", "LIGHT", "LIGHT", "SPOTTING", "SPOTTING")
-        for (i in 0 until periodDuration) {
-            val logDate = periodStartDate.plusDays(i.toLong())
-            val existing = dao.getLogByDate(logDate.toString())
-            if (existing == null) {
-                dao.insertOrUpdateLog(
-                    CycleDayLog(
-                        dateString = logDate.toString(),
-                        flowLevel = flowLevels.getOrElse(i) { "LIGHT" },
-                        energyLevel = if (i < 2) "LOW" else "NORMAL",
-                        moodLevel = if (i < 2) "UNCOMFORTABLE" else "GOOD",
-                        symptomsCsv = if (i == 0) "cramps,headache" else if (i == 1) "cramps,bloating" else if (i == 2) "bloating" else "",
-                        waterGlasses = 7,
-                        sleepHours = 8.0f,
-                        sleepQuality = "GOOD",
-                        painIntensity = if (i == 0) 4 else if (i == 1) 3 else 1,
-                        notes = if (i == 0) "Period started (recorded during onboarding)" else ""
-                    )
-                )
-            }
+        val periodStartDate = profile.lastPeriodDateString
+            .takeIf(String::isNotBlank)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        if (periodStartDate == null) {
+            storedPeriodDateRange = null
+        } else {
+            val periodDuration = profile.periodDurationDays.coerceIn(2, 10)
+            val periodEndDate = periodStartDate.plusDays((periodDuration - 1).toLong())
+            storePeriodDates(periodStartDate, periodEndDate)
         }
     }
 
@@ -144,42 +229,43 @@ class CycleRepository(private val database: CycleCareDatabase) {
     }
 
     suspend fun deleteAllLogs() {
-        // Clear all logs and onboarding profile for complete privacy reset
+        val wipeOwner = lifecycleIdentity
+        val selectedDatabase = activeDatabase.value
+        val dao = selectedDatabase.cycleDao()
+        val onboardingDao = selectedDatabase.onboardingDao()
+        // Persist pause before deleting, so concurrent sync cannot resurrect the cleared namespace.
+        lifecycleContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
+        dao.deleteAllLogs()
         onboardingDao.deleteProfile()
-        val defaultStart = LocalDate.now().minusDays(10).toString()
+        storedPeriodDateRange = null
         dao.saveSettings(
             CycleSettings(
                 isOnboardingCompleted = false,
-                lastPeriodStartDate = defaultStart,
+                lastPeriodStartDate = "",
                 averageCycleLength = 28,
                 periodDuration = 5
             )
         )
+        lifecycleContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
     }
 
-    fun calculateDayPrediction(date: LocalDate, settings: CycleSettings): DayPrediction {
-        val lastStart = try {
-            if (settings.lastPeriodStartDate.isNotBlank()) {
-                LocalDate.parse(settings.lastPeriodStartDate)
-            } else {
-                LocalDate.now().minusDays(10)
-            }
-        } catch (e: Exception) {
-            LocalDate.now().minusDays(10)
-        }
+    fun calculateDayPrediction(date: LocalDate, settings: CycleSettings): DayPrediction? {
+        val lastStart = settings.lastPeriodStartDate
+            .takeIf(String::isNotBlank)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: return null
 
         val cycleLength = settings.averageCycleLength.coerceIn(21, 45)
         val periodDuration = settings.periodDuration.coerceIn(2, 10)
         val lutealLength = settings.lutealPhaseDays.coerceIn(10, 16)
 
-        // Estimated ovulation day of the cycle: cycleLength - lutealLength (typically day 14 of 28)
         val ovulationCycleDay = (cycleLength - lutealLength).coerceAtLeast(periodDuration + 2)
         val fertileStartCycleDay = (ovulationCycleDay - 4).coerceAtLeast(periodDuration + 1)
         val fertileEndCycleDay = (ovulationCycleDay + 1).coerceAtMost(cycleLength)
 
         val daysDifference = ChronoUnit.DAYS.between(lastStart, date).toInt()
         val cycleDayZeroIndexed = Math.floorMod(daysDifference, cycleLength)
-        val cycleDay = cycleDayZeroIndexed + 1 // 1-based cycle day
+        val cycleDay = cycleDayZeroIndexed + 1
 
         val isPeriod = cycleDay <= periodDuration
         val isOvulation = cycleDay == ovulationCycleDay
@@ -192,19 +278,6 @@ class CycleRepository(private val database: CycleCareDatabase) {
             else -> CyclePhase.LUTEAL
         }
 
-        val chance = when {
-            isOvulation -> "Peak (~30%)"
-            isFertile -> "High (~20%)"
-            cycleDay in (fertileStartCycleDay - 2) until fertileStartCycleDay -> "Medium (~10%)"
-            else -> "Low (<5%)"
-        }
-
-        val confidence = when {
-            isOvulation -> "Observation-Supported (Peak LH)"
-            isFertile -> "Observation-Supported Window"
-            else -> "Calendar Estimate"
-        }
-
         return DayPrediction(
             date = date,
             dayOfCycle = cycleDay,
@@ -212,8 +285,71 @@ class CycleRepository(private val database: CycleCareDatabase) {
             isPeriod = isPeriod,
             isFertile = isFertile,
             isOvulation = isOvulation,
-            fertilityConfidence = confidence,
-            pregnancyChance = chance
+            fertilityConfidence = "Calendar Estimate",
+            pregnancyChance = "Not calculated from calendar dates"
         )
+    }
+
+    companion object {
+        fun validatePeriodDates(
+            period_start_date: LocalDate?,
+            period_end_date: LocalDate?
+        ): Boolean {
+            if (period_start_date == null || period_end_date == null) return false
+            return !period_end_date.isBefore(period_start_date)
+        }
+
+        fun validatePeriodDates(range: PeriodDateRange?): Boolean {
+            if (range == null) return false
+            return validatePeriodDates(range.period_start_date, range.period_end_date)
+        }
+
+        fun validatePeriodDatePair(
+            period_start_date: LocalDate?,
+            period_end_date: LocalDate?
+        ): PeriodDateValidationResult {
+            if (period_start_date == null) {
+                return PeriodDateValidationResult(
+                    isValid = false,
+                    errorMessage = "Period start date is required",
+                    durationDays = 0
+                )
+            }
+            if (period_end_date == null) {
+                return PeriodDateValidationResult(
+                    isValid = false,
+                    errorMessage = "Period end date is required",
+                    durationDays = 0
+                )
+            }
+            if (period_end_date.isBefore(period_start_date)) {
+                return PeriodDateValidationResult(
+                    isValid = false,
+                    errorMessage = "Period end date cannot be earlier than start date",
+                    durationDays = 0
+                )
+            }
+            val durationDays = (ChronoUnit.DAYS.between(period_start_date, period_end_date) + 1).toInt()
+            return PeriodDateValidationResult(
+                isValid = true,
+                errorMessage = null,
+                durationDays = durationDays,
+                range = PeriodDateRange(period_start_date, period_end_date)
+            )
+        }
+
+        fun validatePeriodDateStrings(
+            period_start_date: String?,
+            period_end_date: String?
+        ): Boolean {
+            if (period_start_date.isNullOrBlank() || period_end_date.isNullOrBlank()) return false
+            return try {
+                val start = LocalDate.parse(period_start_date)
+                val end = LocalDate.parse(period_end_date)
+                validatePeriodDates(start, end)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 }

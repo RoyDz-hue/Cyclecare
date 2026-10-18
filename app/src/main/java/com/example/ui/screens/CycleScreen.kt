@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -21,19 +22,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,10 +41,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.local.CycleDayLog
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
@@ -66,8 +65,9 @@ fun CycleScreen(
     val today = uiState.currentDate
     val selectedPrediction = uiState.selectedDatePrediction
     val selectedLog = logsMap[selectedDate.toString()]
-    val settings = uiState.settings
-
+    val daysUntilPeriodFromSelected: Int? = selectedPrediction?.let { prediction ->
+        if (prediction.isPeriod) 0 else (uiState.settings.averageCycleLength - prediction.dayOfCycle).coerceAtLeast(0)
+    }
     val monthFormatter = DateTimeFormatter.ofPattern("MMMM yyyy")
 
     LazyColumn(
@@ -75,262 +75,370 @@ fun CycleScreen(
             .fillMaxSize()
             .testTag("cycle_screen_content")
             .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Screen Header
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(42.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Timeline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Cycle & Fertility Rhythm",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "Calculations derived from your history, never generic formulas",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(18.dp))
-        }
-
-        // Cycle Metrics Breakdown (Average, Median, Variability, Next Period)
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = "Personal Cycle Profile",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        CycleStatBox(label = "Cycle Length", value = "${settings.averageCycleLength}d", color = MaterialTheme.colorScheme.primary)
-                        CycleStatBox(label = "Bleeding", value = "${settings.periodDuration}d", color = Color(0xFFD32F2F))
-                        CycleStatBox(label = "Variability", value = "±2d", color = Color(0xFF388E3C))
-                        CycleStatBox(label = "Next Period", value = "in ${uiState.daysUntilNextPeriod}d", color = Color(0xFF7B1FA2))
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Fertile Window Clinical Disclaimer
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
-            ) {
-                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Fertility awareness: The fertile window is an estimate based on cycle history and observation data. It cannot guarantee contraception.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF5D4037)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Month Navigation
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
-                IconButton(onClick = { displayedMonth = displayedMonth.minusMonths(1) }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Month")
-                }
-
-                Text(
-                    text = displayedMonth.format(monthFormatter),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-
-                IconButton(onClick = { displayedMonth = displayedMonth.plusMonths(1) }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Month")
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-        }
-
-        // Days of Week Header
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa").forEach { dayLabel ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                    Text("Your cycle", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        text = dayLabel,
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant),
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Center
+                        text = "A personal calendar, guided by the dates you record.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        // Calendar Grid
-        item {
-            val firstDayOfMonth = displayedMonth.atDay(1)
-            val dayOfWeekValue = firstDayOfMonth.dayOfWeek.value % 7
-            val daysInMonth = displayedMonth.lengthOfMonth()
-            val totalCells = (dayOfWeekValue + daysInMonth + 6) / 7 * 7
-
-            Column(modifier = Modifier.fillMaxWidth()) {
-                for (weekIndex in 0 until (totalCells / 7)) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceAround) {
-                        for (dayOffset in 0 until 7) {
-                            val cellIndex = weekIndex * 7 + dayOffset
-                            val dayNumber = cellIndex - dayOfWeekValue + 1
-
-                            if (dayNumber in 1..daysInMonth) {
-                                val cellDate = displayedMonth.atDay(dayNumber)
-                                val prediction = viewModel.getPredictionForDate(cellDate)
-                                val hasLog = logsMap.containsKey(cellDate.toString())
-                                val isSelected = cellDate == selectedDate
-                                val isToday = cellDate == today
-
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f)
-                                        .padding(2.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            when {
-                                                isSelected -> MaterialTheme.colorScheme.primaryContainer
-                                                isToday -> MaterialTheme.colorScheme.surfaceVariant
-                                                else -> Color.Transparent
-                                            }
-                                        )
-                                        .then(
-                                            if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                                            else Modifier
-                                        )
-                                        .clickable { viewModel.selectDate(cellDate) },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                        Text(
-                                            text = "$dayNumber",
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                            )
-                                        )
-
-                                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 2.dp)) {
-                                            if (prediction.isPeriod) {
-                                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFD32F2F)))
-                                            } else if (prediction.isOvulation) {
-                                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFE65100)))
-                                            } else if (prediction.isFertile) {
-                                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(Color(0xFF7B1FA2)))
-                                            }
-                                            if (hasLog) {
-                                                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color(0xFF00897B)))
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
-                            }
-                        }
+                if (selectedDate != today) {
+                    TextButton(onClick = {
+                        viewModel.selectDate(today)
+                        displayedMonth = YearMonth.from(today)
+                    }) {
+                        Text("Jump to today")
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Selected Day Inspection Card
+        // Selected Day Summary Banner (aligned cleanly with 20dp outer margin)
         item {
-            val selectedDateText = selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy"))
-            Card(
-                modifier = Modifier.fillMaxWidth().testTag("selected_cycle_day_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(text = selectedDateText, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (selectedPrediction != null) {
-                        val phaseColor = Color(selectedPrediction.phase.colorHex)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "${selectedPrediction?.dayOfCycle ?: "—"}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("SELECTED DAY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            text = "Cycle Day ${selectedPrediction.dayOfCycle} • ${selectedPrediction.phase.title}",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = phaseColor)
+                            text = selectedPrediction?.phase?.title ?: if (uiState.hasCycleAnchor) "No estimate for this date" else "Add a start date for estimates",
+                            style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = "Fertility Confidence: ${selectedPrediction.fertilityConfidence}",
+                            text = if (selectedDate == today) "Today" else selectedDate.format(DateTimeFormatter.ofPattern("EEE, MMM d")),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-
-                    if (selectedLog != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Calendar estimate", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            text = "Logged: Flow ${selectedLog.flowLevel.lowercase()} • Energy ${selectedLog.energyLevel.lowercase()} • Sleep ${selectedLog.sleepHours}h (${selectedLog.sleepQuality.lowercase()})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = when {
+                                daysUntilPeriodFromSelected == null -> "Not available"
+                                daysUntilPeriodFromSelected == 0 -> "around today"
+                                else -> "about $daysUntilPeriodFromSelected days"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = { viewModel.openTrackForDate(selectedDate) },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = if (selectedLog != null) "Edit Log for This Day" else "Log Symptoms for This Day", fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(30.dp))
+        }
+
+        // Interactive Month Calendar Grid
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { displayedMonth = displayedMonth.minusMonths(1) },
+                            modifier = Modifier.size(48.dp).testTag("prev_month_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous month")
+                        }
+                        Text(displayedMonth.format(monthFormatter), style = MaterialTheme.typography.titleMedium)
+                        IconButton(
+                            onClick = { displayedMonth = displayedMonth.plusMonths(1) },
+                            modifier = Modifier.size(48.dp).testTag("next_month_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next month")
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        listOf("S", "M", "T", "W", "T", "F", "S").forEach { day ->
+                            Text(
+                                text = day,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    val firstDay = displayedMonth.atDay(1)
+                    val startOffset = firstDay.dayOfWeek.value % 7
+                    val daysInMonth = displayedMonth.lengthOfMonth()
+                    val cellCount = ((startOffset + daysInMonth + 6) / 7) * 7
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        repeat(cellCount / 7) { week ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                repeat(7) { column ->
+                                    val cellIndex = week * 7 + column
+                                    val dayNumber = cellIndex - startOffset + 1
+                                    if (dayNumber in 1..daysInMonth) {
+                                        val date = displayedMonth.atDay(dayNumber)
+                                        val prediction = viewModel.getPredictionForDate(date)
+                                        val hasLog = logsMap.containsKey(date.toString())
+                                        val isSelected = date == selectedDate
+                                        val isToday = date == today
+                                        val isPeriodEstimate = prediction?.isPeriod == true
+                                        val isFertileEstimate = prediction?.isFertile == true || prediction?.isOvulation == true
+                                        val previousPrediction = if (prediction != null && column > 0 && dayNumber > 1) {
+                                            viewModel.getPredictionForDate(date.minusDays(1))
+                                        } else null
+                                        val nextPrediction = if (prediction != null && column < 6 && dayNumber < daysInMonth) {
+                                            viewModel.getPredictionForDate(date.plusDays(1))
+                                        } else null
+                                        val samePeriodOnLeft = isPeriodEstimate && previousPrediction?.isPeriod == true
+                                        val sameFertileWindowOnLeft = isFertileEstimate &&
+                                            (previousPrediction?.isFertile == true || previousPrediction?.isOvulation == true)
+                                        val samePeriodOnRight = isPeriodEstimate && nextPrediction?.isPeriod == true
+                                        val sameFertileWindowOnRight = isFertileEstimate &&
+                                            (nextPrediction?.isFertile == true || nextPrediction?.isOvulation == true)
+                                        val sameSpanLeft = samePeriodOnLeft || sameFertileWindowOnLeft
+                                        val sameSpanRight = samePeriodOnRight || sameFertileWindowOnRight
+                                        val cellShape = if (isSelected) {
+                                            RoundedCornerShape(14.dp)
+                                        } else {
+                                            RoundedCornerShape(
+                                                topStart = if (sameSpanLeft) 5.dp else 14.dp,
+                                                bottomStart = if (sameSpanLeft) 5.dp else 14.dp,
+                                                topEnd = if (sameSpanRight) 5.dp else 14.dp,
+                                                bottomEnd = if (sameSpanRight) 5.dp else 14.dp
+                                            )
+                                        }
+                                        val label = buildString {
+                                            append(date.format(DateTimeFormatter.ofPattern("MMMM d")))
+                                            if (prediction?.isPeriod == true) append(", period estimate")
+                                            else if (prediction?.isOvulation == true) append(", ovulation estimate")
+                                            else if (prediction?.isFertile == true) append(", fertile window estimate")
+                                            if (hasLog) append(", has a saved log")
+                                            if (isToday) append(", today")
+                                        }
+                                        val cellBg = when {
+                                            isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                            isPeriodEstimate -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.30f)
+                                            isFertileEstimate -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.40f)
+                                            else -> Color.Transparent
+                                        }
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .aspectRatio(0.92f)
+                                                .clip(cellShape)
+                                                .background(cellBg)
+                                                .then(
+                                                    if (prediction?.isOvulation == true && !isSelected) {
+                                                        Modifier.border(1.5.dp, Color(0xFFD4A857), cellShape)
+                                                    } else if (isToday && !isSelected) {
+                                                        Modifier.border(
+                                                            1.dp,
+                                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                                            cellShape
+                                                        )
+                                                    } else Modifier
+                                                )
+                                                .clickable(
+                                                    role = Role.Button,
+                                                    onClickLabel = "Select ${date.format(DateTimeFormatter.ofPattern("MMMM d"))}"
+                                                ) { viewModel.selectDate(date) }
+                                                .semantics { contentDescription = label }
+                                                .padding(2.dp)
+                                                .testTag("calendar_day_$dayNumber"),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = "$dayNumber",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = if (isSelected || isToday) FontWeight.SemiBold else FontWeight.Normal
+                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                modifier = Modifier.padding(top = 3.dp)
+                                            ) {
+                                                if (prediction?.isPeriod == true) Marker(MaterialTheme.colorScheme.primary)
+                                                else if (prediction?.isOvulation == true) Marker(MaterialTheme.colorScheme.tertiary)
+                                                else if (prediction?.isFertile == true) Marker(MaterialTheme.colorScheme.secondary)
+                                                if (hasLog) Marker(MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    } else {
+                                        Spacer(Modifier.weight(1f).aspectRatio(0.92f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (uiState.hasCycleAnchor) {
+                            LegendItem(MaterialTheme.colorScheme.primary, "Period estimate")
+                            LegendItem(MaterialTheme.colorScheme.secondary, "Fertile estimate")
+                        }
+                        LegendItem(MaterialTheme.colorScheme.onSurfaceVariant, "Logged")
+                    }
+                }
+            }
+        }
+
+        // Selected Cycle Day Action Card (fixed double horizontal padding)
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth().testTag("selected_cycle_day_card"),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d")), style = MaterialTheme.typography.titleMedium)
+                    if (selectedPrediction != null) {
+                        Text(
+                            text = "Calendar-estimated day ${selectedPrediction.dayOfCycle} · ${selectedPrediction.phase.title}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = selectedPrediction.phase.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "Add a period start date to begin a personal cycle view.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (selectedLog != null) {
+                        Text(
+                            text = "Saved log · ${selectedLog.flowLevel.lowercase().replace('_', ' ')} flow · ${selectedLog.moodLevel.lowercase().replace('_', ' ')} mood",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.openTrackForDate(selectedDate) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("edit_selected_day_button"),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (selectedLog == null) "Log this day" else "Edit this day")
+                    }
+                }
+            }
+        }
+
+        // Cycle Averages Card (fixed double horizontal padding)
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Cycle settings & history", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Metric("Cycle length setting", "${uiState.settings.averageCycleLength} days", Modifier.weight(1f))
+                        Metric("Bleeding setting", "${uiState.settings.periodDuration} days", Modifier.weight(1f))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Metric(
+                            "Observed interval",
+                            if (uiState.baselineMetrics.observedCycleIntervals > 0) "${uiState.baselineMetrics.minCycleLength}–${uiState.baselineMetrics.maxCycleLength} days" else "Not measured",
+                            Modifier.weight(1f)
+                        )
+                        Metric("Logged days", "${logsMap.size}", Modifier.weight(1f))
+                    }
+                    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (!uiState.hasCycleAnchor) {
+                                "No cycle start date is saved, so calendar predictions are unavailable. Settings below are not measured history."
+                            } else if (uiState.cycleStartIsApproximate) {
+                                "These are approximate calendar estimates from a date range you selected. They can shift, do not confirm ovulation, and should not be used as contraception."
+                            } else {
+                                "Calendar dates are estimates from the date you entered and can shift. They do not confirm ovulation and should not be used as contraception."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun CycleStatBox(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = value, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = color))
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun Marker(color: Color) {
+    Box(Modifier.size(5.dp).clip(CircleShape).background(color))
+}
+
+@Composable
+private fun LegendItem(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Marker(color)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
     }
 }

@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.CycleCareDatabase
 import com.example.data.local.OnboardingProfile
 import com.example.data.repository.CycleRepository
+import com.example.data.repository.PeriodDateRange
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -22,7 +23,7 @@ import java.io.IOException
 import java.time.LocalDate
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class OnboardingPersistenceTest {
 
     private lateinit var database: CycleCareDatabase
@@ -75,7 +76,7 @@ class OnboardingPersistenceTest {
     }
 
     @Test
-    fun testRepositoryCompleteOnboardingGeneratesCycleLogs() = runBlocking {
+    fun testRepositoryCompleteOnboardingDoesNotGenerateCycleLogs() = runBlocking {
         val periodStart = LocalDate.now().minusDays(8)
         val profile = OnboardingProfile(
             id = 1,
@@ -105,10 +106,8 @@ class OnboardingPersistenceTest {
         assertEquals(28, settings.averageCycleLength)
         assertEquals(periodStart.toString(), settings.lastPeriodStartDate)
 
-        // Verify initial period logs were generated matching the entered date
-        val firstDayLog = repository.getLogForDate(periodStart.toString())
-        assertNotNull(firstDayLog)
-        assertEquals("MODERATE", firstDayLog?.flowLevel)
+        // An entered date anchors calendar estimates; it does not imply a saved flow observation.
+        assertNull(repository.getLogForDate(periodStart.toString()))
     }
 
     @Test
@@ -129,7 +128,80 @@ class OnboardingPersistenceTest {
         repository.deleteAllLogs()
 
         assertNull(repository.getOnboardingProfile())
+        assertNull(repository.getLogForDate("2026-09-20"))
         val settings = repository.getSettings()
         assertFalse(settings.isOnboardingCompleted)
+    }
+
+    @Test
+    fun testPeriodDateRangeDataStructureAndValidation() {
+        val start = LocalDate.of(2026, 9, 20)
+        val end = LocalDate.of(2026, 9, 25)
+
+        val range = PeriodDateRange(
+            period_start_date = start,
+            period_end_date = end
+        )
+
+        assertEquals(start, range.period_start_date)
+        assertEquals(end, range.period_end_date)
+        assertEquals(6, range.durationDays)
+        assertTrue(range.isValid())
+
+        // Same-day period (start == end)
+        val sameDayRange = PeriodDateRange(
+            period_start_date = start,
+            period_end_date = start
+        )
+        assertEquals(1, sameDayRange.durationDays)
+        assertTrue(sameDayRange.isValid())
+
+        // Invalid period (end < start)
+        val invalidRange = PeriodDateRange(
+            period_start_date = end,
+            period_end_date = start
+        )
+        assertFalse(invalidRange.isValid())
+
+        // Test helper validation function
+        assertTrue(repository.validatePeriodDates(start, end))
+        assertTrue(repository.validatePeriodDates(start, start))
+        assertFalse(repository.validatePeriodDates(end, start))
+        assertFalse(repository.validatePeriodDates(null, end))
+        assertFalse(repository.validatePeriodDates(start, null))
+
+        // Static companion helper
+        assertTrue(CycleRepository.validatePeriodDates(start, end))
+        assertFalse(CycleRepository.validatePeriodDates(end, start))
+
+        // Detailed validation helper
+        val validResult = repository.validatePeriodDatePair(start, end)
+        assertTrue(validResult.isValid)
+        assertEquals(6, validResult.durationDays)
+        assertNull(validResult.errorMessage)
+
+        val invalidResult = repository.validatePeriodDatePair(end, start)
+        assertFalse(invalidResult.isValid)
+        assertNotNull(invalidResult.errorMessage)
+    }
+
+    @Test
+    fun testRepositoryStoreAndRetrievePeriodDates() {
+        val start = LocalDate.of(2026, 9, 10)
+        val end = LocalDate.of(2026, 9, 15)
+
+        // Storing valid pair succeeds
+        val stored = repository.storePeriodDates(start, end)
+        assertTrue(stored)
+        val retrieved = repository.getStoredPeriodDates()
+        assertNotNull(retrieved)
+        assertEquals(start, retrieved?.period_start_date)
+        assertEquals(end, retrieved?.period_end_date)
+
+        // Attempting to store invalid pair (end < start) fails
+        val invalidStored = repository.storePeriodDates(end, start)
+        assertFalse(invalidStored)
+        // Previous valid value is preserved
+        assertEquals(start, repository.getStoredPeriodDates()?.period_start_date)
     }
 }

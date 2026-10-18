@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,28 +23,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Opacity
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.WaterDrop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,13 +52,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.data.economy.EconomyCatalog
+import com.example.data.economy.UserEconomyTier
 import com.example.data.local.CycleDayLog
-import com.example.data.model.CyclePhase
+import com.example.data.model.MoodLevel
 import com.example.data.model.SafetyLevel
-import com.example.domain.language.LanguageEngine
+import com.example.domain.safety.SafetyEngine
 import com.example.ui.components.CycleDial
+import com.example.ui.components.InteractiveArtifact3D
 import com.example.ui.viewmodel.AppNavTab
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
@@ -78,516 +75,597 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("EEEE, MMM d")
-    val dateText = uiState.currentDate.format(dateFormatter)
-    val todayPrediction = uiState.todayPrediction
-    val phaseColor = Color(todayPrediction?.phase?.colorHex ?: 0xFFD81B60)
-    val safety = uiState.safetyEvaluation
-    val attentionItem = uiState.todayAttentionItem
+    val prediction = uiState.todayPrediction
+    val phase = prediction?.phase
+    val unreadCount = uiState.notifications.count { !it.isRead }
+    val safety = SafetyEngine.evaluate(todayLog)
+    val selectedMood = todayLog?.moodLevel ?: ""
+    val canUseDirectAi = uiState.isAdmin || uiState.economyProfile.tier == UserEconomyTier.PREMIUM
+    var showPremiumChatDialog by remember { mutableStateOf(false) }
+    var premiumChatPrompt by remember { mutableStateOf("") }
+    var showPlansDialog by remember { mutableStateOf(false) }
+    var showCommunityCirclesDialog by remember { mutableStateOf(false) }
+    val currentDateText = uiState.currentDate.format(DateTimeFormatter.ofPattern("EEEE, MMM d"))
+    val nextPeriodDateText = uiState.currentDate
+        .plusDays(uiState.daysUntilNextPeriod.toLong())
+        .format(DateTimeFormatter.ofPattern("EEE, MMM d"))
+    val activeArtifactItem = remember(uiState.economyProfile.activeArtifact) {
+        EconomyCatalog.findItem(uiState.economyProfile.activeArtifact) ?: EconomyCatalog.ALL_ITEMS.first()
+    }
+    val urgentNotification = remember(uiState.notifications, uiState.dismissedFloatingBannerId) {
+        uiState.notifications.firstOrNull {
+            !it.isRead && it.id != uiState.dismissedFloatingBannerId &&
+                (it.priority.equals("URGENT", true) || it.priority.equals("HIGH", true) ||
+                    it.type.equals("OFFICIAL_DISPATCH", true) || it.type.equals("WARNING", true))
+        }
+    }
 
-    var showWhyAppeared by remember { mutableStateOf(false) }
-
+    Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .testTag("home_screen_content")
             .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        // Top App Bar
+        if (urgentNotification != null) {
+            item {
+                com.example.ui.components.FloatingDispatchBanner(
+                    notification = urgentNotification,
+                    onOpenInbox = { viewModel.setNotificationCenterOpen(true) },
+                    onDismiss = { viewModel.dismissFloatingBanner(urgentNotification.id) }
+                )
+            }
+        }
+
+        if (uiState.sessionNeedsReauthentication) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("session_reauth_banner")
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Reconnect your account",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Your secure cloud session needs attention. Your health entries remain on this device until you sign in again.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = { viewModel.setShowAuthSheet(true) }) {
+                                Text("Sign in again")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Top Bar with Refined Vector Brand Mark
         item {
-            Spacer(modifier = Modifier.height(16.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_cyclecare_logo),
-                        contentDescription = "CycleCare Logo",
-                        modifier = Modifier.size(42.dp).clip(CircleShape)
+                        contentDescription = "CycleCare",
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
                             text = "CycleCare",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = dateText,
+                            text = currentDateText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier.testTag("settings_button")
-                ) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        // Empathetic Personalized Greeting
-        item {
-            val phase = todayPrediction?.phase ?: CyclePhase.FOLLICULAR
-            val greeting = LanguageEngine.formatPhaseGreeting(
-                phase = phase,
-                dayOfCycle = todayPrediction?.dayOfCycle ?: 1,
-                daysUntilPeriod = uiState.daysUntilNextPeriod,
-                tone = uiState.userTonePreference
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-            ) {
-                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-                    Text(text = "🌸", fontSize = 20.sp)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = greeting,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        // Hero Cycle Dial
-        item {
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(240.dp)
-                        .clip(CircleShape)
-                        .background(Brush.radialGradient(listOf(phaseColor.copy(alpha = 0.15f), Color.Transparent)))
-                )
-
-                CycleDial(
-                    prediction = todayPrediction,
-                    cycleLength = uiState.settings.averageCycleLength,
-                    periodDuration = uiState.settings.periodDuration,
-                    daysUntilPeriod = uiState.daysUntilNextPeriod,
-                    onClick = { viewModel.selectTab(AppNavTab.CYCLE) }
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
-        // Hero Trigger: "Something feels different?"
-        item {
-            Button(
-                onClick = { viewModel.openSomethingDifferentSheet() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("something_feels_different_button"),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Something feels different?", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        // Today's Care Priority Card (From Attention Engine)
-        item {
-            if (attentionItem != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().testTag("today_priority_card"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (attentionItem.isUrgent) Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BadgedBox(badge = {
+                        if (unreadCount > 0) {
+                            Badge {
+                                Text(if (unreadCount > 9) "9+" else "$unreadCount")
+                            }
+                        }
+                    }) {
+                        IconButton(
+                            onClick = { viewModel.setNotificationCenterOpen(true) },
+                            modifier = Modifier.size(48.dp).testTag("notification_bell_button")
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (attentionItem.isUrgent) Color(0xFFC62828) else MaterialTheme.colorScheme.primary)
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = attentionItem.category.uppercase(),
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = Color.White)
-                                    )
-                                }
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { showWhyAppeared = !showWhyAppeared }
-                            ) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "Why this appeared", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = if (unreadCount > 0) "Notifications, $unreadCount unread" else "Notifications",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(text = attentionItem.headline, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = attentionItem.message, style = MaterialTheme.typography.bodyMedium)
-
-                        if (showWhyAppeared) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                                    .padding(10.dp)
-                            ) {
-                                Text(
-                                    text = "💡 ${attentionItem.whyThisAppeared}",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Care: ${attentionItem.careSuggestion}",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.size(48.dp).testTag("settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(14.dp))
-            } else {
-                // "You're all caught up" Peaceful State
-                Card(
-                    modifier = Modifier.fillMaxWidth().testTag("all_caught_up_card"),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            }
+        }
+
+        // Editorial Greeting
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "TODAY, AT YOUR PACE",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Text(
+                    text = "A little space to check in.",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Notice what feels right for you today.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (safety.level != SafetyLevel.LOW) {
+            item {
+                val safetyColor = if (safety.isRedFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+                Surface(
+                    modifier = Modifier.fillMaxWidth().testTag("today_safety_notice"),
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (safety.isRedFlag) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
                 ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = "🌿", fontSize = 24.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(text = "You're all caught up", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(safety.title, style = MaterialTheme.typography.titleSmall, color = safetyColor)
+                        Text(safety.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                        Text(safety.actionAdvice, style = MaterialTheme.typography.labelMedium, color = safetyColor)
+                    }
+                }
+            }
+        }
+
+        // Primary Cycle Rhythm Dial Card
+        item {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .clickable(
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = "Open cycle calendar"
+                    ) { viewModel.selectTab(AppNavTab.CYCLE) }
+                    .testTag("today_cycle_snapshot"),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "YOUR CYCLE RHYTHM",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = phase?.title ?: "Not set",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    CycleDial(
+                        prediction = prediction,
+                        cycleLength = uiState.settings.averageCycleLength,
+                        periodDuration = uiState.settings.periodDuration,
+                        daysUntilPeriod = uiState.daysUntilNextPeriod,
+                        modifier = Modifier.size(228.dp),
+                        onClick = { viewModel.selectTab(AppNavTab.CYCLE) }
+                    )
+                    Text(
+                        text = when {
+                            !uiState.hasCycleAnchor -> "Add an approximate start date and cycle length to see estimates"
+                            uiState.cycleStartIsApproximate -> "Approximate calendar estimate · tap to open calendar"
+                            else -> "Calendar estimate from your entered date · tap to open calendar"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        if (uiState.hasCycleAnchor && uiState.daysUntilNextPeriod > 0) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().testTag("next_period_estimate_notice"),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Your period may be approaching around $nextPeriodDateText",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "A calendar estimate based on the cycle information you chose; timing can vary.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+        }
+
+        // 1-Tap Reactive Micro Check-In Card
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth().testTag("micro_check_in_card"),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("A quick check-in", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                text = "Nothing needs your attention right now. Your recent rhythm looks steady and consistent.",
+                                if (todayLog != null) "Saved in your daily log." else "Optional · choose a quick check-in to add to your log.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        if (todayLog != null) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Text(
+                                    text = "✓ Saved",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                     }
-                }
-                Spacer(modifier = Modifier.height(14.dp))
-            }
-        }
-
-        // 10-Second Micro Check-In Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth().testTag("micro_check_in_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "10-Second Check-In",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "How are you feeling right now?",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        listOf(
-                            "🙂 Good" to "GOOD",
-                            "😐 Okay" to "OKAY",
-                            "😣 Not great" to "LOW",
-                            "🤔 Off" to "UNCOMFORTABLE"
-                        ).forEach { (label, moodVal) ->
-                            val isSelected = todayLog?.moodLevel == moodVal
-                            Box(
+                    Text("How are you feeling?", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        MoodLevel.entries.forEach { mood ->
+                            FilterChip(
+                                selected = selectedMood == mood.name,
+                                onClick = {
+                                    viewModel.quickCheckIn(mood.name, todayLog?.energyLevel)
+                                },
+                                label = { Text("${mood.emoji} ${mood.displayName}") },
+                                modifier = Modifier.height(48.dp)
+                            )
+                        }
+                    }
+                    AnimatedVisibility(visible = uiState.economyToastMessage != null) {
+                        uiState.economyToastMessage?.let { rewardMsg ->
+                            Row(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 3.dp)
+                                    .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                    .then(if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier)
-                                    .clickable {
-                                        viewModel.quickCheckIn(mood = moodVal, energy = todayLog?.energyLevel ?: "NORMAL")
-                                    }
-                                    .padding(vertical = 9.dp),
-                                contentAlignment = Alignment.Center
+                                    .background(Color(0xFFC89D54).copy(alpha = 0.14f))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    maxLines = 1
+                                    text = "✨ $rewardMsg",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = Color(0xFF8C6222)
+                                )
+                                Text(
+                                    text = "Dismiss",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable { viewModel.clearEconomyToast() }
                                 )
                             }
                         }
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { viewModel.openSomethingDifferentSheet() }) {
+                            Text("Something feels different?")
+                        }
+                        TextButton(onClick = {
+                            viewModel.selectDate(uiState.currentDate)
+                            viewModel.selectTab(AppNavTab.TRACK)
+                        }) {
+                            Text("Add details")
+                        }
+                    }
+                }
+            }
+        }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(text = "Energy?", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                    Spacer(modifier = Modifier.height(6.dp))
+        // Priority Insight Note Card
+        item {
+            val attention = uiState.todayAttentionItem
+            val headline = attention?.headline ?: phase?.subtitle ?: "Your own rhythm"
+            val message = attention?.message ?: phase?.description ?: "Add a few cycle dates to make your estimates more personal."
+            Surface(
+                modifier = Modifier.fillMaxWidth().testTag("today_priority_card"),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("A NOTE FOR TODAY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                    Text(headline, style = MaterialTheme.typography.titleMedium)
+                    Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { viewModel.selectTab(AppNavTab.CARE) }) {
+                        Text("Explore in Care")
+                    }
+                }
+            }
+        }
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            "Low" to "LOW",
-                            "Normal" to "NORMAL",
-                            "Good" to "GOOD"
-                        ).forEach { (label, energyVal) ->
-                            val isSelected = todayLog?.energyLevel == energyVal
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isSelected) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                    .then(if (isSelected) Modifier.border(1.5.dp, Color(0xFFE65100), RoundedCornerShape(10.dp)) else Modifier)
-                                    .clickable {
-                                        viewModel.quickCheckIn(mood = todayLog?.moodLevel ?: "GOOD", energy = energyVal)
-                                    }
-                                    .padding(vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) Color(0xFFE65100) else MaterialTheme.colorScheme.onSurface
+        // Interactive 3D Artifact & Rewards Sanctuary Card + Subtle Premium Discovery
+        item {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .clickable { viewModel.setVaultOpen(true) }
+                    .testTag("open_vault_coin_pill"),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFC89D54).copy(alpha = 0.35f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color(0xFFC89D54).copy(alpha = 0.10f),
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                )
+                            )
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            InteractiveArtifact3D(
+                                drawableRes = activeArtifactItem.drawableRes,
+                                size = 56.dp,
+                                auraColor = Color(activeArtifactItem.auraColorHex),
+                                isInteractive = true,
+                                enableIdleRotation = false,
+                                harmonicPitchHz = activeArtifactItem.harmonicPitchHz
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "CycleCare rewards",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
                                     )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFFC89D54).copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = uiState.economyProfile.tier.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF8C6222),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "${uiState.economyProfile.coinBalance} coins · ${activeArtifactItem.name} active",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Supporter options add 2× coins and Circle topic previews",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
                             }
+                        }
+                        TextButton(onClick = { viewModel.setVaultOpen(true) }) {
+                            Text("View rewards")
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
         }
 
-        // Predictive Phase Quick Actions
         item {
-            val phase = todayPrediction?.phase ?: CyclePhase.FOLLICULAR
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                TextButton(
+                    onClick = { showCommunityCirclesDialog = true },
+                    modifier = Modifier.fillMaxWidth().testTag("home_community_circles_popup_button")
+                ) {
+                    Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) "Learn about Community Circles" else "Open Community Circles")
+                }
+                if (!uiState.isAdmin) {
+                    TextButton(
+                        onClick = { showPlansDialog = true },
+                        modifier = Modifier.fillMaxWidth().testTag("home_plans_popup_button")
+                    ) {
+                        Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE) "View plans" else "Review plan benefits")
+                    }
+                }
+            }
+        }
+
+        item {
             Text(
-                text = "Predictive Quick Actions",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                modifier = Modifier.fillMaxWidth()
+                text = "Your cycle notes are encrypted on this device. Sync options are in Settings.",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (phase) {
-                    CyclePhase.OVULATION -> {
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Log Fertile Fluid") { viewModel.openTrackForDate(uiState.currentDate) }
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Log Ovulation LH") { viewModel.openTrackForDate(uiState.currentDate) }
-                    }
-                    CyclePhase.MENSTRUAL -> {
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Log Period Flow") { viewModel.openTrackForDate(uiState.currentDate) }
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Pelvic Comfort Care") { viewModel.selectTab(AppNavTab.CARE) }
-                    }
-                    CyclePhase.LUTEAL -> {
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Log Cramps / Fatigue") { viewModel.openTrackForDate(uiState.currentDate) }
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Evening Rest Guide") { viewModel.selectTab(AppNavTab.CARE) }
-                    }
-                    CyclePhase.FOLLICULAR -> {
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Log Rising Energy") { viewModel.openTrackForDate(uiState.currentDate) }
-                        QuickActionChip(modifier = Modifier.weight(1f), text = "Creative Peak Tips") { viewModel.selectTab(AppNavTab.CARE) }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Personalized "Worth Knowing" Insight
-        item {
-            val phase = todayPrediction?.phase ?: CyclePhase.FOLLICULAR
-            val (worthKnowingTitle, worthKnowingBody) = when (phase) {
-                CyclePhase.MENSTRUAL -> Pair(
-                    "Worth Knowing Today",
-                    "Your resting metabolic rate drops slightly as uterine muscles contract. Natural prostaglandins are highest during the first 48 hours; heat therapy and anti-inflammatory foods can noticeably calm cellular tension."
-                )
-                CyclePhase.FOLLICULAR -> Pair(
-                    "Worth Knowing Today",
-                    "Estrogen is steadily rising, boosting neuroplasticity, memory retention, and muscle glycogen storage. It's often the easiest phase to learn new skills or tackle cognitively demanding tasks."
-                )
-                CyclePhase.OVULATION -> Pair(
-                    "Worth Knowing Today",
-                    "A surging LH surge triggers ovulation, elevating baseline testosterone briefly. You may experience sharper reflexes, higher social energy, and clearer, stretchy cervical fluid."
-                )
-                CyclePhase.LUTEAL -> Pair(
-                    "Worth Knowing Today",
-                    "Progesterone dominance increases core body temperature by ~0.3°C and shifts neurotransmitter sensitivity. If you feel more introspective or crave complex carbohydrates, it's physiological, not lack of willpower."
-                )
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth().testTag("worth_knowing_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("💡", fontSize = 16.sp)
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = worthKnowingTitle,
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = worthKnowingBody,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 18.sp
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        // Gentle Self-Care Suggestion
-        item {
-            val phase = todayPrediction?.phase ?: CyclePhase.FOLLICULAR
-            val selfCareSuggestion = when (phase) {
-                CyclePhase.MENSTRUAL -> "Warm pelvic heat pack, chamomile infusion, and restorative floor stretching."
-                CyclePhase.FOLLICULAR -> "Fresh leafy greens, high-protein breakfast, and trying a new outdoor route."
-                CyclePhase.OVULATION -> "Plentiful hydration, electrolyte balance, and taking advantage of peak stamina."
-                CyclePhase.LUTEAL -> "Magnesium-rich foods (dark chocolate, pumpkin seeds), warm bath, and an earlier bedtime."
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth().testTag("gentle_self_care_card"),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F8E9))
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "🌱", fontSize = 22.sp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Gentle Self-Care Suggestion",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = selfCareSuggestion,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF1B5E20)
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        // Water Hydration Counter
-        item {
-            val waterCount = todayLog?.waterGlasses ?: 0
-            Card(
-                modifier = Modifier.fillMaxWidth().testTag("water_widget"),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = CircleShape, color = Color(0xFFE1F5FE), modifier = Modifier.size(38.dp)) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Opacity, contentDescription = "Water", tint = Color(0xFF0288D1), modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(text = "Hydration", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                            Text(text = "$waterCount of 8 glasses", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = {
-                                val current = todayLog ?: CycleDayLog(dateString = uiState.currentDate.toString())
-                                viewModel.saveDayLog(current.copy(waterGlasses = (current.waterGlasses - 1).coerceAtLeast(0)))
-                            },
-                            modifier = Modifier.size(32.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                        Text(text = "$waterCount", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 10.dp))
-                        IconButton(
-                            onClick = {
-                                val current = todayLog ?: CycleDayLog(dateString = uiState.currentDate.toString())
-                                viewModel.saveDayLog(current.copy(waterGlasses = current.waterGlasses + 1))
-                            },
-                            modifier = Modifier.size(32.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(30.dp))
         }
     }
-}
 
-@Composable
-private fun QuickActionChip(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = text, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+    if (canUseDirectAi) {
+        FloatingActionButton(
+            onClick = { showPremiumChatDialog = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag("premium_direct_ai_fab"),
+            containerColor = MaterialTheme.colorScheme.primary
+        ) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = "Open personal AI chat", tint = MaterialTheme.colorScheme.onPrimary)
+        }
+    }
+
+    if (showCommunityCirclesDialog) {
+        AlertDialog(
+            onDismissRequest = { showCommunityCirclesDialog = false },
+            title = { Text("Community Circles", modifier = Modifier.testTag("community_circles_popup_title")) },
+            text = {
+                val accessCopy = when {
+                    uiState.isAdmin -> "This account has access. Only topic previews are currently connected; live group chat is not available."
+                    uiState.economyProfile.tier == UserEconomyTier.FREE -> "Supporter and Premium plan details include Circle access. Only topic previews are currently connected; live group chat is not available."
+                    else -> "Your ${uiState.economyProfile.tier.title} plan includes Circle access. Only topic previews are currently connected; live group chat is not available."
+                }
+                Text("Community Circles are guided discussion topics. $accessCopy This popup shows no member counts or activity and does not join or post anything.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCommunityCirclesDialog = false
+                    viewModel.setVaultOpen(true)
+                }) {
+                    Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) "See access options" else "Open Rewards")
+                }
+            },
+            dismissButton = { TextButton(onClick = { showCommunityCirclesDialog = false }) { Text("Not now") } }
+        )
+    }
+
+    if (showPlansDialog) {
+        AlertDialog(
+            onDismissRequest = { showPlansDialog = false },
+            title = { Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE) "CycleCare plans" else "Your CycleCare plan") },
+            text = {
+                val planCopy = when (uiState.economyProfile.tier) {
+                    UserEconomyTier.FREE -> "Cycle tracking and daily check-ins remain available on the free plan. Supporter and Premium options add the benefits listed in Rewards. Opening plan details does not start a payment."
+                    UserEconomyTier.SUPPORTER -> "Your Supporter plan includes its listed benefits. Compare current options in Rewards; opening them does not start a payment."
+                    UserEconomyTier.PREMIUM -> "Your Premium plan includes its listed benefits. Review your plan and current options in Rewards; opening them does not start a payment."
+                }
+                Text(planCopy)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPlansDialog = false
+                    viewModel.setVaultOpen(true)
+                }) { Text("Open Rewards") }
+            },
+            dismissButton = { TextButton(onClick = { showPlansDialog = false }) { Text("Not now") } }
+        )
+    }
+
+    if (showPremiumChatDialog) {
+        AlertDialog(
+            onDismissRequest = { showPremiumChatDialog = false },
+            title = { Text("Personal AI chat") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Your question is sent with your saved cycle preferences and recent entries to tailor the guidance. This is educational support, not a diagnosis.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = premiumChatPrompt,
+                        onValueChange = { premiumChatPrompt = it.take(600) },
+                        modifier = Modifier.fillMaxWidth().testTag("premium_direct_ai_prompt"),
+                        label = { Text("What would you like help with?") },
+                        minLines = 3
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = premiumChatPrompt.isNotBlank(),
+                    onClick = {
+                        val question = premiumChatPrompt.trim()
+                        premiumChatPrompt = ""
+                        showPremiumChatDialog = false
+                        viewModel.selectTab(AppNavTab.CARE)
+                        viewModel.consultCare(question, includeFullContext = true)
+                    }
+                ) { Text("Ask CycleCare") }
+            },
+            dismissButton = { TextButton(onClick = { showPremiumChatDialog = false }) { Text("Cancel") } }
+        )
+    }
     }
 }

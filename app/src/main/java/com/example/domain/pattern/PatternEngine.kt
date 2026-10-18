@@ -5,141 +5,135 @@ import com.example.data.local.CycleSettings
 import com.example.data.model.HealthPattern
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 data class BaselineMetrics(
     val averageCycleLength: Double,
     val medianCycleLength: Int,
     val minCycleLength: Int,
     val maxCycleLength: Int,
-    val variabilityDays: Int, // e.g. ±2 days
+    val variabilityDays: Int,
     val isRegular: Boolean,
-    val totalLoggedDays: Int
+    val totalLoggedDays: Int,
+    val observedCycleIntervals: Int = 0
 )
 
 object PatternEngine {
-
     /**
-     * Computes cycle statistical baselines from user history.
+     * Computes cycle-length statistics from distinct observed bleeding episodes.
+     * A bleeding episode is grouped up to the configured period duration to avoid
+     * counting every logged bleeding day as a new cycle start. The current profile
+     * start date is included when it is valid. With fewer than two observed starts,
+     * the user's configured cycle length is shown as an estimate, not as measured history.
      */
     fun computeBaseline(settings: CycleSettings, logs: List<CycleDayLog>): BaselineMetrics {
-        val baseLength = settings.averageCycleLength
-        val loggedCount = logs.size
+        val starts = observedPeriodStarts(settings, logs)
+        val cycleLengths = starts.zipWithNext { first, next ->
+            ChronoUnit.DAYS.between(first, next).toInt()
+        }.filter { it in 1..120 }
+
+        val configuredLength = settings.averageCycleLength.coerceIn(21, 45)
+        if (cycleLengths.isEmpty()) {
+            return BaselineMetrics(
+                averageCycleLength = configuredLength.toDouble(),
+                medianCycleLength = configuredLength,
+                minCycleLength = configuredLength,
+                maxCycleLength = configuredLength,
+                variabilityDays = 0,
+                isRegular = false,
+                totalLoggedDays = validLogDateCount(logs),
+                observedCycleIntervals = 0
+            )
+        }
+
+        val sorted = cycleLengths.sorted()
+        val average = sorted.average()
+        val median = if (sorted.size % 2 == 1) {
+            sorted[sorted.size / 2].toDouble()
+        } else {
+            (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2.0
+        }
+        val variance = sorted.sumOf { (it - average) * (it - average) } / sorted.size
+        val variability = sqrt(variance).roundToInt()
 
         return BaselineMetrics(
-            averageCycleLength = baseLength.toDouble(),
-            medianCycleLength = baseLength,
-            minCycleLength = (baseLength - 2).coerceAtLeast(21),
-            maxCycleLength = (baseLength + 2).coerceAtMost(45),
-            variabilityDays = 2,
-            isRegular = true,
-            totalLoggedDays = loggedCount
+            averageCycleLength = average,
+            medianCycleLength = median.roundToInt(),
+            minCycleLength = sorted.first(),
+            maxCycleLength = sorted.last(),
+            variabilityDays = variability,
+            isRegular = sorted.size >= 2 &&
+                sorted.all { it in 21..45 } &&
+                sorted.last() - sorted.first() <= 7,
+            totalLoggedDays = validLogDateCount(logs),
+            observedCycleIntervals = sorted.size
         )
+    }
+
+    private fun observedPeriodStarts(settings: CycleSettings, logs: List<CycleDayLog>): List<LocalDate> {
+        val bleedingDays = logs.asSequence()
+            .filter { it.flowLevel.uppercase() in PERIOD_FLOW_LEVELS }
+            .mapNotNull { log -> runCatching { LocalDate.parse(log.dateString) }.getOrNull() }
+            .distinct()
+            .sorted()
+            .toList()
+
+        val starts = mutableListOf<LocalDate>()
+        var episodeStart: LocalDate? = null
+        val episodeWindow = settings.periodDuration.coerceIn(1, 10)
+        for (date in bleedingDays) {
+            val currentStart = episodeStart
+            if (currentStart == null || ChronoUnit.DAYS.between(currentStart, date) > episodeWindow) {
+                starts += date
+                episodeStart = date
+            }
+        }
+
+        val configuredStart = settings.lastPeriodStartDate
+            .takeIf(String::isNotBlank)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        if (configuredStart != null && starts.none { it == configuredStart }) starts += configuredStart
+        return starts.distinct().sorted()
     }
 
     /**
-     * Detects personalized recurring patterns from logged history across cycle phases.
+     * Surfaces repeated entries without assigning them to an estimated phase or claiming a cause.
+     * A single observation is shown in the log summary, not promoted to a recurring pattern.
      */
-    fun detectPatterns(settings: CycleSettings, logs: List<CycleDayLog>): List<HealthPattern> {
-        val patterns = mutableListOf<HealthPattern>()
-        val lastStart = try {
-            if (settings.lastPeriodStartDate.isNotBlank()) LocalDate.parse(settings.lastPeriodStartDate)
-            else LocalDate.now().minusDays(10)
-        } catch (e: Exception) {
-            LocalDate.now().minusDays(10)
-        }
+    fun detectPatterns(@Suppress("UNUSED_PARAMETER") settings: CycleSettings, logs: List<CycleDayLog>): List<HealthPattern> {
+        val datedLogs = logs.mapNotNull { log ->
+            runCatching { LocalDate.parse(log.dateString) to log }.getOrNull()
+        }.distinctBy { it.first }
+        if (datedLogs.isEmpty()) return emptyList()
 
-        // Aggregate symptom occurrences
-        var premenstrualHeadaches = 0
-        var lutealFatigue = 0
-        var lowEnergyInMenstruation = 0
-        var ovulatoryCervicalDischarge = 0
-        var moodChangesInLuteal = 0
+        val symptomCounts = datedLogs.flatMap { (_, log) ->
+            log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).distinct()
+        }.groupingBy { it }.eachCount()
 
-        logs.forEach { log ->
-            try {
-                val date = LocalDate.parse(log.dateString)
-                val diff = ChronoUnit.DAYS.between(lastStart, date).toInt()
-                val cycleLength = settings.averageCycleLength.coerceIn(21, 45)
-                val cycleDay = Math.floorMod(diff, cycleLength) + 1
+        val repeatedSymptoms = symptomCounts.entries
+            .filter { it.value >= 2 }
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(6)
 
-                val symptoms = log.symptomsCsv.split(",")
-                val vaginal = log.vaginalHealthCsv.split(",")
-
-                // Luteal phase (days 18+)
-                if (cycleDay >= 18) {
-                    if (symptoms.contains("headache") || symptoms.contains("migraine")) premenstrualHeadaches++
-                    if (symptoms.contains("fatigue") || log.energyLevel in listOf("VERY_LOW", "LOW")) lutealFatigue++
-                    if (log.moodLevel in listOf("LOW", "UNCOMFORTABLE")) moodChangesInLuteal++
-                }
-
-                // Menstrual phase (days 1 to 5)
-                if (cycleDay in 1..settings.periodDuration) {
-                    if (log.energyLevel in listOf("VERY_LOW", "LOW") || symptoms.contains("fatigue")) lowEnergyInMenstruation++
-                }
-
-                // Fertile / Ovulatory window (days 12 to 16)
-                if (cycleDay in 12..16) {
-                    if (log.cervicalMucus.contains("Egg White") || vaginal.contains("discharge_normal")) ovulatoryCervicalDischarge++
-                }
-            } catch (_: Exception) {}
-        }
-
-        // Pattern 1: Premenstrual Energy Dips
-        if (lutealFatigue >= 1 || logs.isEmpty()) {
-            patterns.add(
-                HealthPattern(
-                    id = "luteal_fatigue",
-                    title = "Pre-Menstrual Energy Taper",
-                    supportingObservations = "Noticed in recent cycles during late luteal phase",
-                    confidence = "High",
-                    cyclePhase = "Luteal Phase (Days 20 - 28)",
-                    explanation = "Progesterone peaks then drops sharply right before menstruation, naturally dialing down cellular metabolic energy and serotonin.",
-                    actionableCare = "Honor this physiological slowdown: prioritize 8+ hours of sleep, magnesium glycinate, and switch high-impact cardio to restorative stretching."
-                )
-            )
-        }
-
-        // Pattern 2: Hormonal Headaches
-        if (premenstrualHeadaches >= 1) {
-            patterns.add(
-                HealthPattern(
-                    id = "premenstrual_headache",
-                    title = "Estrogen-Drop Headaches",
-                    supportingObservations = "Recorded 1-3 days prior to period start",
-                    confidence = "Moderate",
-                    cyclePhase = "Late Luteal to Menstrual Transition",
-                    explanation = "Rapid withdrawal of estrogen triggers vascular vasodilation in cranial vessels, frequently provoking cyclical tension or migraines.",
-                    actionableCare = "Hydrate proactively with electrolytes, ensure balanced blood sugar with complex protein snacks, and apply cold compresses."
-                )
-            )
-        }
-
-        // Pattern 3: Peak Fertile Fluid
-        patterns.add(
+        return repeatedSymptoms.map { (symptom, count) ->
+            val label = symptom.replace('_', ' ').replaceFirstChar { it.titlecase() }
             HealthPattern(
-                id = "fertile_mucus_pattern",
-                title = "Mid-Cycle Estrogenic Lubrication",
-                supportingObservations = "Correlated with estimated fertile window",
-                confidence = "High",
-                cyclePhase = "Ovulatory Window (Days 12 - 16)",
-                explanation = "Peak estrogen stimulates the cervix to produce clear, stretchy egg-white fluid, which nourishes and facilitates sperm motility.",
-                actionableCare = "This indicates high natural fertility. Use this bodily sign to inform your conception goals or protective choices."
+                id = "logged_${symptom.lowercase().replace(Regex("[^a-z0-9]+"), "_")}",
+                title = "Repeated log: $label",
+                supportingObservations = "Recorded on $count of ${datedLogs.size} saved dates",
+                confidence = "Observed in saved logs",
+                cyclePhase = "Not assigned",
+                explanation = "This is a repeated entry in your records only. The dates do not establish a cause, phase relationship, or medical significance.",
+                actionableCare = "Review the dated entries and share them with a qualified health professional if you would like help interpreting them."
             )
-        )
-
-        // Pattern 4: Restorative Reset
-        patterns.add(
-            HealthPattern(
-                id = "menstrual_rest_pattern",
-                title = "First-Day Menstrual Recharge",
-                supportingObservations = "Consistent across initial bleeding days",
-                confidence = "High",
-                cyclePhase = "Menstruation (Days 1 - 3)",
-                explanation = "Both estrogen and progesterone hit biological baseline, directing bodily energy toward uterine shedding and internal recovery.",
-                actionableCare = "Support your body with iron-rich foods (lentils, spinach), warm herbal teas (ginger, raspberry leaf), and gentle heat therapy for comfort."
-            )
-        )
-
-        return patterns
+        }
     }
+
+    private fun validLogDateCount(logs: List<CycleDayLog>): Int = logs
+        .mapNotNull { runCatching { LocalDate.parse(it.dateString) }.getOrNull() }
+        .distinct()
+        .size
+
+    private val PERIOD_FLOW_LEVELS = setOf("LIGHT", "MODERATE", "HEAVY", "UNUSUALLY_HEAVY")
 }

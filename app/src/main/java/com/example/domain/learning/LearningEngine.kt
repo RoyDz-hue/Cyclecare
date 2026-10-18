@@ -2,115 +2,285 @@ package com.example.domain.learning
 
 import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
+import com.example.data.local.OnboardingProfile
+import com.example.data.model.CyclePhase
+import com.example.data.model.DayPrediction
+import com.example.data.model.ExplainMyBodyResult
 import com.example.data.model.LearnedObservation
+import com.example.data.model.MonthlyTimelineEntry
+import com.example.data.model.SafetyLevel
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 
+/**
+ * Builds summaries only from saved logs and explicitly stored user settings.
+ * A calendar estimate is never presented as a measured biological event.
+ */
 object LearningEngine {
 
-    /**
-     * Generates "What I've Learned About You" cards for the personal health intelligence space.
-     */
     fun compileLearnedObservations(
         settings: CycleSettings,
-        logs: List<CycleDayLog>
+        logs: List<CycleDayLog>,
+        profile: OnboardingProfile? = null
     ): List<LearnedObservation> {
         val observations = mutableListOf<LearnedObservation>()
+        val validLogs = logsWithDates(logs)
+        val hasCompletedSetup = settings.isOnboardingCompleted || profile?.isCompleted == true
 
-        // 1. Your Usual Cycle
-        observations.add(
-            LearnedObservation(
-                id = "usual_cycle",
-                category = "Your usual cycle",
-                headline = "Consistent ~${settings.averageCycleLength}-Day Cycle Baseline",
-                description = "Your cycle rhythm demonstrates regular ovulatory pacing with bleeding averaging ${settings.periodDuration} days.",
-                confidence = "High confidence"
+        if (hasCompletedSetup) {
+            observations += LearnedObservation(
+                id = "starting_cycle_settings",
+                category = "Starting settings",
+                headline = "Your cycle estimate settings",
+                description = "Current settings: ${settings.averageCycleLength} days per cycle and ${settings.periodDuration} days for bleeding. These are setup values, not averages measured from your history.",
+                confidence = "User settings"
             )
+        }
+
+        val setupSymptoms = profile?.typicalSymptomsCsv.orEmpty()
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (setupSymptoms.isNotEmpty()) {
+            observations += LearnedObservation(
+                id = "setup_notes",
+                category = "Onboarding notes",
+                headline = "What you noted during setup",
+                description = "You marked ${setupSymptoms.joinToString { displayLabel(it) }} as typical during setup. These are self-reported setup notes, not daily log entries.",
+                confidence = "User-provided"
+            )
+        }
+
+        if (validLogs.isEmpty()) {
+            observations += LearnedObservation(
+                id = "still_learning_no_logs",
+                category = "Still learning",
+                headline = "No daily records to summarize yet",
+                description = "Insights will use only dates and observations you choose to save. Log whenever it is useful; missed days are not filled in.",
+                confidence = "Not enough data"
+            )
+            return observations
+        }
+
+        val symptomCounts = symptomCounts(validLogs)
+        symptomCounts.entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(5)
+            .forEach { (symptom, count) ->
+                observations += LearnedObservation(
+                    id = "logged_symptom_$symptom",
+                    category = "Recorded observation",
+                    headline = "Logged ${displayLabel(symptom)}",
+                    description = "You recorded ${displayLabel(symptom)} on $count of ${validLogs.size} saved log dates. This describes your entries only; it does not establish a cause or predict what will happen.",
+                    confidence = "Recorded entries"
+                )
+            }
+
+        observations += LearnedObservation(
+            id = "log_coverage",
+            category = "Your records",
+            headline = "${validLogs.size} saved log ${if (validLogs.size == 1) "date" else "dates"}",
+            description = "Your saved entries span ${validLogs.first().date} to ${validLogs.last().date}. Unlogged dates are left blank rather than estimated.",
+            confidence = "Saved records"
         )
 
-        // 2. Your Pattern
-        val fatigueLogs = logs.filter { it.symptomsCsv.contains("fatigue") || it.energyLevel == "LOW" || it.energyLevel == "VERY_LOW" }
-        if (fatigueLogs.isNotEmpty()) {
-            observations.add(
-                LearnedObservation(
-                    id = "luteal_dip",
-                    category = "Your pattern",
-                    headline = "Premenstrual Energy Transition",
-                    description = "Your energy tends to gently taper 1 to 3 days before your period begins as progesterone shifts.",
-                    confidence = "High confidence"
-                )
-            )
-        } else {
-            observations.add(
-                LearnedObservation(
-                    id = "follicular_boost",
-                    category = "Your pattern",
-                    headline = "Post-Period Vitality Lift",
-                    description = "Your logs show steady, resilient energy during the first week following menstruation.",
-                    confidence = "Moderate"
-                )
-            )
-        }
-
-        // 3. Something Changing (or Stable)
-        if (settings.averageCycleLength >= 32) {
-            observations.add(
-                LearnedObservation(
-                    id = "cycle_shift",
-                    category = "Something changing",
-                    headline = "Recent Cycles Slightly Longer",
-                    description = "Your recent cycles have been about 2 days longer than earlier records. Often correlated with stress, sleep, or travel.",
-                    confidence = "Moderate"
-                )
-            )
-        } else {
-            observations.add(
-                LearnedObservation(
-                    id = "cycle_stability",
-                    category = "Something changing",
-                    headline = "Predictable Hormonal Rhythm",
-                    description = "Variability across your recorded cycles remains within ±1–2 days of your median.",
-                    confidence = "High confidence"
-                )
-            )
-        }
-
-        // 4. Still Learning
-        val sleepLoggedCount = logs.count { it.sleepHours > 0 }
-        if (sleepLoggedCount < 5) {
-            observations.add(
-                LearnedObservation(
-                    id = "sleep_learning",
-                    category = "Still learning",
-                    headline = "Sleep & Phase Correlations",
-                    description = "We don't have enough recorded nights yet to confirm whether luteal progesterone affects your sleep depth. Log sleep when convenient.",
-                    confidence = "Still learning"
-                )
+        if (validLogs.size < 3) {
+            observations += LearnedObservation(
+                id = "still_learning_sparse_logs",
+                category = "Still learning",
+                headline = "More entries are needed for a trend",
+                description = "There are fewer than three saved log dates, so CycleCare is showing the entries themselves rather than inferring a recurring pattern.",
+                confidence = "Early records"
             )
         }
 
         return observations
     }
 
-    /**
-     * Generates structured "Questions for Your Doctor" clinical discussion prompts.
-     */
+    /** Returns only discussion prompts that can point to an actual saved observation. */
     fun generateDoctorSummary(
         settings: CycleSettings,
         logs: List<CycleDayLog>
     ): List<String> {
+        val validLogs = logsWithDates(logs)
+        if (validLogs.isEmpty()) return emptyList()
+
         val questions = mutableListOf<String>()
-        val hasSevereCramps = logs.any { it.painIntensity >= 7 || it.symptomsCsv.contains("severe_cramps") }
-        val hasUnusualFlow = logs.any { it.flowLevel == "UNUSUALLY_HEAVY" }
+        val symptoms = symptomCounts(validLogs)
+        symptoms.entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(3)
+            .forEach { (symptom, count) ->
+                questions += "I recorded ${displayLabel(symptom)} on $count saved ${if (count == 1) "date" else "dates"}. Is there anything specific I should monitor or bring to a follow-up?"
+            }
 
-        questions.add("My typical cycle length is ${settings.averageCycleLength} days with ${settings.periodDuration} days of bleeding.")
-        if (hasSevereCramps) {
-            questions.add("I experience sharp pelvic pain (rating 7+/10) during menstruation. Does this suggest primary dysmenorrhea or secondary factors like endometriosis?")
+        val severePain = validLogs.filter { it.log.painIntensity >= 7 }
+        if (severePain.isNotEmpty()) {
+            val highest = severePain.maxOf { it.log.painIntensity }
+            questions += "I recorded pain up to $highest/10 on ${severePain.size} saved ${if (severePain.size == 1) "date" else "dates"}. What follow-up, if any, would you recommend?"
         }
-        if (hasUnusualFlow) {
-            questions.add("I have recorded unusually heavy bleeding during my recent cycle. Would a ferritin and thyroid check be recommended?")
-        }
-        questions.add("Are my premenstrual fatigue and headache patterns within a healthy hormonal variation range?")
-        questions.add("What specific red flags should I monitor if my cycle length varies by more than 4 days?")
 
-        return questions
+        val heavyFlow = validLogs.filter { it.log.flowLevel in setOf("HEAVY", "UNUSUALLY_HEAVY") }
+        if (heavyFlow.isNotEmpty()) {
+            questions += "I recorded heavy flow on ${heavyFlow.size} saved ${if (heavyFlow.size == 1) "date" else "dates"}. What details would be useful to track or discuss?"
+        }
+
+        return questions.distinct()
     }
+
+    /** Generates a user-controlled summary of stored information, without clinical interpretation. */
+    fun generateClinicianReportText(
+        settings: CycleSettings,
+        logs: List<CycleDayLog>,
+        profile: OnboardingProfile? = null
+    ): String {
+        val today = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
+        val validLogs = logsWithDates(logs)
+        val symptoms = symptomCounts(validLogs)
+        val questions = generateDoctorSummary(settings, validLogs.map { it.log })
+        val dateChoice = profile?.approximatePeriodChoice.orEmpty()
+        val isApproximateDate = dateChoice.startsWith("APPROXIMATE:", ignoreCase = true)
+
+        return buildString {
+            appendLine("CYCLECARE — USER-ENTERED SUMMARY")
+            appendLine("Generated: $today")
+            appendLine("This summary reproduces saved information. It is not a diagnosis or a clinical assessment.")
+            appendLine()
+            appendLine("SETUP SETTINGS (not measured averages)")
+            appendLine("• Cycle-length setting: ${settings.averageCycleLength} days")
+            appendLine("• Bleeding-duration setting: ${settings.periodDuration} days")
+            when {
+                settings.lastPeriodStartDate.isBlank() -> appendLine("• Last period start date: Not provided")
+                isApproximateDate -> appendLine("• Last period start date: ${settings.lastPeriodStartDate} (estimated from the approximate range selected during setup)")
+                else -> appendLine("• Last period start date entered: ${settings.lastPeriodStartDate}")
+            }
+            appendLine()
+
+            if (validLogs.isEmpty()) {
+                appendLine("SAVED DAILY LOGS")
+                appendLine("• No daily log entries are saved.")
+                appendLine("• No symptom, pain, flow, sleep, mood, or energy history is inferred.")
+            } else {
+                appendLine("SAVED DAILY LOGS (${validLogs.size} dates)")
+                appendLine("• Date range: ${validLogs.first().date} to ${validLogs.last().date}")
+                val flowCounts = validLogs.map { it.log.flowLevel.uppercase() }
+                    .filter { it !in setOf("", "NONE", "UNKNOWN") }
+                    .groupingBy { it }.eachCount()
+                appendLine("• Flow entries: ${formatCounts(flowCounts)}")
+                appendLine("• Symptom tags: ${formatCounts(symptoms)}")
+
+                val painEntries = validLogs.filter { it.log.painIntensity > 0 }
+                if (painEntries.isNotEmpty()) {
+                    appendLine("• Pain ratings entered: ${painEntries.joinToString { "${it.date} ${it.log.painIntensity}/10" }}")
+                } else {
+                    appendLine("• Pain ratings: None entered")
+                }
+
+                val otherNotes = validLogs.filter { it.log.notes.isNotBlank() }
+                if (otherNotes.isNotEmpty()) {
+                    appendLine("• Notes entered:")
+                    otherNotes.forEach { appendLine("  - ${it.date}: ${it.log.notes.trim()}") }
+                }
+            }
+
+            if (questions.isNotEmpty()) {
+                appendLine()
+                appendLine("OPTIONAL DISCUSSION PROMPTS FROM SAVED ENTRIES")
+                questions.forEachIndexed { index, question -> appendLine("${index + 1}. $question") }
+            }
+        }.trimEnd()
+    }
+
+    /** Creates month groups only for months that contain saved log entries. */
+    fun generateMonthlyTimeline(
+        settings: CycleSettings,
+        logs: List<CycleDayLog>
+    ): List<MonthlyTimelineEntry> {
+        val formatter = DateTimeFormatter.ofPattern("MMMM yyyy")
+        return logsWithDates(logs)
+            .groupBy { YearMonth.from(it.date) }
+            .toSortedMap(compareByDescending { it })
+            .map { (month, entries) ->
+                val monthSymptoms = symptomCounts(entries)
+                val recordedEnergy = entries.map { it.log.energyLevel.uppercase() }
+                    .filter { it !in setOf("", "NORMAL", "UNKNOWN") }
+                    .groupingBy { it }.eachCount()
+                val bleedingDays = entries.count { it.log.flowLevel.uppercase() in setOf("LIGHT", "MODERATE", "HEAVY", "UNUSUALLY_HEAVY") }
+                MonthlyTimelineEntry(
+                    monthTitle = month.atDay(1).format(formatter),
+                    cycleLengthDays = 0,
+                    periodBleedingDays = bleedingDays,
+                    dominantEnergy = recordedEnergy.maxByOrNull { it.value }?.key?.let(::displayLabel) ?: "Not recorded",
+                    dominantSymptom = monthSymptoms.maxByOrNull { it.value }?.key?.let(::displayLabel) ?: "No symptom tags recorded",
+                    patternNoticed = null
+                )
+            }
+    }
+
+    /** Provides general education tied to a calendar estimate, never a measured phase. */
+    fun synthesizeExplainMyBody(
+        settings: CycleSettings,
+        logs: List<CycleDayLog>,
+        prediction: DayPrediction?,
+        query: String
+    ): ExplainMyBodyResult {
+        if (prediction == null) {
+            return ExplainMyBodyResult(
+                summary = "No cycle estimate is available yet.",
+                whatMightBeHappening = "Add a period start date if you want CycleCare to show a calendar estimate. You can still use daily logging and general care information without one.",
+                whatSupportsThat = "There is no saved date anchor to calculate a cycle day.",
+                whatElseCouldExplain = "Symptoms and body changes can have many causes and cannot be identified from an empty cycle calendar.",
+                whatYouCanDo = "Use the calendar only when its assumptions fit; otherwise leave the estimate unset.",
+                whatToWatch = "You can record any changes that matter to you without attributing them to a cycle phase.",
+                whenToGetChecked = "Contact a qualified health professional if you have symptoms that concern you.",
+                safetyLevel = SafetyLevel.LOW
+            )
+        }
+
+        val phaseName = prediction.phase.title
+        val estimateNote = "Based on the period date and cycle length in your settings; this is a calendar estimate, not a hormone measurement or confirmation of ovulation."
+        val phaseEducation = when (prediction.phase) {
+            CyclePhase.MENSTRUAL -> "During menstrual bleeding, the uterus sheds its lining. Experiences vary from person to person and from cycle to cycle."
+            CyclePhase.FOLLICULAR -> "The follicular phase runs from the start of bleeding toward ovulation. Timing varies, and calendar dates cannot confirm what is happening in an individual body."
+            CyclePhase.OVULATION -> "Ovulation timing varies. A calendar window cannot confirm whether or when ovulation occurred."
+            CyclePhase.LUTEAL -> "The luteal phase follows ovulation and ends when the next period begins. Its timing and associated experiences vary."
+        }
+
+        return ExplainMyBodyResult(
+            summary = "Calendar estimate: cycle day ${prediction.dayOfCycle}, $phaseName.",
+            whatMightBeHappening = phaseEducation,
+            whatSupportsThat = estimateNote,
+            whatElseCouldExplain = "Any symptoms you experience may have explanations unrelated to cycle timing; these notes do not identify a cause.",
+            whatYouCanDo = "If it is useful, keep notes on dates and observations. Calendar-based fertile-window estimates should not be used as contraception.",
+            whatToWatch = "If your dates or symptoms change, you can update your record; the estimate will change with the information you enter.",
+            whenToGetChecked = "Seek advice from a qualified health professional about symptoms that are severe, new, persistent, or worrying to you.",
+            safetyLevel = SafetyLevel.LOW
+        )
+    }
+
+    private data class DatedLog(val date: LocalDate, val log: CycleDayLog)
+
+    private fun logsWithDates(logs: List<CycleDayLog>): List<DatedLog> = logs
+        .mapNotNull { log -> runCatching { DatedLog(LocalDate.parse(log.dateString), log) }.getOrNull() }
+        .distinctBy { it.date }
+        .sortedBy { it.date }
+
+    private fun symptomCounts(logs: List<DatedLog>): Map<String, Int> = logs
+        .flatMap { it.log.symptomsCsv.split(',') }
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .groupingBy { it }
+        .eachCount()
+
+    private fun formatCounts(counts: Map<String, Int>): String = if (counts.isEmpty()) {
+        "None entered"
+    } else {
+        counts.entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .joinToString(", ") { "${displayLabel(it.key)} (${it.value})" }
+    }
+
+    private fun displayLabel(value: String): String = value
+        .replace('_', ' ')
+        .trim()
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }

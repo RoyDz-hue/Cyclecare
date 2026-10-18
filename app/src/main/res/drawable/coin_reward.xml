@@ -1,0 +1,59 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Glowing Radiant Aura Ring -->
+    <path
+        android:pathData="M100,12 A88,88 0 1,1 99.9,12 Z"
+        android:strokeWidth="10"
+        android:strokeColor="#60FFD4AF" />
+
+    <!-- Gold Medal Base Surface -->
+    <path
+        android:pathData="M100,20 A80,80 0 1,1 99.9,20 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="100"
+                android:centerY="100"
+                android:gradientRadius="80">
+                <item android:offset="0.0" android:color="#FFFFF8E1" />
+                <item android:offset="0.4" android:color="#FFE0A728" />
+                <item android:offset="0.8" android:color="#FFB8860B" />
+                <item android:offset="1.0" android:color="#FF6B4704" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner Laurel Wreath Border -->
+    <path
+        android:pathData="M100,32 A68,68 0 1,1 99.9,32 Z"
+        android:strokeWidth="4"
+        android:strokeColor="#FFFFECB3" />
+
+    <!-- Center Trophy Cup Graphic -->
+    <path
+        android:pathData="M78,70 L122,70 L116,108 C114,118 108,122 100,122 C92,122 86,118 84,108 Z"
+        android:fillColor="#FFFFF8E1" />
+
+    <!-- Trophy Stem & Base -->
+    <path
+        android:pathData="M96,122 L104,122 L104,136 L96,136 Z M76,136 L124,136 L124,144 L76,144 Z"
+        android:fillColor="#FFFFECB3" />
+
+    <!-- Trophy Star Emblem -->
+    <path
+        android:pathData="M100,76 L103,84 L112,85 L105,91 L107,100 L100,95 L93,100 L95,91 L88,85 L97,84 Z"
+        android:fillColor="#FFE0A728" />
+
+    <!-- Sparkle Stars -->
+    <path
+        android:pathData="M152,36 L154,42 L160,44 L154,46 L152,52 L150,46 L144,44 L150,42 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M48,148 L50,154 L56,156 L50,158 L48,164 L46,158 L40,156 L46,154 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

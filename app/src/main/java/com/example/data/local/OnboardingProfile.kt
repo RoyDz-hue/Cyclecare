@@ -19,8 +19,12 @@ data class OnboardingProfile(
     val selectedGoalsCsv: String = "",
     val lastPeriodDateString: String = "", // YYYY-MM-DD
     val approximatePeriodChoice: String = "EXACT", // e.g., "EXACT", "Today", "A few days ago", etc.
-    val cycleLengthOption: String = "25–28 days",
+    val cycleLengthOption: String = "",
     val cycleLengthDays: Int = 28,
     val periodDurationDays: Int = 5,
-    val remindFertileWindow: Boolean = true
+    val remindFertileWindow: Boolean = false,
+    val typicalSymptomsCsv: String = "",
+    val typicalEnergy: String = "",
+    val typicalSleepQuality: String = "",
+    val hasCompletedDeepBaseline: Boolean = false
 )

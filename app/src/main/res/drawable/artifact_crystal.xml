@@ -1,0 +1,113 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Golden Jewelry Base Pedestal -->
+    <path
+        android:pathData="M80,165 L120,165 L115,178 L85,178 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="80"
+                android:startY="165"
+                android:endX="120"
+                android:endY="178">
+                <item android:offset="0.0" android:color="#F7D488" />
+                <item android:offset="0.5" android:color="#BE8222" />
+                <item android:offset="1.0" android:color="#EAB852" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M85,178 L115,178 L112,185 L88,185 Z"
+        android:fillColor="#926011" />
+
+    <!-- Ornate Claws / Crown Mount holding Crystal -->
+    <path
+        android:pathData="M74,152 L126,152 L120,165 L80,165 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="75"
+                android:startY="150"
+                android:endX="125"
+                android:endY="165">
+                <item android:offset="0.0" android:color="#FFE8A3" />
+                <item android:offset="0.3" android:color="#D69B32" />
+                <item android:offset="0.7" android:color="#9E6814" />
+                <item android:offset="1.0" android:color="#F4C663" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Main Crystal Body - Left Facet -->
+    <path
+        android:pathData="M100,24 L72,55 L74,152 L100,160 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="70"
+                android:startY="30"
+                android:endX="100"
+                android:endY="155">
+                <item android:offset="0.0" android:color="#FCE4EC" />
+                <item android:offset="0.4" android:color="#F8BBD0" />
+                <item android:offset="0.8" android:color="#EC407A" />
+                <item android:offset="1.0" android:color="#C2185B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Main Crystal Body - Center Front Facet (Brilliant & Light) -->
+    <path
+        android:pathData="M100,24 L100,160 L126,152 L128,55 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="100"
+                android:startY="25"
+                android:endX="128"
+                android:endY="155">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.3" android:color="#FDE8EF" />
+                <item android:offset="0.7" android:color="#F48FB1" />
+                <item android:offset="1.0" android:color="#D81B60" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Crystal Apex Top Facet Reflection -->
+    <path
+        android:pathData="M100,24 L72,55 L100,48 L128,55 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="72"
+                android:startY="24"
+                android:endX="128"
+                android:endY="55">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.5" android:color="#FFF0F5" />
+                <item android:offset="1.0" android:color="#F8BBD0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Specular Highlight Bevel Ridge -->
+    <path
+        android:pathData="M100,24 L100,160"
+        android:strokeWidth="2"
+        android:strokeColor="#99FFFFFF" />
+
+    <!-- Internal Prismatic Sparkle -->
+    <path
+        android:pathData="M112,85 L114,92 L121,94 L114,96 L112,103 L110,96 L103,94 L110,92 Z"
+        android:fillColor="#E6FFFFFF" />
+    <path
+        android:pathData="M88,118 L89,122 L93,123 L89,124 L88,128 L87,124 L83,123 L87,122 Z"
+        android:fillColor="#B3FFFFFF" />
+
+</vector>
