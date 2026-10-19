@@ -2,6 +2,7 @@ package com.example.security
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import com.example.data.local.OwnerDataGate
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -72,22 +73,22 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             } catch (_: Exception) {
                 val legacy = ctx.getSharedPreferences(PREFS_LEGACY_NAME, Context.MODE_PRIVATE)
                 // Never keep session credentials or the quick-unlock PIN in the plaintext fallback.
-                legacy.edit()
-                    .remove(KEY_USER_ID)
-                    .remove(KEY_USER_EMAIL)
-                    .remove(KEY_ACCESS_TOKEN)
-                    .remove(KEY_REFRESH_TOKEN)
-                    .remove(KEY_SESSION_EXPIRES_AT)
-                    .remove(KEY_PENDING_EMAIL)
-                    .remove(KEY_GOOGLE_PKCE_VERIFIER)
-                    .remove(KEY_PENDING_AUTH_ACTION)
-                    .remove(KEY_PENDING_GUEST_EMAIL_LINK)
-                    .remove(KEY_NEEDS_PASSWORD_SETUP)
-                    .remove(KEY_PIN)
-                    .remove(KEY_PIN_ENABLED)
-                    .remove(KEY_FINGERPRINT_ENABLED)
-                    .remove(KEY_QUICK_UNLOCK_ASKED)
-                    .apply()
+                legacy.edit {
+                    remove(KEY_USER_ID)
+                    remove(KEY_USER_EMAIL)
+                    remove(KEY_ACCESS_TOKEN)
+                    remove(KEY_REFRESH_TOKEN)
+                    remove(KEY_SESSION_EXPIRES_AT)
+                    remove(KEY_PENDING_EMAIL)
+                    remove(KEY_GOOGLE_PKCE_VERIFIER)
+                    remove(KEY_PENDING_AUTH_ACTION)
+                    remove(KEY_PENDING_GUEST_EMAIL_LINK)
+                    remove(KEY_NEEDS_PASSWORD_SETUP)
+                    remove(KEY_PIN)
+                    remove(KEY_PIN_ENABLED)
+                    remove(KEY_FINGERPRINT_ENABLED)
+                    remove(KEY_QUICK_UNLOCK_ASKED)
+                }
                 PreferenceStore(legacy, secure = false)
             }
         }
@@ -97,20 +98,20 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
                 val legacy = ctx.getSharedPreferences(PREFS_LEGACY_NAME, Context.MODE_PRIVATE)
                 val allLegacy = legacy.all
                 if (allLegacy.isNotEmpty()) {
-                    val editor = securePrefs.edit()
-                    for ((key, value) in allLegacy) {
-                        if (!securePrefs.contains(key)) {
-                            when (value) {
-                                is String -> editor.putString(key, value)
-                                is Boolean -> editor.putBoolean(key, value)
-                                is Int -> editor.putInt(key, value)
-                                is Long -> editor.putLong(key, value)
-                                is Float -> editor.putFloat(key, value)
+                    securePrefs.edit {
+                        for ((key, value) in allLegacy) {
+                            if (!securePrefs.contains(key)) {
+                                when (value) {
+                                    is String -> putString(key, value)
+                                    is Boolean -> putBoolean(key, value)
+                                    is Int -> putInt(key, value)
+                                    is Long -> putLong(key, value)
+                                    is Float -> putFloat(key, value)
+                                }
                             }
                         }
                     }
-                    editor.apply()
-                    legacy.edit().clear().apply()
+                    legacy.edit { clear() }
                 }
             } catch (_: Throwable) {}
         }
@@ -123,7 +124,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var hasCompletedInitialAuth: Boolean
         get() = isLocalOnlyMode || (isSecureStorageAvailable && prefs.getBoolean(KEY_INITIAL_AUTH_COMPLETED, false))
-        set(value) { if (isSecureStorageAvailable || isLocalOnlyMode) prefs.edit().putBoolean(KEY_INITIAL_AUTH_COMPLETED, value).apply() }
+        set(value) { if (isSecureStorageAvailable || isLocalOnlyMode) prefs.edit { putBoolean(KEY_INITIAL_AUTH_COMPLETED, value) } }
 
     var isCloudSyncAllowed: Boolean
         get() = prefs.getBoolean("${KEY_CLOUD_SYNC_ALLOWED}_v2_${effectiveUserId}", false)
@@ -228,11 +229,11 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
         val normalized = provider.trim().uppercase()
         if (normalized !in AI_PROVIDERS || !isSecureStorageAvailable) return
         val owner = effectiveUserId
-        prefs.edit()
-            .putBoolean(providerKey(normalized, "granted"), granted)
-            .putString(providerKey(normalized, "revision"), AI_CONSENT_REVISION)
-            .putString(providerKey(normalized, "account"), owner)
-            .apply()
+        prefs.edit {
+            putBoolean(providerKey(normalized, "granted"), granted)
+            putString(providerKey(normalized, "revision"), AI_CONSENT_REVISION)
+            putString(providerKey(normalized, "account"), owner)
+        }
     }
 
     fun revokeAllProviderConsents() {
@@ -280,9 +281,11 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     fun saveProcessorReceipt(receipt: com.example.domain.ai.AiProcessorReceipt) {
         if (!isSecureStorageAvailable || receipt.providerId.isBlank() || receipt.revision < 0 || receipt.manifestFingerprint.isBlank()) return
-        prefs.edit().putInt(receiptKey(receipt.providerId, "revision"), receipt.revision)
-            .putString(receiptKey(receipt.providerId, "fingerprint"), receipt.manifestFingerprint)
-            .putString(receiptKey(receipt.providerId, "account"), effectiveUserId).apply()
+        prefs.edit {
+            putInt(receiptKey(receipt.providerId, "revision"), receipt.revision)
+            putString(receiptKey(receipt.providerId, "fingerprint"), receipt.manifestFingerprint)
+            putString(receiptKey(receipt.providerId, "account"), effectiveUserId)
+        }
         clearPendingProcessorRevoke(receipt.providerId)
     }
 
@@ -298,8 +301,11 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     fun revokeProcessorReceipt(provider: String) {
         if (!isSecureStorageAvailable) return
         val id = provider.trim().uppercase()
-        prefs.edit().remove(receiptKey(id, "revision")).remove(receiptKey(id, "fingerprint"))
-            .putString(receiptKey(id, "account"), effectiveUserId).apply()
+        prefs.edit {
+            remove(receiptKey(id, "revision"))
+            remove(receiptKey(id, "fingerprint"))
+            putString(receiptKey(id, "account"), effectiveUserId)
+        }
         val current = pendingProcessorRevokes().toMutableSet(); current += id
         prefs.edit().putString(pendingRevokeKey(), JSONArray(current.toList()).toString()).commit()
     }
@@ -307,7 +313,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     fun clearPendingProcessorRevoke(provider: String) {
         if (!isSecureStorageAvailable) return
         val id = provider.trim().uppercase(); val current = pendingProcessorRevokes().toMutableSet(); current.remove(id)
-        prefs.edit().putString(pendingRevokeKey(), JSONArray(current.toList()).toString()).apply()
+        prefs.edit { putString(pendingRevokeKey(), JSONArray(current.toList()).toString()) }
     }
 
     fun pendingProcessorRevokes(): Set<String> {
@@ -317,21 +323,21 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var isSoundEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_SOUND_ENABLED, value) }
 
     val deviceId: String
         get() {
             var id = prefs.getString(KEY_DEVICE_ID, null)
             if (id.isNullOrBlank()) {
                 id = UUID.randomUUID().toString()
-                prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+                prefs.edit { putString(KEY_DEVICE_ID, id) }
             }
             return id
         }
 
     var accountMode: String
         get() = prefs.getString(KEY_ACCOUNT_MODE, "ANONYMOUS") ?: "ANONYMOUS"
-        set(value) = prefs.edit().putString(KEY_ACCOUNT_MODE, value).apply()
+        set(value) = prefs.edit { putString(KEY_ACCOUNT_MODE, value) }
 
     var userId: String?
         get() = readSecureString(KEY_USER_ID)
@@ -354,7 +360,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var sessionExpiresAtSeconds: Long
         get() = if (isSecureStorageAvailable) prefs.getLong(KEY_SESSION_EXPIRES_AT, 0L) else 0L
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putLong(KEY_SESSION_EXPIRES_AT, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putLong(KEY_SESSION_EXPIRES_AT, value) } }
 
     var pendingEmail: String?
         get() = readSecureString(KEY_PENDING_EMAIL)
@@ -370,21 +376,21 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var isPendingGuestEmailLink: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_PENDING_GUEST_EMAIL_LINK, false)
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putBoolean(KEY_PENDING_GUEST_EMAIL_LINK, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_PENDING_GUEST_EMAIL_LINK, value) } }
 
     var needsPasswordSetup: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_NEEDS_PASSWORD_SETUP, false)
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putBoolean(KEY_NEEDS_PASSWORD_SETUP, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_NEEDS_PASSWORD_SETUP, value) } }
 
     var pin: String?
         get() = readSecureString(KEY_PIN)
         set(value) {
             if (!isSecureStorageAvailable) return
             if (value.isNullOrBlank()) {
-                prefs.edit().remove(KEY_PIN).apply()
+                prefs.edit { remove(KEY_PIN) }
             } else {
                 val hashed = hashPin(value)
-                prefs.edit().putString(KEY_PIN, hashed).apply()
+                prefs.edit { putString(KEY_PIN, hashed) }
             }
         }
 
@@ -426,27 +432,27 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var isPinEnabled: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_PIN_ENABLED, false)
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putBoolean(KEY_PIN_ENABLED, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_PIN_ENABLED, value) } }
 
     var isFingerprintEnabled: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_FINGERPRINT_ENABLED, false)
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putBoolean(KEY_FINGERPRINT_ENABLED, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_FINGERPRINT_ENABLED, value) } }
 
     var isQuickUnlockAsked: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_QUICK_UNLOCK_ASKED, false)
-        set(value) { if (isSecureStorageAvailable) prefs.edit().putBoolean(KEY_QUICK_UNLOCK_ASKED, value).apply() }
+        set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_QUICK_UNLOCK_ASKED, value) } }
 
     var lastSyncTimestamp: Long
         get() = prefs.getLong(KEY_LAST_SYNC_TIMESTAMP, 0L)
-        set(value) = prefs.edit().putLong(KEY_LAST_SYNC_TIMESTAMP, value).apply()
+        set(value) = prefs.edit { putLong(KEY_LAST_SYNC_TIMESTAMP, value) }
 
     var lastSyncMessage: String
         get() = prefs.getString(KEY_LAST_SYNC_MESSAGE, "Never synced") ?: "Never synced"
-        set(value) = prefs.edit().putString(KEY_LAST_SYNC_MESSAGE, value).apply()
+        set(value) = prefs.edit { putString(KEY_LAST_SYNC_MESSAGE, value) }
 
     var lastSyncSuccess: Boolean
         get() = prefs.getBoolean(KEY_LAST_SYNC_STATUS, false)
-        set(value) = prefs.edit().putBoolean(KEY_LAST_SYNC_STATUS, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_LAST_SYNC_STATUS, value) }
 
     val isAuthenticated: Boolean
         get() = isSecureStorageAvailable && !accessToken.isNullOrBlank()
@@ -467,76 +473,76 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var accountStatus: String
         get() = prefs.getString(KEY_ACCOUNT_STATUS, "ACTIVE") ?: "ACTIVE"
-        set(value) = prefs.edit().putString(KEY_ACCOUNT_STATUS, value).apply()
+        set(value) = prefs.edit { putString(KEY_ACCOUNT_STATUS, value) }
 
     var suspensionReason: String?
         get() = prefs.getString(KEY_SUSPENSION_REASON, null)
-        set(value) = prefs.edit().putString(KEY_SUSPENSION_REASON, value).apply()
+        set(value) = prefs.edit { putString(KEY_SUSPENSION_REASON, value) }
 
     var suspendedUntil: String?
         get() = prefs.getString(KEY_SUSPENDED_UNTIL, null)
-        set(value) = prefs.edit().putString(KEY_SUSPENDED_UNTIL, value).apply()
+        set(value) = prefs.edit { putString(KEY_SUSPENDED_UNTIL, value) }
 
     var pendingOfflineClaimDate: String?
         get() = prefs.getString(KEY_PENDING_OFFLINE_CLAIM_DATE, null)
-        set(value) = prefs.edit().putString(KEY_PENDING_OFFLINE_CLAIM_DATE, value).apply()
+        set(value) = prefs.edit { putString(KEY_PENDING_OFFLINE_CLAIM_DATE, value) }
 
     var pendingOfflineClaimAmount: Long
         get() = prefs.getLong(KEY_PENDING_OFFLINE_CLAIM_AMOUNT, 0L)
-        set(value) = prefs.edit().putLong(KEY_PENDING_OFFLINE_CLAIM_AMOUNT, value).apply()
+        set(value) = prefs.edit { putLong(KEY_PENDING_OFFLINE_CLAIM_AMOUNT, value) }
 
     var isPendingReconciliation: Boolean
         get() = prefs.getBoolean(KEY_IS_PENDING_RECONCILIATION, false)
-        set(value) = prefs.edit().putBoolean(KEY_IS_PENDING_RECONCILIATION, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_IS_PENDING_RECONCILIATION, value) }
 
     fun recordOfflineClaim(claimDate: String, amount: Long) {
-        prefs.edit()
-            .putString(KEY_PENDING_OFFLINE_CLAIM_DATE, claimDate)
-            .putLong(KEY_PENDING_OFFLINE_CLAIM_AMOUNT, amount)
-            .putBoolean(KEY_IS_PENDING_RECONCILIATION, true)
-            .apply()
+        prefs.edit {
+            putString(KEY_PENDING_OFFLINE_CLAIM_DATE, claimDate)
+            putLong(KEY_PENDING_OFFLINE_CLAIM_AMOUNT, amount)
+            putBoolean(KEY_IS_PENDING_RECONCILIATION, true)
+        }
     }
 
     fun clearPendingOfflineClaim() {
-        prefs.edit()
-            .remove(KEY_PENDING_OFFLINE_CLAIM_DATE)
-            .remove(KEY_PENDING_OFFLINE_CLAIM_AMOUNT)
-            .putBoolean(KEY_IS_PENDING_RECONCILIATION, false)
-            .apply()
+        prefs.edit {
+            remove(KEY_PENDING_OFFLINE_CLAIM_DATE)
+            remove(KEY_PENDING_OFFLINE_CLAIM_AMOUNT)
+            putBoolean(KEY_IS_PENDING_RECONCILIATION, false)
+        }
     }
 
     fun setAccountRestriction(status: String, reason: String?, until: String?) {
-        prefs.edit()
-            .putString(KEY_ACCOUNT_STATUS, status)
-            .putString(KEY_SUSPENSION_REASON, reason)
-            .putString(KEY_SUSPENDED_UNTIL, until)
-            .apply()
+        prefs.edit {
+            putString(KEY_ACCOUNT_STATUS, status)
+            putString(KEY_SUSPENSION_REASON, reason)
+            putString(KEY_SUSPENDED_UNTIL, until)
+        }
     }
 
     fun clearSession() = synchronized(prefs) {
-        prefs.edit()
-            .putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L))
-            .remove(KEY_ACCESS_TOKEN)
-            .remove(KEY_REFRESH_TOKEN)
-            .remove(KEY_SESSION_EXPIRES_AT)
-            .remove(KEY_GOOGLE_PKCE_VERIFIER)
-            .remove(KEY_USER_ID)
-            .remove(KEY_USER_EMAIL)
-            .remove(KEY_PENDING_EMAIL)
-            .remove(KEY_PENDING_AUTH_ACTION)
-            .putBoolean(KEY_PENDING_GUEST_EMAIL_LINK, false)
-            .putBoolean(KEY_NEEDS_PASSWORD_SETUP, false)
-            .putString(KEY_ACCOUNT_MODE, "ANONYMOUS")
-            .apply()
+        prefs.edit {
+            putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L))
+            remove(KEY_ACCESS_TOKEN)
+            remove(KEY_REFRESH_TOKEN)
+            remove(KEY_SESSION_EXPIRES_AT)
+            remove(KEY_GOOGLE_PKCE_VERIFIER)
+            remove(KEY_USER_ID)
+            remove(KEY_USER_EMAIL)
+            remove(KEY_PENDING_EMAIL)
+            remove(KEY_PENDING_AUTH_ACTION)
+            putBoolean(KEY_PENDING_GUEST_EMAIL_LINK, false)
+            putBoolean(KEY_NEEDS_PASSWORD_SETUP, false)
+            putString(KEY_ACCOUNT_MODE, "ANONYMOUS")
+        }
     }
 
     private fun readSecureString(key: String): String? =
         if (isSecureStorageAvailable) prefs.getString(key, null) else null
 
     private fun writeSecureString(key: String, value: String?) {
-        val editor = prefs.edit()
-        if (isSecureStorageAvailable && !value.isNullOrBlank()) editor.putString(key, value)
-        else editor.remove(key)
-        editor.apply()
+        prefs.edit {
+            if (isSecureStorageAvailable && !value.isNullOrBlank()) putString(key, value)
+            else remove(key)
+        }
     }
 }

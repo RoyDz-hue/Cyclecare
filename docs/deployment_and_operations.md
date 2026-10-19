@@ -101,6 +101,38 @@ Implemented source is not released functionality. The latest hardening makes unm
 | Forward migration and rollout | Candidates tested only on fresh disposable representative catalogs | Authorized target catalog/grant/owner/function/history comparison, exact forward-only migration review and separate staging/production approval; no blanket replay |
 | Release/store publication | Debug artifacts only, no merge/deployment | Protected signing-key access, signed-release acceptance, distribution decisions and explicit rollout approval |
 | Paid provider/live financial testing | Not authorized or performed | Separate explicit authorization; this task does not grant it |
-| Lint maintenance | Nonblocking advisories, not zero warnings | Review style/dependency/icon/durable-write items with compatibility tests; do not blindly upgrade pins or remove privacy-critical synchronous commits |
+| Lint maintenance | Safe style/catalog/icon corrections implemented; intentional advisories stay visible | Preserve synchronous durability and checked commit results; review pinned-version updates separately with API 24 and encryption/worker compatibility tests; see the lint review below |
 
 No engineering test fills an approval checkbox. The payment race harness requires `CYCLECARE_DISPOSABLE_DB=1` and an explicitly disposable `PAYMENT_TEST_DSN`. Each run uses a fresh synthetic checkout reference and requires one creator plus one duplicate, so prior successful runs cannot mask a create race.
+
+## Android lint review
+
+The starting debug report contained 95 warnings and no errors. This maintenance pass changes no dependency version, SDK level, desugaring setting, schema or release gate. There is no lint baseline, disabled check, severity downgrade or warning suppression hiding the retained findings.
+
+Final validation: **58 warnings and zero errors in both debug and release lint**, with **201 unit tests passing and no failures, errors or skips**. The debug APK, instrumentation APK and release Kotlin compilation also pass. The net reduction from the original report is 37 warnings; the migration-editor warning newly exposed on the first rerun was corrected too. The 58 retained findings are 14 explicit-editor style advisories, eight synchronous-write advisories and 36 pinned-version availability advisories. Instrumentation was built, not executed on a handset; no release APK was signed or published.
+
+Safe corrections are limited to existing asynchronous preference edits using the already-pinned AndroidX KTX helper, the equivalent `String.toUri()` helper, four version-catalog aliases and the legacy mdpi icon's export fringe. The icon remains 48 by 48 pixels: only its near-transparent outer edge (alpha 1–5 out of 255) becomes fully transparent; every interior pixel, other density asset and adaptive icon is unchanged. No artwork is redrawn or rescaled.
+
+| Lint ID | Starting warnings | Treatment |
+|---|---:|---|
+| `UseKtx` | 46 | Correct 31 existing asynchronous preference edits and one URI conversion, plus an additional migration-editor finding exposed by the first lint rerun. Retain 14 explicit durable editor operations; KTX `edit(commit = true)` returns `Unit` and cannot replace a checked Boolean receipt. Keeping explicit commits also makes the durability boundary auditable. |
+| `UseTomlInstead` | 4 | Move desugaring, SQLCipher, SQLite and MockWebServer into the catalog at identical versions/scopes. Preserve SQLCipher's original non-transitive `@aar` artifact contract. |
+| `IconLauncherShape` | 1 | Remove only the almost-transparent mdpi export fringe to restore a transparent one-pixel perimeter. |
+| `ApplySharedPref` | 8 | Intentionally retain synchronous privacy/lifecycle barriers; asynchronous `apply()` is not a safe substitute. |
+| `AndroidGradlePluginVersion` | 2 | Retain pinned Gradle/AGP versions; availability alone does not establish compatibility. |
+| `GradleDependency` | 24 | Retain tested dependency pins pending a separate compatibility/security upgrade review. |
+| `NewerVersionAvailable` | 10 | Retain tested tool/library pins, including aligned OkHttp and MockWebServer; do not infer that an availability advisory is a vulnerability finding. |
+
+### Why explicit editors remain
+
+`AuthPreferences` keeps synchronous local-mode, health-consent/generation, pending-withdrawal, processor-decision/receipt and session-generation writes. Checked `commit()` results still reject failed persistence before granting permission or performing privacy-sensitive network work. The previously unchecked synchronous barriers also remain synchronous; this lint cleanup does not change their failure policy.
+
+`OwnerDataGate` keeps wipe/resume markers durable before data access can resume. `DatabaseKeyManager` must confirm that the encryption key is stored before a database can use it. `EncryptedCheckoutRequestStore` keeps checkout request save/clear operations synchronous and checked so a restart cannot silently create a new payment identity. The associated `ApplySharedPref` and `UseKtx` findings remain visible by design, not suppressed.
+
+Version availability warnings remain visible in the build script, catalog and wrapper. An upgrade needs its own reviewed Gradle/AGP/Kotlin/Compose/Room/SQLCipher/WorkManager/test-library compatibility matrix, API 24/desugaring checks, encrypted database migrations, worker/account lifecycle tests and appropriate physical-device acceptance. Moving coordinates into a catalog is not permission to upgrade them.
+
+### Validation and scope
+
+Compare all four moved dependencies with their original declarations, including transitivity, artifact extension/type and resolved SHA-256 hashes. Rerun the full Android unit suite, debug APK build, instrumentation APK build and debug lint. Preference regressions explicitly cover asynchronous apply counts, all-fields-before-apply behavior, failure during staging, durable local mode and a failed checked consent-decision commit. Building instrumentation still does not mean running it on a handset. Admin/backend/SQL results from the preceding review remain historical unless those unchanged components are separately rerun.
+
+The feature-branch push receipt records the final lint ID counts, test totals, artifact hashes and remote branch verification. Health sync, Hybrid and checkout remain closed; clinical, provider-policy, hosted-sandbox, physical-device and release approvals above are unchanged.

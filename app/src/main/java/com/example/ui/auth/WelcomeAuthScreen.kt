@@ -1,7 +1,7 @@
 package com.example.ui.auth
 
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -414,7 +414,7 @@ fun WelcomeAuthScreen(
                 errorMessage = null
                 try {
                     val authorizationUrl = authService.createGoogleSignInUrl()
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authorizationUrl)))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, authorizationUrl.toUri()))
                 } catch (error: Exception) {
                     errorMessage = error.message ?: "Could not start Google sign-in."
                 }
