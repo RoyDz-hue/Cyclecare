@@ -55,6 +55,28 @@ internal fun serverSelectedSource(data: JSONObject): String = serverSelectedSour
 internal fun isRemoteCareResponse(source: String): Boolean =
     source == REMOTE_CARE_SOURCE || source.startsWith("$REMOTE_CARE_SOURCE · ")
 
+internal data class CareRequestPrivacySnapshot(
+    val owner: String,
+    val session: Long,
+    val healthGeneration: Long,
+    val healthRevokePending: Boolean,
+    val choices: Map<String, AuthPreferences.ProviderConsentSnapshot>,
+    val receipts: Map<String, AiProcessorReceipt?>,
+    val pendingRevokes: Set<String>
+) {
+    fun isCurrent(preferences: AuthPreferences): Boolean = preferences.isSecureStorageAvailable &&
+        !preferences.isLocalOnlyMode && this == capture(preferences)
+
+    companion object {
+        fun capture(preferences: AuthPreferences): CareRequestPrivacySnapshot {
+            val choices = preferences.providerConsents()
+            return CareRequestPrivacySnapshot(preferences.effectiveUserId, preferences.sessionGeneration,
+                preferences.healthConsentGeneration, preferences.hasPendingHealthSyncRevoke, choices,
+                choices.keys.associateWith { preferences.processorReceipt(it) }, preferences.pendingProcessorRevokes())
+        }
+    }
+}
+
 object CareAiService {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -62,6 +84,7 @@ object CareAiService {
         // Leave room for the gateway's full provider budget before Android
         // reports a timeout and falls back locally.
         .callTimeout(65, TimeUnit.SECONDS)
+        .followRedirects(false).followSslRedirects(false)
         .build()
 
     internal fun requestPayload(question: String, forceAi: Boolean, contextSummary: String?, conversationHistory: List<CareMemoryMessage> = emptyList(), processorReceipts: List<AiProcessorReceipt> = emptyList()): JSONObject = JSONObject().apply {
@@ -92,6 +115,7 @@ object CareAiService {
         authPreferences: AuthPreferences? = null
     ): CareResponse = withContext(Dispatchers.IO) {
         val safetyEval = SafetyEngine.evaluateInput(userQuestion, recentLog)
+        val privacySnapshot = authPreferences?.let { CareRequestPrivacySnapshot.capture(it) }
         if (safetyEval.isRedFlag) return@withContext CareResponse(
             summary = safetyEval.title,
             whatText = safetyEval.message,
@@ -112,7 +136,10 @@ object CareAiService {
         )
         if (aiSharingAllowed && !accessToken.isNullOrBlank() && authPreferences != null) {
             try {
+                val requestPrivacy = requireNotNull(privacySnapshot)
+                check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                 val consent = AiProcessorConsentService(authPreferences).fetchManifest(accessToken)
+                check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                 val manifest = (consent as? ConsentResult.Success)?.manifest
                 val receipts = manifest?.providers?.mapNotNull { p -> authPreferences.processorReceipt(p.id)?.takeIf { AiProcessorConsentService(authPreferences).cloudReceiptIsCurrent(manifest, p.id) } }.orEmpty()
                 // Do not trust a cached toggle: every cloud request needs a fresh manifest and receipt.
@@ -129,7 +156,9 @@ object CareAiService {
                     .header("Content-Type", "application/json")
                     .post(requestPayload(userQuestion, forceAi, contextSummary, conversationHistory, receipts).toString().toRequestBody("application/json".toMediaType()))
                     .build()
+                check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                 httpClient.newCall(request).execute().use { response ->
+                    check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                     val body = response.body
                     // Bound even a chunked/malformed gateway response before parsing it.
                     val source = body?.source()
@@ -142,6 +171,7 @@ object CareAiService {
                         if (root.optBoolean("success") && data != null && fields.all {
                                 data.opt(it) is String && data.getString(it).isNotBlank() && data.getString(it).length <= 4000
                             }) {
+                            check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                             return@withContext CareResponse(
                                 summary = data.getString("summary"), whatText = data.getString("whatText"),
                                 understandText = data.getString("understandText"), careText = data.getString("careText"),

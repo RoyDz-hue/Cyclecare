@@ -190,7 +190,7 @@ object LayeredChatOrchestrator {
                     append("Our artifacts and charms can be unlocked using your Cycle Coins. ")
                 }
                 if (paymentIntent == PaymentChatIntent.MPESA_TOPUP) {
-                    append("In Kenya, secure M-Pesa coin packages start from KES 389. ")
+                    append("M-Pesa checkout is currently unavailable while payment safety review is incomplete. Do not send a payment. ")
                 }
                 if (isEmpty()) {
                     append(article.question)
@@ -231,6 +231,7 @@ object LayeredChatOrchestrator {
                 careText = "Take a calm breath. Select one of the guided options below to help us understand right away.",
                 watchText = "If you are experiencing acute physical pain or unusual heavy bleeding, seek clinical help immediately.",
                 escalateText = "Never hesitate to consult a doctor for urgent symptoms.",
+                safetyAlert = if (safetyEval.level != com.example.data.model.SafetyLevel.LOW) safetyEval else null,
                 source = "Care Concierge"
             ),
             isClarificationNeeded = true,

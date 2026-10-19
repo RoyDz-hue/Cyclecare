@@ -18,7 +18,9 @@ sealed class PaymentPollResult {
 class PaymentUseCase(
     private val supabasePaymentService: SupabasePaymentService,
     private val economyService: SupabaseEconomyService,
-    private val authPreferences: AuthPreferences
+    private val authPreferences: AuthPreferences,
+    private val checkStatus: suspend (String) -> String = { supabasePaymentService.checkTransactionStatus(it) },
+    private val refreshWallet: suspend (String) -> EconomyResult<EconomyProfile> = { economyService.fetchVerifiedProfile(it) }
 ) {
     suspend fun processCard(
         cardNumber: String,
@@ -30,18 +32,11 @@ class PaymentUseCase(
         return supabasePaymentService.processCardPayment(cardNumber, expiry, cvv, pkg, profile)
     }
 
-    suspend fun processPaypal(
-        pkg: CoinPurchasePackage,
-        profile: EconomyProfile
-    ): UnifiedPaymentResult {
+    suspend fun processPaypal(pkg: CoinPurchasePackage, profile: EconomyProfile): UnifiedPaymentResult {
         return supabasePaymentService.createPaypalOrder(pkg, profile)
     }
 
-    suspend fun processCrypto(
-        currency: String,
-        pkg: CoinPurchasePackage,
-        profile: EconomyProfile
-    ): UnifiedPaymentResult {
+    suspend fun processCrypto(currency: String, pkg: CoinPurchasePackage, profile: EconomyProfile): UnifiedPaymentResult {
         return supabasePaymentService.createOkxCryptoOrder(currency, pkg, profile)
     }
 
@@ -63,47 +58,54 @@ class PaymentUseCase(
         timeoutSeconds: Long,
         currentProfile: EconomyProfile
     ): PaymentPollResult {
-        val startTime = System.currentTimeMillis()
-        val maxDuration = timeoutSeconds * 1000L
+        val owner = authPreferences.userId ?: return accountChanged()
+        val session = authPreferences.sessionGeneration
+        fun sameAccount() = !authPreferences.isLocalOnlyMode && authPreferences.userId == owner &&
+            authPreferences.sessionGeneration == session
+        if (!sameAccount() || currentProfile.userId != owner) return accountChanged()
+        val startTime = System.nanoTime()
+        // A wall-clock change must not extend polling indefinitely. Bound caller-supplied durations.
+        val maxDuration = timeoutSeconds.coerceIn(0L, 300L) * 1_000_000_000L
         var finalStatus = "pending"
-
-        while (System.currentTimeMillis() - startTime < maxDuration) {
-            finalStatus = supabasePaymentService.checkTransactionStatus(extRef)
-            if (finalStatus in listOf("success", "failed", "cancelled", "expired", "auth_required")) {
-                break
-            }
-            delay(3000L)
+        val terminal = setOf("success", "failed", "cancelled", "expired", "auth_required", "refunded", "reversed")
+        while (System.nanoTime() - startTime < maxDuration) {
+            if (!sameAccount()) return accountChanged()
+            finalStatus = checkStatus(extRef)
+            if (!sameAccount()) return accountChanged()
+            if (finalStatus in terminal) break
+            val remainingMillis = (maxDuration - (System.nanoTime() - startTime)) / 1_000_000L
+            if (remainingMillis > 0) delay(minOf(3000L, remainingMillis))
         }
-
-        return when {
-            finalStatus == "success" -> {
-                val userId = authPreferences.userId ?: "local_user"
-                val verifiedRes = economyService.fetchVerifiedProfile(userId)
-                val updatedProfile = if (verifiedRes is EconomyResult.Success) {
-                    verifiedRes.data
+        if (!sameAccount()) return accountChanged()
+        return when (finalStatus) {
+            "success" -> {
+                val verified = refreshWallet(owner)
+                if (!sameAccount()) return accountChanged()
+                if (verified is EconomyResult.Success && verified.data.userId == owner) {
+                    PaymentPollResult.Success(
+                        profile = verified.data,
+                        message = "Payment verified. Your latest wallet balance is shown; credits may first repay reversed purchases."
+                    )
                 } else {
-                    currentProfile
+                    PaymentPollResult.Timeout(
+                        message = "Payment was confirmed, but your balance could not be refreshed. Refresh your wallet or check this payment again; please do not pay again."
+                    )
                 }
-                PaymentPollResult.Success(
-                    profile = updatedProfile,
-                    message = "Payment verified. Cycle Coins were added to your balance."
-                )
             }
-            finalStatus in listOf("failed", "cancelled", "expired") -> {
-                PaymentPollResult.Failed(
-                    status = finalStatus,
-                    message = "Payment status: ${finalStatus.uppercase()}. Transaction was not completed."
-                )
-            }
-            finalStatus == "auth_required" -> PaymentPollResult.Failed(
-                status = finalStatus,
-                message = "Your secure session expired during checkout. Sign in again to refresh the payment status."
+            "failed", "cancelled", "expired" -> PaymentPollResult.Failed(
+                finalStatus, "Payment status: ${finalStatus.uppercase()}. Transaction was not completed."
             )
-            else -> {
-                PaymentPollResult.Timeout(
-                    message = "Payment verification timed out. Balance will update automatically when confirmed."
-                )
-            }
+            "refunded", "reversed" -> PaymentPollResult.Failed(
+                finalStatus, "Payment status: ${finalStatus.uppercase()}. Purchased credit may have been reversed. Refresh your wallet before spending or starting another purchase."
+            )
+            "auth_required" -> accountChanged()
+            else -> PaymentPollResult.Timeout(
+                "Payment is not confirmed yet. Check this payment again before retrying; do not assume it failed."
+            )
         }
     }
+
+    private fun accountChanged() = PaymentPollResult.Failed(
+        "auth_required", "Your checkout account or secure session changed. Sign in to the original account and check this payment again."
+    )
 }

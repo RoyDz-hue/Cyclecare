@@ -2,9 +2,12 @@
 """Run two concurrent create calls and assert one intent/transaction is returned.
 Requires psql and PAYMENT_TEST_DSN (or the documented local follow-up socket).
 """
-import os, subprocess, threading, json, sys
+import os, subprocess, threading, json, sys, uuid
+if os.environ.get("CYCLECARE_DISPOSABLE_DB") != "1":
+    raise SystemExit("refusing mutation: set CYCLECARE_DISPOSABLE_DB=1 for an explicitly disposable database")
 DSN=os.environ.get("PAYMENT_TEST_DSN", "host=/workspace/cyclecare-fixes/release-hardening-20261019 port=55439 user=ubuntu dbname=cyclecare_payment_followup")
-SQL="""SET ROLE service_role; SELECT public.create_payment_intent('concurrency-owner','paypal','CC_concurrency-owner_same-request',699,'USD',jsonb_build_object('package_id','pkg_sanctuary','coins_to_credit',850));"""
+REFERENCE = "CC_concurrency-owner_" + uuid.uuid4().hex
+SQL="""SET ROLE service_role; SELECT public.create_payment_intent('concurrency-owner','paypal','%s',699,'USD',jsonb_build_object('package_id','pkg_sanctuary','coins_to_credit',850));""" % REFERENCE
 out=[None,None]
 def run(i):
     p=subprocess.run(["psql",DSN,"-X","-Atq","-v","ON_ERROR_STOP=1","-c",SQL],text=True,capture_output=True)
@@ -16,6 +19,6 @@ if any(code!=0 for code,_,_ in out):
     raise SystemExit("concurrent create failed: "+repr(out))
 rows=[json.loads(x[1]) for x in out]
 ids={r["payment_intent_id"] for r in rows}; txs={r["transaction_id"] for r in rows}
-if len(ids)!=1 or len(txs)!=1 or not all(r["decision"] in ("created","duplicate") for r in rows):
+if len(ids)!=1 or len(txs)!=1 or sorted(r["decision"] for r in rows) != ["created", "duplicate"]:
     raise SystemExit("idempotency invariant failed: "+repr(rows))
 print(json.dumps({"ok":True,"intent_id":next(iter(ids)),"transaction_id":next(iter(txs)),"results":rows}))

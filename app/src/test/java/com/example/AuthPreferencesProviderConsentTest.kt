@@ -39,4 +39,26 @@ class AuthPreferencesProviderConsentTest {
         prefs.revokeAllProviderConsents()
         assertTrue(prefs.providerConsents().values.none { it.granted })
     }
+
+    @Test fun oneExplicitProcessorDoesNotRequireGrantingEveryOtherProcessor() {
+        val prefs = preferences(); prefs.userId = "consent-owner-d"
+        prefs.setProviderConsent("COHERE", true)
+        assertTrue(prefs.isAiSharingAllowed)
+        assertFalse(prefs.providerConsent("GEMINI").granted)
+        assertFalse(prefs.providerConsent("OPENROUTER").granted)
+    }
+
+    @Test fun aggregateWithdrawalAlsoRemovesReceiptsAndQueuesEachServerRevoke() {
+        val prefs = preferences(); prefs.userId = "consent-owner-e"
+        for (provider in listOf("COHERE", "GEMINI", "OPENROUTER")) {
+            prefs.setProviderConsent(provider, true)
+            prefs.saveProcessorReceipt(com.example.domain.ai.AiProcessorReceipt(provider, 1, "a".repeat(64)))
+        }
+        prefs.isAiSharingAllowed = false
+        assertFalse(prefs.isAiSharingAllowed)
+        for (provider in listOf("COHERE", "GEMINI", "OPENROUTER")) {
+            assertNull(prefs.processorReceipt(provider))
+            assertTrue(provider in prefs.pendingProcessorRevokes())
+        }
+    }
 }

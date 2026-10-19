@@ -79,3 +79,28 @@ Physical-device and two-device authenticated staging acceptance must cover SQLCi
 Provider eligibility requires account/DPA, retention, audience and use-case evidence; Gemini additionally needs a valid eligible server-side credential. PayPal-hosted sandbox lifecycle acceptance needs sandbox merchant client ID/secret, webhook ID and buyer access plus approved return/cancel origins and handling policy for ambiguous/partial refunds. No live merchant credentials or real-payment authorization are implied.
 
 Production release, protected signing-key access and any future paid calls require their own explicit authorization. Passing tests does not replace those approvals.
+
+## Remaining-requirements inventory
+
+Implemented source is not released functionality. The latest hardening makes unmatched symptom text explicitly assessment-limited, retains that warning in local clarification, persists withdrawal before cloud erasure, rejects stale session/processor/wallet replies and refuses to call a cached or offline wallet authoritative. A single explicit processor choice does not require granting other processors; it cannot authorize a server-selected processor without its current receipt. Closed checkout shows an unavailable notice before collecting any payment inputs.
+
+| Requirement | Source status | What remains |
+|---|---|---|
+| Durable v3 health sync, conflicts and health erasure | Implemented; hard gate closed | Authenticated staging, two-device restart/conflict/withdrawal/erasure acceptance and reviewed enablement |
+| Provider-specific consent and Admin-enforced selection | Implemented candidate contract | Reviewed eligible provider accounts/policies, staging integration and fresh affected consent |
+| Sequential Hybrid | Implemented executor/database; source, runtime and Admin gates closed | Both processors' current approvals/receipts, pinned-upstream eligibility and staging acceptance before separate release approval |
+| PayPal reconciliation and reversal/debt accounting | Implemented candidate; checkout closed | Hosted sandbox lifecycle and merchant-policy acceptance; mocks are not hosted acceptance |
+| Clinical and language safety | Conservative fallback/regressions, no clinical approval | Named qualified clinician, intended population/jurisdictions, supported languages and escalation wording; no multilingual clinical capability is claimed |
+| Physical-device acceptance | Offline harness/debug artifacts exist, not hardware-tested | Authorized online host/USB-debugging handset(s), staging accounts, Keystore/SQLCipher recovery, account switching, two-device sync, keyboard and accessibility checks |
+| Gemini | Credential and eligibility unverified | Replacement eligible server-side key plus account, audience/age, use-case and data-handling review; a key alone cannot approve health-data processing |
+| All external processors | Manifest/policy records fail closed while unreviewed | Account/DPA, retention, region, audience/use-case and upstream/model evidence; later changes require reviewed manifests and fresh consent |
+| Hosted PayPal sandbox | Not performed | Sandbox merchant client ID/secret, webhook ID, buyer access, approved return/cancel origins, ambiguous/partial-refund policy and lifecycle evidence |
+| Other payment rails | M-Pesa/PayHero, PayNexus/OKX and direct card remain unsupported/closed where settlement is incomplete | Verified contracts, independent settlement/reversal controls and isolated/hosted acceptance before support |
+| Recurring subscriptions | Renewal/expiry lifecycle not implemented | Owner-approved entitlement, cancellation/refund and product contract before implementation; coin packages cannot grant renewals |
+| Full account/provider-side deletion | Not implemented by health erasure | Owner/legal retention and lifecycle decisions, provider erasure mechanisms, safeguards and acceptance; disclose retained identity/financial/audit records |
+| Forward migration and rollout | Candidates tested only on fresh disposable representative catalogs | Authorized target catalog/grant/owner/function/history comparison, exact forward-only migration review and separate staging/production approval; no blanket replay |
+| Release/store publication | Debug artifacts only, no merge/deployment | Protected signing-key access, signed-release acceptance, distribution decisions and explicit rollout approval |
+| Paid provider/live financial testing | Not authorized or performed | Separate explicit authorization; this task does not grant it |
+| Lint maintenance | Nonblocking advisories, not zero warnings | Review style/dependency/icon/durable-write items with compatibility tests; do not blindly upgrade pins or remove privacy-critical synchronous commits |
+
+No engineering test fills an approval checkbox. The payment race harness requires `CYCLECARE_DISPOSABLE_DB=1` and an explicitly disposable `PAYMENT_TEST_DSN`. Each run uses a fresh synthetic checkout reference and requires one creator plus one duplicate, so prior successful runs cannot mask a create race.

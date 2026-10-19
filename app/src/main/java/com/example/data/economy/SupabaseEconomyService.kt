@@ -4,6 +4,7 @@ import com.example.data.supabase.SupabaseConfig
 import com.example.data.supabase.SupabaseSessionManager
 import com.example.data.supabase.UserFacingServerMessage
 import com.example.security.AuthPreferences
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -21,195 +22,148 @@ sealed class EconomyResult<out T> {
 
 class SupabaseEconomyService(
     private val authPreferences: AuthPreferences,
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
-        .build()
+        .writeTimeout(12, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build(),
+    private val restUrl: String = SupabaseConfig.restUrl,
+    private val anonKey: String = SupabaseConfig.anonKey
 ) {
+    private val client = client.newBuilder().followRedirects(false).followSslRedirects(false)
+        .connectTimeout(12, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build()
+    private companion object {
+        const val MAX_RESPONSE_BYTES = 64 * 1024
+        val VALID_ACCOUNT_STATUSES = setOf("ACTIVE", "SUSPENDED", "BANNED")
+    }
+    private data class OwnerSnapshot(val owner: String, val session: Long)
+    private class Rejected(message: String) : Exception(message)
+
+    private fun snapshot(): OwnerSnapshot? {
+        val owner = authPreferences.userId?.trim().orEmpty()
+        return owner.takeIf { it.isNotEmpty() }?.let { OwnerSnapshot(it, authPreferences.sessionGeneration) }
+    }
+
+    private fun stillOwns(snapshot: OwnerSnapshot): Boolean =
+        authPreferences.userId?.trim() == snapshot.owner && authPreferences.sessionGeneration == snapshot.session
+
+    private fun boundedBody(response: okhttp3.Response): String? {
+        val source = response.body?.source() ?: return ""
+        source.request(MAX_RESPONSE_BYTES.toLong() + 1)
+        if (source.buffer.size > MAX_RESPONSE_BYTES) return null
+        return source.readByteArray().toString(Charsets.UTF_8)
+    }
+
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     /**
      * Edge verification: sync and fetch verified economy state from Supabase.
      */
     suspend fun fetchVerifiedProfile(userId: String): EconomyResult<EconomyProfile> = withContext(Dispatchers.IO) {
-        val effectiveId = userId.ifBlank { authPreferences.effectiveUserId }
-        val accessToken = SupabaseSessionManager.validAccessToken(authPreferences)
+        val initial = snapshot()
             ?: return@withContext EconomyResult.Error("A secure CycleCare session is required to load your cloud wallet.")
+        val effectiveId = userId.ifBlank { initial.owner }
+        if (effectiveId != initial.owner) {
+            return@withContext EconomyResult.Error("Your cloud wallet does not belong to this session.")
+        }
         try {
+            val accessToken = SupabaseSessionManager.validAccessToken(authPreferences)
+                ?: return@withContext EconomyResult.Error("A secure CycleCare session is required to load your cloud wallet.")
+            if (!stillOwns(initial)) throw Rejected("Session changed while loading wallet")
             val token = accessToken.trim()
+
+            if (!stillOwns(initial)) throw Rejected("Session changed before wallet setup")
             val ensureRequest = Request.Builder()
-                .url("${SupabaseConfig.restUrl}/rpc/ensure_my_economy_profile")
-                .header("apikey", SupabaseConfig.anonKey)
-                .header("Authorization", "Bearer $token")
-                .header("Content-Type", "application/json")
-                .post("{}".toRequestBody(jsonMediaType))
-                .build()
-            val ensureResponse = client.newCall(ensureRequest).execute()
-            val ensureBody = ensureResponse.body?.string().orEmpty()
-            if (!ensureResponse.isSuccessful || !runCatching { JSONObject(ensureBody).optBoolean("success", false) }.getOrDefault(false)) {
-                return@withContext EconomyResult.Error("Cloud wallet setup could not be verified. Sign in again or retry later.")
+                .url("$restUrl/rpc/ensure_my_economy_profile")
+                .header("apikey", anonKey).header("Authorization", "Bearer $token")
+                .header("Content-Type", "application/json").post("{}".toRequestBody(jsonMediaType)).build()
+            client.newCall(ensureRequest).execute().use { response ->
+                val body = boundedBody(response) ?: throw Rejected("Wallet setup response was too large")
+                if (!stillOwns(initial)) throw Rejected("Session changed while verifying wallet")
+                if (!response.isSuccessful || !runCatching { JSONObject(body).optBoolean("success", false) }.getOrDefault(false))
+                    throw Rejected("Cloud wallet setup could not be verified")
             }
 
-            val request = Request.Builder()
-                .url("${SupabaseConfig.restUrl}/economy_profiles?user_id=eq.$effectiveId")
-                .header("apikey", SupabaseConfig.anonKey)
-                .header("Authorization", "Bearer $token")
-                .header("Content-Type", "application/json")
-                .get()
-                .build()
-
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) {
-                return@withContext EconomyResult.Error("Your balance could not be refreshed right now. Please try again.")
+            if (!stillOwns(initial)) throw Rejected("Session changed before wallet read")
+            val request = Request.Builder().url("$restUrl/economy_profiles?user_id=eq.${java.net.URLEncoder.encode(effectiveId, "UTF-8")}&select=*")
+                .header("apikey", anonKey).header("Authorization", "Bearer $token").get().build()
+            val body = client.newCall(request).execute().use { response ->
+                val raw = boundedBody(response) ?: throw Rejected("Cloud wallet response was too large")
+                if (!stillOwns(initial)) throw Rejected("Session changed while loading wallet")
+                if (!response.isSuccessful) throw Rejected("Your balance could not be refreshed right now")
+                raw
             }
-            if (body.isBlank()) {
-                return@withContext EconomyResult.Error("Cloud wallet returned an empty response.")
+            val array = runCatching { JSONArray(body) }.getOrElse { throw Rejected("Cloud wallet response was malformed") }
+            if (array.length() != 1) throw Rejected("Cloud wallet record is missing or ambiguous")
+            val obj = array.optJSONObject(0) ?: throw Rejected("Cloud wallet record was malformed")
+            if (obj.optString("user_id").trim() != initial.owner) throw Rejected("Cloud wallet owner mismatch")
+            val econStatus = obj.optString("status").trim().uppercase()
+            if (econStatus !in VALID_ACCOUNT_STATUSES) throw Rejected("Cloud wallet account status could not be verified")
+            fun verifiedCounter(field: String): Long {
+                val value = obj.opt(field)
+                if (value !is Int && value !is Long) throw Rejected("Cloud wallet $field was not an exact integer")
+                return (value as Number).toLong().takeIf { it >= 0L } ?: throw Rejected("Cloud wallet $field was negative")
             }
+            val balance = verifiedCounter("coin_balance")
+            val earned = verifiedCounter("lifetime_earned")
+            val spent = verifiedCounter("lifetime_spent")
 
-            var profileStatus = "ACTIVE"
-            var profileSuspensionReason: String? = null
-            var profileSuspendedUntil: String? = null
-            try {
-                val profReq = Request.Builder()
-                    .url("${SupabaseConfig.restUrl}/profiles?user_id=eq.$effectiveId&select=status,suspension_reason,suspended_until")
-                    .header("apikey", SupabaseConfig.anonKey)
-                    .header("Authorization", "Bearer $token")
-                    .get()
-                    .build()
-                val profRes = client.newCall(profReq).execute()
-                val profBody = profRes.body?.string() ?: ""
-                if (!profRes.isSuccessful) {
-                    return@withContext EconomyResult.Error("Your account status couldn't be checked. Please try again.")
-                }
-                if (profRes.isSuccessful && profBody.isNotBlank()) {
-                    val pArr = JSONArray(profBody)
-                    if (pArr.length() > 0) {
-                        val pObj = pArr.getJSONObject(0)
-                        profileStatus = pObj.optString("status", "ACTIVE")
-                        profileSuspensionReason = pObj.optString("suspension_reason").ifBlank { null }
-                        profileSuspendedUntil = pObj.optString("suspended_until").ifBlank { null }
-                    }
-                }
-            } catch (_: Exception) {
-                return@withContext EconomyResult.Error("Account status could not be verified. Please retry before using the shared vault.")
+            if (!stillOwns(initial)) throw Rejected("Session changed before account read")
+            val profReq = Request.Builder().url("$restUrl/profiles?user_id=eq.${java.net.URLEncoder.encode(effectiveId, "UTF-8")}&select=user_id,status,suspension_reason,suspended_until")
+                .header("apikey", anonKey).header("Authorization", "Bearer $token").get().build()
+            val profBody = client.newCall(profReq).execute().use { response ->
+                val raw = boundedBody(response) ?: throw Rejected("Account status response was too large")
+                if (!stillOwns(initial)) throw Rejected("Session changed while checking account")
+                if (!response.isSuccessful) throw Rejected("Your account status couldn't be checked")
+                raw
             }
+            val profiles = runCatching { JSONArray(profBody) }.getOrElse { throw Rejected("Account status response was malformed") }
+            if (profiles.length() != 1) throw Rejected("Account status could not be verified")
+            val pObj = profiles.optJSONObject(0) ?: throw Rejected("Account status response was malformed")
+            if (pObj.optString("user_id").trim() != initial.owner) throw Rejected("Account status owner mismatch")
+            val profileStatus = pObj.optString("status").trim().uppercase()
+            if (profileStatus !in VALID_ACCOUNT_STATUSES) throw Rejected("Account status could not be verified")
+            if (!stillOwns(initial)) throw Rejected("Session changed before wallet acceptance")
 
-            if (response.isSuccessful && body.isNotBlank()) {
-                val array = JSONArray(body)
-                if (array.length() > 0) {
-                    val obj = array.getJSONObject(0)
-                    val tierStr = obj.optString("tier", "FREE")
-                    val rankStr = obj.optString("rank", "LUMEN")
-                    val balance = obj.optLong("coin_balance", 0L)
-                    val earned = obj.optLong("lifetime_earned", 0L)
-                    val spent = obj.optLong("lifetime_spent", 0L)
-                    val activeFrame = obj.optString("active_frame").ifBlank { null }
-                    val activeArtifact = obj.optString("active_artifact", "cycle_coin")
-                    val activeTheme = obj.optString("active_theme", "SOOTHING_ROSE")
-                    val unlockedList = obj.optJSONArray("unlocked_items")
-
-                    val unlockedSet = mutableSetOf("cycle_coin")
-                    if (unlockedList != null) {
-                        for (i in 0 until unlockedList.length()) {
-                            val rawItem = when (val value = unlockedList.opt(i)) {
-                                is String -> value
-                                is org.json.JSONObject -> value.optString("id").ifBlank { value.optString("name") }
-                                else -> ""
-                            }
-                            if (rawItem.isNotBlank()) {
-                                unlockedSet.add(EconomyCatalog.findItem(rawItem)?.id ?: rawItem)
-                            }
-                        }
-                    }
-
-                    val econStatus = obj.optString("status", "ACTIVE")
-                    val econSuspensionReason = obj.optString("suspension_reason").ifBlank { null }
-                    val econSuspendedUntil = obj.optString("suspended_until").ifBlank { null }
-
-                    val finalStatus = when {
-                        profileStatus.equals("BANNED", ignoreCase = true) || econStatus.equals("BANNED", ignoreCase = true) -> "BANNED"
-                        profileStatus.equals("SUSPENDED", ignoreCase = true) || econStatus.equals("SUSPENDED", ignoreCase = true) -> "SUSPENDED"
-                        else -> "ACTIVE"
-                    }
-                    val finalReason = profileSuspensionReason ?: econSuspensionReason
-                    val finalUntil = profileSuspendedUntil ?: econSuspendedUntil
-
-                    val isSuspensionExpired = if (finalStatus == "SUSPENDED" && !finalUntil.isNullOrBlank()) {
-                        try {
-                            java.time.Instant.now().isAfter(java.time.Instant.parse(finalUntil))
-                        } catch (_: Exception) { false }
-                    } else false
-
-                    val activeAccountStatus = if (isSuspensionExpired) "ACTIVE" else finalStatus
-                    authPreferences.setAccountRestriction(activeAccountStatus, finalReason, finalUntil)
-
-                    val lastMinedDate = obj.optString("last_mined_date").ifBlank { null }
-                    val artifactsJson = obj.optJSONArray("artifacts")
-                    val giftedList = mutableListOf<String>()
-                    if (artifactsJson != null) {
-                        for (i in 0 until artifactsJson.length()) {
-                            val artItem = artifactsJson.optJSONObject(i)
-                            val rawName = if (artItem != null) {
-                                artItem.optString("id").ifBlank { artItem.optString("name") }
-                            } else {
-                                artifactsJson.opt(i) as? String ?: ""
-                            }
-                            if (rawName.isNotBlank()) {
-                                val resolved = EconomyCatalog.findItem(rawName)
-                                if (resolved != null) {
-                                    giftedList.add(resolved.name)
-                                    unlockedSet.add(resolved.id)
-                                } else {
-                                    giftedList.add(rawName)
-                                }
-                            }
-                        }
-                    }
-
-                    val profile = EconomyProfile(
-                        userId = effectiveId,
-                        tier = UserEconomyTier.entries.find { it.name.equals(tierStr, true) } ?: UserEconomyTier.FREE,
-                        rank = IdentityRank.entries.find { it.name.equals(rankStr, true) } ?: IdentityRank.LUMEN,
-                        coinBalance = balance,
-                        lifetimeEarned = earned,
-                        lifetimeSpent = spent,
-                        activeFrame = activeFrame,
-                        activeArtifact = activeArtifact,
-                        activeTheme = activeTheme,
-                        lastMinedDateString = lastMinedDate,
-                        unlockedItemIds = unlockedSet,
-                        status = activeAccountStatus,
-                        suspensionReason = finalReason,
-                        suspendedUntil = finalUntil,
-                        giftedArtifacts = giftedList
-                    )
-                    return@withContext EconomyResult.Success(profile)
-                }
+            val tierStr = obj.optString("tier", "FREE")
+            val rankStr = obj.optString("rank", "LUMEN")
+            val unlockedSet = mutableSetOf("cycle_coin")
+            obj.optJSONArray("unlocked_items")?.let { list -> for (i in 0 until list.length()) {
+                val rawItem = when (val value = list.opt(i)) { is String -> value; is JSONObject -> value.optString("id").ifBlank { value.optString("name") }; else -> "" }
+                if (rawItem.isNotBlank()) unlockedSet.add(EconomyCatalog.findItem(rawItem)?.id ?: rawItem)
+            } }
+            fun until(record: JSONObject) = (record.opt("suspended_until") as? String)?.takeIf { it.isNotBlank() }
+            fun effectiveStatus(record: JSONObject): String {
+                val status = record.getString("status").trim().uppercase()
+                val ended = until(record)?.let { runCatching { java.time.Instant.now().isAfter(java.time.Instant.parse(it)) }.getOrDefault(false) } ?: false
+                return if (status == "SUSPENDED" && ended) "ACTIVE" else status
             }
-
-            EconomyResult.Error("Cloud wallet record is missing after initialization. Please retry.")
-        } catch (e: Exception) {
-            val cachedStatus = authPreferences.accountStatus
-            val isSuspensionExpired = if (cachedStatus == "SUSPENDED" && !authPreferences.suspendedUntil.isNullOrBlank()) {
-                try {
-                    java.time.Instant.now().isAfter(java.time.Instant.parse(authPreferences.suspendedUntil))
-                } catch (_: Exception) { false }
-            } else false
-
-            val finalOfflineStatus = if (isSuspensionExpired) "ACTIVE" else cachedStatus
-
-            val cachedProfile = EconomyProfile(
-                userId = effectiveId,
-                tier = UserEconomyTier.FREE,
-                rank = IdentityRank.LUMEN,
-                coinBalance = 0L,
-                lifetimeEarned = 0L,
-                status = finalOfflineStatus,
-                suspensionReason = authPreferences.suspensionReason,
-                suspendedUntil = authPreferences.suspendedUntil
-            )
-            EconomyResult.Success(cachedProfile, "Operating offline")
+            val restrictions = listOf(pObj, obj).filter { effectiveStatus(it) != "ACTIVE" }
+            val activeStatus = when {
+                restrictions.any { effectiveStatus(it) == "BANNED" } -> "BANNED"
+                restrictions.isNotEmpty() -> "SUSPENDED"
+                else -> "ACTIVE"
+            }
+            val strongest = restrictions.filter { effectiveStatus(it) == activeStatus }
+            val finalReason = strongest.mapNotNull { it.opt("suspension_reason") as? String }.firstOrNull { it.isNotBlank() }
+            val expiries = strongest.map { record -> until(record)?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } }
+            // One expired suspension must never lift the other source's indefinite or later restriction.
+            val finalUntil = if (activeStatus == "SUSPENDED" && expiries.isNotEmpty() && expiries.none { it == null })
+                expiries.filterNotNull().maxOrNull()?.toString() else null
+            val gifted = mutableListOf<String>()
+            obj.optJSONArray("artifacts")?.let { list -> for (i in 0 until list.length()) { val a = list.optJSONObject(i); val raw = a?.optString("id").orEmpty().ifBlank { a?.optString("name").orEmpty() }; if (raw.isNotBlank()) { EconomyCatalog.findItem(raw)?.let { gifted += it.name; unlockedSet += it.id } ?: gifted.add(raw) } } }
+            authPreferences.withCurrentSession(initial.owner, initial.session) {
+                authPreferences.setAccountRestriction(activeStatus, finalReason, finalUntil)
+                EconomyResult.Success(EconomyProfile(initial.owner, UserEconomyTier.entries.find { it.name.equals(tierStr, true) } ?: UserEconomyTier.FREE, IdentityRank.entries.find { it.name.equals(rankStr, true) } ?: IdentityRank.LUMEN, balance, earned, spent, obj.optString("active_frame").ifBlank { null }, obj.optString("active_artifact", "cycle_coin"), null, obj.optString("active_theme", "SOOTHING_ROSE"), 0L, obj.optString("last_mined_date").ifBlank { null }, unlockedSet, activeStatus, finalReason, finalUntil, gifted))
+            } ?: throw Rejected("Session changed before wallet acceptance")
+        } catch (e: CancellationException) { throw e
+        } catch (e: Rejected) { EconomyResult.Error("${e.message}. Please retry before using the shared vault.")
+        } catch (_: Exception) {
+            EconomyResult.Error("Your wallet could not be verified. Refresh it before spending or retrying a payment.")
         }
     }
 

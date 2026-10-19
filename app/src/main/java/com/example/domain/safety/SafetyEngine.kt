@@ -74,9 +74,21 @@ object SafetyEngine {
             heavy -> seek("Unusually heavy bleeding was mentioned.", "Please contact a healthcare professional promptly; seek urgent help if it worsens or you feel faint.")
             severePain -> seek("Severe pain was mentioned.", "Arrange a clinical review, particularly if pain is new, persistent, or worsening.")
             urinaryBurning && urinaryOther -> seek("Several urinary symptoms were mentioned together.", "Consider prompt clinical advice for assessment; seek urgent help for fever, flank pain, or worsening illness.")
-            else -> base
+            // A keyword miss is not a negative safety screen. This also covers Latin-script
+            // languages and mixed input; script detection cannot establish understanding.
+            else -> limitedAssessment(base)
         }
         return if (base.level.ordinal > candidate.level.ordinal) base else candidate
+    }
+
+    private fun limitedAssessment(base: SafetyEvaluation): SafetyEvaluation {
+        val limitation = "This local check cannot reliably assess every symptom description or language. No matched warning does not mean symptoms are safe."
+        return SafetyEvaluation(
+            SafetyLevel.REVIEW,
+            "Safety assessment limited",
+            if (base.level != SafetyLevel.LOW) "${base.message} $limitation" else limitation,
+            "If you feel seriously unwell or symptoms are severe or worsening, seek urgent medical care. Otherwise ask a qualified healthcare professional; use an interpreter or someone you trust if language is a barrier."
+        )
     }
 
     private fun positiveText(text: String): String {

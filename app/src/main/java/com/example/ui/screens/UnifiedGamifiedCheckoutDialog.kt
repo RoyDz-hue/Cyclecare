@@ -70,9 +70,22 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.economy.CoinPurchasePackage
 import com.example.data.payment.PaymentOptionType
+import com.example.data.payment.PaymentProvider
+import com.example.data.payment.PaymentOperation
+import com.example.data.payment.PaymentReleasePolicy
+import com.example.data.payment.DisabledPaymentReleasePolicy
 import com.example.util.NetworkHelper
 import com.example.util.PaymentInputValidator
 import kotlinx.coroutines.delay
+
+internal fun releasedCheckoutOptions(
+    isEastAfricaRegion: Boolean,
+    priceKes: Long,
+    policy: PaymentReleasePolicy = DisabledPaymentReleasePolicy
+): List<PaymentOptionType> = buildList {
+    if (isEastAfricaRegion && priceKes > 0L && policy.allows(PaymentProvider.PAYHERO, PaymentOperation.INITIATE)) add(PaymentOptionType.MPESA)
+    if (policy.allows(PaymentProvider.PAYPAL_STANDARD, PaymentOperation.INITIATE)) add(PaymentOptionType.PAYPAL)
+}
 
 @Composable
 fun UnifiedGamifiedCheckoutDialog(
@@ -87,13 +100,20 @@ fun UnifiedGamifiedCheckoutDialog(
     onProcessPaypal: () -> Unit,
     onProcessCrypto: (currency: String) -> Unit
 ) {
-    // Never advertise unfinished integrations. M-Pesa is offered only when its
-    // regional price is configured; PayPal remains the verified global route.
+    // The screen must not collect inputs or advertise a hosted payment route
+    // while the same source policy used by the service keeps it closed.
     val availableOptions = remember(isEastAfricaRegion, pkg.priceKes) {
-        buildList {
-            if (isEastAfricaRegion && pkg.priceKes > 0L) add(PaymentOptionType.MPESA)
-            add(PaymentOptionType.PAYPAL)
-        }
+        releasedCheckoutOptions(isEastAfricaRegion, pkg.priceKes)
+    }
+    if (availableOptions.isEmpty()) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismiss,
+            modifier = Modifier.testTag("checkout_unavailable"),
+            title = { Text("Checkout unavailable") },
+            text = { Text("Payments are closed while settlement and hosted-sandbox acceptance are incomplete. Do not send a payment. No payment details are needed.") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") } }
+        )
+        return
     }
     var selectedOption by remember(availableOptions) { mutableStateOf(availableOptions.first()) }
     var mpesaPhone by remember { mutableStateOf("") }
@@ -117,7 +137,7 @@ fun UnifiedGamifiedCheckoutDialog(
         isProcessing && selectedOption == PaymentOptionType.MPESA -> "Follow the prompt on your phone and enter your PIN there."
         isProcessing -> "Approve the payment in PayPal, then return here."
         statusMessage != null && statusMessage.contains("timeout", ignoreCase = true) ->
-            "Check your phone before retrying; late confirmations sync automatically."
+            "Do not retry a charge until its status and your wallet have been verified."
         statusMessage != null -> "Review the message above, then try again."
         selectedOption == PaymentOptionType.MPESA && phoneIsValid ->
             "Next: send the prompt, then confirm on your phone."

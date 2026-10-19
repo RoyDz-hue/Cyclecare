@@ -33,7 +33,13 @@ class CareViewModelConsentTest {
     @Before fun setup() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         val context = ApplicationProvider.getApplicationContext<Context>()
-        prefs = AuthPreferences(context).apply { clearSession(); isLocalOnlyMode = true; isCloudSyncAllowed = false; isAiSharingAllowed = false }
+        // Robolectric does not run AndroidX Startup; exercise real cancellation
+        // without pretending a missing test initializer is a production failure.
+        if (runCatching { androidx.work.WorkManager.getInstance(context) }.isFailure) {
+            androidx.work.WorkManager.initialize(context, androidx.work.Configuration.Builder().build())
+        }
+        prefs = AuthPreferences(context, context.getSharedPreferences("viewmodel-${java.util.UUID.randomUUID()}", Context.MODE_PRIVATE), true)
+            .apply { clearSession(); isLocalOnlyMode = true; isCloudSyncAllowed = false; isAiSharingAllowed = false }
         database = Room.inMemoryDatabaseBuilder(context, CycleCareDatabase::class.java).allowMainThreadQueries().build()
         repository = CycleRepository(database)
         vm = CycleCareViewModel(repository, prefs, SupabaseSyncService(database, prefs), SupabaseAuthService(prefs))
@@ -86,5 +92,35 @@ class CareViewModelConsentTest {
         assertNull(prefs.accessToken)
         assertFalse(prefs.isCloudSyncAllowed)
         assertFalse(prefs.isAiSharingAllowed)
+    }
+
+    @Test fun cloudDeletionPersistsWithdrawalEvenWhenSyncWasAlreadyOffAndServerUnavailable() = runBlocking {
+        prefs.userId = "11111111-1111-4111-8111-111111111111"
+        prefs.isLocalOnlyMode = false
+        assertFalse(prefs.hasPendingHealthSyncRevoke)
+        val log = com.example.data.local.CycleDayLog("2026-10-19", notes = "retain on device")
+        repository.saveLog(log)
+        // No access or refresh token: the deletion helper must fail locally, not contact a backend.
+        vm.deleteCloudHealthCopy()
+        assertFalse(prefs.isCloudSyncAllowed)
+        assertTrue(prefs.hasPendingHealthSyncRevoke)
+        withTimeout(5000) { while (vm.uiState.value.isDeletingCloudHealth) delay(20) }
+        assertTrue(vm.uiState.value.cloudHealthDeletionMessage!!.contains("not confirmed"))
+        assertEquals(log, repository.getLogForDate(log.dateString))
+        assertTrue(prefs.hasPendingHealthSyncRevoke)
+    }
+
+    @Test fun sameOwnerReloginCannotInheritPrivateConversationOrDraft() = runBlocking {
+        prefs.userId = "11111111-1111-4111-8111-111111111111"
+        vm.consultCare("I have cramps")
+        responseReady()
+        assertEquals(1, vm.uiState.value.careChatHistory.size)
+        assertNotNull(vm.uiState.value.pendingCareLog)
+        prefs.clearSession()
+        prefs.userId = "11111111-1111-4111-8111-111111111111"
+        vm.consultCare("Hello")
+        responseReady()
+        assertEquals("Hello", vm.uiState.value.careChatHistory.single().userQuery)
+        assertNull(vm.uiState.value.pendingCareLog)
     }
 }

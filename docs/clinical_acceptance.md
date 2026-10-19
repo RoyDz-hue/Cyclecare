@@ -26,7 +26,7 @@
 | Pregnancy boundaries | Pregnancy mode copy/content | General information only; confirm dates and care with a qualified clinician; no diagnosis or treatment claim | Copy review required |
 | Limited English | “I fainted and soaking” / short plain-English wording | Recognise supported plain terms; do not infer a diagnosis | Acceptance test; vocabulary coverage needs clinical review |
 | Denied AI/network | AI denied, unavailable, timeout, or offline | Local path remains available; no fabricated AI answer; urgent local result is not suppressed | Integration/manual review required (no network call in unit test) |
-| Non-English | Non-English symptom description | Must not be considered a reassuring negative; offer language-access route and clinician escalation | **Known gap: current parser is English keyword-based; see issue below** |
+| Non-English / unmatched input | Unmatched Latin-script, non-Latin, mixed-language or ambiguous text | No reassuring negative; explicitly limited assessment, clinician/interpreter route; preserve recognised or saved urgency | `SafetyEngineInputTest`; these are fallback checks, not multilingual clinical validation |
 
 ## Clinical source mapping (public, retrieved 2026-10-19)
 
@@ -48,6 +48,8 @@
 
 **Required reviewer qualification:** independent licensed clinician with relevant reproductive/sexual-health and triage expertise, authorized to practice in the target deployment jurisdiction; add a second reviewer or specialist where pregnancy/urgent-care scope requires it. Engineering test authors cannot self-approve.
 
-## Known engineering issue for parent
+## Language limitation and engineering fallback
 
-The current `SafetyEngine.evaluateInput` uses an English keyword allow-list. For example, non-English symptom text such as `Tengo sangrado muy abundante` is not recognised as heavy bleeding and can return the non-urgent base result. This is a hardcoded-matching false negative, not evidence that the symptom is safe. Minimal fix proposal for the parent: add a clinician-reviewed language/accessibility strategy (at minimum an explicit unsupported-language escalation/fallback before returning a reassuring result; preferably reviewed phrase dictionaries or a vetted classifier), plus tests for each supported language. Do not claim multilingual clinical coverage until reviewed.
+`SafetyEngine.evaluateInput` still uses an English keyword allow-list and cannot establish that it understands an entire message. Unmatched nonblank text now yields an explicit **Safety assessment limited** result rather than a routine/negative screen, including Latin-script languages that script detection would miss. The message says that no matched warning does not mean symptoms are safe and offers a qualified clinician and interpreter route. Existing more urgent findings win; this fallback does not invent a diagnosis, classify unknown text as an emergency, write health records, or change clinical thresholds.
+
+Engineering regressions cover representative unmatched text, mixed input, negation and saved findings. They do not establish language coverage or approve the wording. A clinician-reviewed supported-language/accessibility strategy, vocabulary/negation review, user testing and the signoff checklist above remain required. Do not claim multilingual clinical coverage until actually reviewed.

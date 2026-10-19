@@ -157,9 +157,17 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     }
     fun pauseHealthSyncFor(owner: String, session: Long): Long? = synchronized(prefs) {
         if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session) return@synchronized null
-        isCloudSyncAllowed = false
-        markPendingHealthSyncRevoke()
-        healthConsentGeneration
+        val allowedKey = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
+        val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
+        val previousGeneration = prefs.getLong(generationKey, 0L)
+        val generation = if (prefs.getBoolean(allowedKey, false)) Math.addExact(previousGeneration, 1L) else previousGeneration
+        val committed = prefs.edit().putBoolean(allowedKey, false)
+            .putLong(generationKey, generation).putBoolean("health_sync_pending_revoke_$owner", true)
+            .remove("health_sync_receipt_server_$owner").remove("health_sync_receipt_local_$owner")
+            .remove("health_sync_receipt_session_$owner").commit()
+        if (!committed) return@synchronized null
+        runCatching { androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("cyclecare_sync") }
+        generation
     }
     val serverHealthConsentGeneration: Long?
         get() {
@@ -186,8 +194,13 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
      * explicitly changes this aggregate setting.
      */
     var isAiSharingAllowed: Boolean
-        get() = AI_PROVIDERS.all { providerConsent(it).granted }
-        set(value) { AI_PROVIDERS.forEach { setProviderConsent(it, value) } }
+        // Aggregate availability is not a grant for every processor. Dispatch still
+        // requires the selected processor's current authoritative receipt.
+        get() = AI_PROVIDERS.any { providerConsent(it).granted }
+        set(value) {
+            if (value) AI_PROVIDERS.forEach { setProviderConsent(it, true) }
+            else revokeAllProviderConsents()
+        }
 
     data class ProviderConsentSnapshot(
         val provider: String,
@@ -223,7 +236,13 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     }
 
     fun revokeAllProviderConsents() {
-        AI_PROVIDERS.forEach { setProviderConsent(it, false) }
+        // Aggregate withdrawal is also used by account/health deletion paths.
+        // Clear receipts and enqueue server CAS revocations, not just the UI
+        // preference, so a previously granted processor cannot remain usable.
+        AI_PROVIDERS.forEach {
+            setProviderConsent(it, false)
+            revokeProcessorReceipt(it)
+        }
     }
 
     data class ProcessorReceipt(val providerId: String, val revision: Int, val manifestFingerprint: String, val accountId: String)
@@ -233,6 +252,12 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     data class ConsentMutationSnapshot(val owner: String, val session: Long, val decision: Long, val healthGeneration: Long)
     val sessionGeneration: Long get() = prefs.getLong("session_generation_v3", 0L)
+
+    /** Execute an owner-bound mutation only while the captured login session is current. */
+    internal inline fun <T> withCurrentSession(owner: String, session: Long, block: () -> T): T? =
+        synchronized(prefs) {
+            if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session) null else block()
+        }
     private fun decisionKey(provider: String) = receiptKey(provider, "decision_generation")
     fun beginProcessorConsentMutation(provider: String, enabled: Boolean): ConsentMutationSnapshot? = synchronized(prefs) {
         val id = provider.trim().uppercase()

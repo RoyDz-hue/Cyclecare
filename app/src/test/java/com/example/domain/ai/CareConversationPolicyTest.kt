@@ -2,6 +2,9 @@ package com.example.domain.ai
 
 import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
+import com.example.data.economy.EconomyProfile
+import com.example.data.model.SafetyLevel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,5 +72,30 @@ class CareConversationPolicyTest {
         val payload = CareAiService.requestPayload("Why tired?", true, "User reviewed energy=LOW")
         assertEquals("Why tired?", payload.getString("user_question"))
         assertEquals("User reviewed energy=LOW", payload.getJSONObject("context").getString("summary"))
+    }
+
+    @Test fun unsupportedInputKeepsAssessmentLimitOnClarificationWithAiDenied() = runBlocking {
+        for (forceAi in listOf(false, true)) {
+            val result = LayeredChatOrchestrator.processRawChat(
+                "Tengo sangrado muy abundante", null, CycleSettings(), EconomyProfile(),
+                forceAi = forceAi, allowRemoteAi = false
+            )
+            assertEquals(SafetyLevel.REVIEW, result.mainResponse.safetyAlert?.level)
+            assertTrue(result.mainResponse.safetyAlert!!.actionAdvice.contains("interpreter"))
+            assertFalse(isRemoteCareResponse(result.mainResponse.source))
+            assertTrue(result.detectedSymptoms.isEmpty())
+        }
+    }
+
+    @Test fun disabledOnlineExplanationCannotRemoveAssessmentLimitation() = runBlocking {
+        val response = CareAiService.consult("我很不舒服", null, CycleSettings(), forceAi = true, aiSharingAllowed = false)
+        assertEquals(SafetyLevel.REVIEW, response.safetyAlert?.level)
+        assertFalse(isRemoteCareResponse(response.source))
+    }
+
+    @Test fun closedMpesaCheckoutIsNotAdvertisedAsAvailable() = runBlocking {
+        val result = LayeredChatOrchestrator.processRawChat("M-Pesa top up", null, CycleSettings(), EconomyProfile())
+        assertTrue(result.mainResponse.summary.contains("currently unavailable"))
+        assertFalse(result.mainResponse.summary.contains("start from"))
     }
 }

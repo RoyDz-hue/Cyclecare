@@ -172,6 +172,8 @@ class CycleCareViewModel(
     private var careJob: kotlinx.coroutines.Job? = null
     private var imageJob: kotlinx.coroutines.Job? = null
     private var activeUiOwner = authPreferences.effectiveUserId
+    private var activeUiSession = authPreferences.sessionGeneration
+    private var careRequestGeneration = 0L
     private var pendingQuickLogOwner: String? = null
     private var pendingCareProposal: com.example.domain.ai.ProposedCareLog? = null
     private val processorConsentService = com.example.domain.ai.AiProcessorConsentService(authPreferences)
@@ -229,6 +231,7 @@ class CycleCareViewModel(
     }
 
     private fun resetPrivateConversation() {
+        careRequestGeneration++
         careJob?.cancel()
         imageJob?.cancel()
         careLogConsentGate.cancel()
@@ -244,8 +247,10 @@ class CycleCareViewModel(
 
     private fun resetIdentityUiIfNeeded() {
         val owner = authPreferences.effectiveUserId
-        if (activeUiOwner == owner) return
+        val session = authPreferences.sessionGeneration
+        if (activeUiOwner == owner && activeUiSession == session) return
         activeUiOwner = owner
+        activeUiSession = session
         repository.activateCurrentOwner()
         _logsMap.value = emptyMap()
         resetPrivateConversation()
@@ -655,16 +660,24 @@ class CycleCareViewModel(
             return
         }
         val owner = authPreferences.effectiveUserId
-        authPreferences.isCloudSyncAllowed = false
+        val session = authPreferences.sessionGeneration
+        // A deletion request must also invalidate any queued sync work. Persist
+        // the withdrawal before making the RPC so a restart or worker cannot
+        // upload health data while deletion is in flight (or after a failed
+        // request). The pending revoke is completed by the normal sync path.
+        if (authPreferences.pauseHealthSyncFor(owner, session) == null) {
+            _uiState.value = _uiState.value.copy(cloudHealthDeletionMessage = "The privacy decision could not be saved or your account changed. No deletion was sent. Retry before assuming deletion succeeded.")
+            return
+        }
         authPreferences.isAiSharingAllowed = false
         resetPrivateConversation()
         _uiState.value = _uiState.value.copy(isDeletingCloudHealth = true, isCloudSyncAllowed = false,
             isAiSharingAllowed = false, cloudHealthDeletionMessage = "Deleting the cloud health copy…")
         viewModelScope.launch {
             val token = com.example.data.supabase.SupabaseSessionManager.validAccessToken(authPreferences)
-            if (authPreferences.effectiveUserId != owner) return@launch
+            if (authPreferences.effectiveUserId != owner || authPreferences.sessionGeneration != session) return@launch
             val deleted = com.example.domain.ai.CarePrivacyService.deleteCloudHealthCopy(token)
-            if (authPreferences.effectiveUserId != owner) return@launch
+            if (authPreferences.effectiveUserId != owner || authPreferences.sessionGeneration != session) return@launch
             _uiState.value = _uiState.value.copy(isDeletingCloudHealth = false,
                 cloudHealthDeletionMessage = if (deleted) "Cloud health records were deleted. Local records remain; sync is off. Account, payment, economy and audit records are retained. Provider-side AI records are not deleted by this action."
                     else "Cloud deletion was not confirmed. Sync remains off. The secure deletion service may not be deployed or the connection failed; retry before assuming deletion succeeded.")
@@ -674,8 +687,14 @@ class CycleCareViewModel(
     fun setAiSharingAllowed(enabled: Boolean) {
         // Compatibility path for existing callers. The care UI uses the explicit
         // provider mutation below and never infers consent from server selection.
-        authPreferences.isAiSharingAllowed = enabled
-        if (!enabled) resetPrivateConversation()
+        if (enabled) {
+            authPreferences.isAiSharingAllowed = true
+        } else {
+            // Compatibility callers (including cloud-health deletion) must
+            // revoke provider receipts as well as the aggregate UI switch.
+            authPreferences.revokeAllProviderConsents()
+            resetPrivateConversation()
+        }
         _uiState.value = _uiState.value.copy(
             isAiSharingAllowed = authPreferences.isAiSharingAllowed,
             aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted },
@@ -768,6 +787,7 @@ class CycleCareViewModel(
         if (cleanQuestion.isEmpty() || cleanQuestion.length > 1200 || _uiState.value.isCareLoading) return
         resetIdentityUiIfNeeded()
         val owner = authPreferences.effectiveUserId
+        val session = authPreferences.sessionGeneration
         val current = _uiState.value
         val safety = SafetyEngine.evaluateInput(cleanQuestion, logsMap.value[current.currentDate.toString()])
         // Safety and local help are never blocked by connectivity, consent, restrictions or tier.
@@ -789,6 +809,9 @@ class CycleCareViewModel(
         val proposal = careLogConsentGate.propose(owner, current.currentDate.toString(), cleanQuestion)
         pendingCareProposal = proposal
         val turnId = java.util.UUID.randomUUID().toString()
+        val requestGeneration = ++careRequestGeneration
+        fun isCurrentCareRequest() = owner == authPreferences.effectiveUserId && session == authPreferences.sessionGeneration &&
+            requestGeneration == careRequestGeneration
         _uiState.value = current.copy(isCareLoading = true, careResponse = null, layeredChatResult = null, safetyEvaluation = safety,
             pendingCareLog = proposal?.interpretation, pendingCareTurnId = if (proposal != null) turnId else null,
             careSavedReviewMessage = null)
@@ -797,7 +820,7 @@ class CycleCareViewModel(
                 val consentReady = remoteAllowed && com.example.domain.ai.CarePrivacyService.updateConsents(
                     authPreferences.accessToken, authPreferences.isAiSharingAllowed, authPreferences.isCloudSyncAllowed, false
                 )
-                if (owner != authPreferences.effectiveUserId) return@launch
+                if (!isCurrentCareRequest()) return@launch
                 val result = com.example.domain.ai.LayeredChatOrchestrator.processRawChat(
                     rawInput = cleanQuestion, todayLog = logsMap.value[current.currentDate.toString()],
                     settings = current.settings, economyProfile = current.economyProfile,
@@ -812,7 +835,7 @@ class CycleCareViewModel(
                         } else emptyList(),
                     authPreferences = authPreferences
                 )
-                if (owner != authPreferences.effectiveUserId) return@launch
+                if (!isCurrentCareRequest()) return@launch
                 val turn = CareChatTurn(id = turnId, userQuery = cleanQuestion, response = result.mainResponse,
                     detectedItemsSummary = proposal?.interpretation?.items?.joinToString(" · ") { it.label }, coinsEarned = 0L)
                 _uiState.value = _uiState.value.copy(careResponse = result.mainResponse, layeredChatResult = result,
@@ -820,10 +843,10 @@ class CycleCareViewModel(
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                if (owner == authPreferences.effectiveUserId) _uiState.value = _uiState.value.copy(
+                if (isCurrentCareRequest()) _uiState.value = _uiState.value.copy(
                     isCareLoading = false, careSavedReviewMessage = "This explanation couldn't finish. Your health log has not changed.")
             } finally {
-                if (owner == authPreferences.effectiveUserId) _uiState.value = _uiState.value.copy(isCareLoading = false)
+                if (isCurrentCareRequest()) _uiState.value = _uiState.value.copy(isCareLoading = false)
             }
         }
     }

@@ -43,4 +43,23 @@ class HealthConsentReceiptTest {
         assertTrue(reopened.hasPendingHealthSyncRevoke); assertNull(reopened.serverHealthConsentGeneration)
         reopened.userId = "owner-b"; assertFalse(reopened.hasPendingHealthSyncRevoke)
     }
+
+    @Test fun failedDurableCommitCannotAuthorizeTheNextDeletionStep() {
+        val storage = context.getSharedPreferences("unit-health-commit-${UUID.randomUUID()}", Context.MODE_PRIVATE)
+        var failCommit = false
+        val guarded = object : android.content.SharedPreferences by storage {
+            override fun edit(): android.content.SharedPreferences.Editor {
+                val editor = storage.edit()
+                return object : android.content.SharedPreferences.Editor by editor {
+                    override fun putBoolean(key: String?, value: Boolean): android.content.SharedPreferences.Editor = apply { editor.putBoolean(key, value) }
+                    override fun putLong(key: String?, value: Long): android.content.SharedPreferences.Editor = apply { editor.putLong(key, value) }
+                    override fun remove(key: String?): android.content.SharedPreferences.Editor = apply { editor.remove(key) }
+                    override fun commit(): Boolean = if (failCommit) false else editor.commit()
+                }
+            }
+        }
+        val p = AuthPreferences(context, guarded, true).apply { userId = "owner-a"; isCloudSyncAllowed = true }
+        failCommit = true
+        assertNull(p.pauseHealthSyncFor("owner-a", p.sessionGeneration))
+    }
 }
