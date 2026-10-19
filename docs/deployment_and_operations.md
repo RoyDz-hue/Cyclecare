@@ -6,6 +6,8 @@ The approved deployment receipt at `/workspace/cyclecare-fixes/approved-deployme
 
 Admin/Android alignment and inspection fixes are reviewed source changes for the separately approved GitHub feature branches, not a production rollout. They do not change production provider selection, secrets, payments or hosting. Publication requires separate approval. Local tests do not establish signed-in production acceptance, clinical validity or provider-generation success.
 
+The subsequent release-hardening source adds bounded server authorization/payment I/O, an always-visible automated-safety/language limitation notice, offline Android acceptance tests, and proposal-only sync/settlement protocols. These are not evidence that all remaining release work is finished. The repositories are separate: this checkout is Android/backend; `Cyclecare-admin` owns the Admin build and Netlify configuration.
+
 ## Database migrations: do not replay the local history
 
 Local migration filenames and production migration history differ. Do **not** run a blanket `supabase db push` against the existing project or replay all timestamped files. The two earlier audit migrations in `supabase/migrations/` are design history, not instructions to install them over the approved UUID-compatible repair. The reviewed SQL retained at `supabase/proposals/20261018120000_cyclecare_uuid_compatible_repairs.sql` corresponds to the separately recorded approved repair; its filename does not match the applied migration version.
@@ -49,13 +51,15 @@ npm run build
 
 A debug APK is not a store release. A release requires an approved private upload keystore, signing configuration and actual device acceptance. The encrypted local database uses an Android-Keystore-wrapped random SQLCipher passphrase. Account namespaces, legacy-data quarantine, guest-to-account transitions and upgrade recovery still need device tests. Android backup and device transfer are disabled for private app data.
 
-Admin builds use only `VITE_SUPABASE_URL` and the public `VITE_SUPABASE_ANON_KEY`. A signed-in administrator's token authorizes management requests. Building `dist/` does not publish it. The root `netlify.toml` is the current combined-source build configuration; separate repository hosting must be reviewed against the intended repository root before publication.
+Admin builds use only `VITE_SUPABASE_URL` and the public `VITE_SUPABASE_ANON_KEY`. A signed-in administrator's token authorizes management requests. Building `dist/` does not publish it. The standalone `Cyclecare-admin` repository owns its root `netlify.toml`; the Android/backend repository is not a Netlify web application.
 
-The standalone Admin repository uses the `admin-pwa/netlify.toml` source file at its repository root: no nested base directory, build `npm run build`, publish `dist`. The combined tree's outer configuration retains `base = "admin-pwa"`. Keep hosting dashboard overrides consistent with the selected layout. Run Admin session-refresh and provider-save concurrency regressions before publishing; a valid access-token rotation is not a new user session, while logout/relogin must invalidate outstanding operations.
+The standalone Admin repository configuration has no nested base directory, builds with `npm run build` and publishes `dist`. Historical combined-source copies are not instructions to host Android/backend as a web app. Keep hosting dashboard overrides consistent with the separate repository. Run Admin session-refresh and provider-save concurrency regressions before publishing; a valid access-token rotation is not a new user session, while logout/relogin must invalidate outstanding operations.
 
 ## Health sync and deletion
 
 Health synchronization remains release-gated. Even with user consent and backend schema version 2, the Android client must not upload/download health records until owner-bound revisions, operation IDs/outbox, conflicts, tombstones, consent revocation and recovery are implemented and tested. A schema readiness marker does not release this gate.
+
+`supabase/proposals/20261019090000_health_sync_v3.sql` is a fresh-install **candidate**, not an applied migration. Its disposable SQL tests cover owner-bound CAS, full operation-fingerprint replay checks, monotonic change cursors, revoked consent generations, tombstones, legacy-deletion gates and scoped permissions. A separate two-connection Python test exercises real concurrent CAS/retries/revocation. Operation receipts retain fingerprints rather than historical health payloads; health rows are not directly selectable by ordinary clients. Android's pure protocol model is not a durable outbox or a wired transport. The runtime transfer gate stays false; full Room/outbox/conflict UX, all-path erasure integration, canonical fingerprint interoperability and two-device staging acceptance remain unfinished.
 
 Local erasure and `delete_my_cyclecare_health_data()` are distinct. Cloud-health deletion preserves local records and retained account/payment/economy/audit evidence, disables health sync and records a no-resurrection tombstone. It is not full account deletion or provider-side AI erasure. A safe resume workflow and retention policy remain unfinished.
 
@@ -65,8 +69,12 @@ The **local** PayHero initiation/callback code fails closed pending independent 
 
 PayPal requires sandbox lifecycle tests. OKX/PayNexus and direct card processing remain unavailable. Immutable economy events, unique settlement references, reconciliation, refunds/reversals and authoritative subscription expiry/revocation are not completed. Package metadata or an economy tier field is not proof of a finished subscription system. No real payment tests are authorized by this local task.
 
+PayPal now also has a hard source release gate (`PAYMENT_PROTOCOL_RELEASED = false`): environment flags alone cannot enable it. The settlement SQL candidate is a service-only, immutable evidence ledger with strict replay/terminal-event checks; it does **not** implement economy credit/reversal accounting or verified provider reconciliation. Tests execute the actual TypeScript helpers and both default-off handlers without provider contact. No mocked test proves PayPal sandbox settlement or a production charge/refund. Hybrid's sequential router is similarly a default-off foundation with live per-processor consent checks, per-attempt quota and deadlines; processor-specific Android consent and a releasable database/runtime contract remain unfinished.
+
 ## Release acceptance
 
 Before separately approved publication, test ordinary users and admins with real authenticated staging sessions; denied/revoked consent; unavailable/invalid provider credentials and output; provider changes while requests are in flight; account switching; safety parity offline/online; no chat-derived writes before confirmation; and actual device accessibility/keyboard behavior. Verify the reviewed migrations and RLS on representative legacy schemas and test genuine concurrent operations. Clinical escalation/content and processor retention require qualified review.
 
 Do not interpret passing unit tests, a successful debug build or an old production receipt as closure of these remaining release blockers.
+
+The clinician-facing source and acceptance matrix is in [clinical acceptance](clinical_acceptance.md). Automated safety checks are English keyword heuristics and can miss red flags, including non-English input. The Care screen must disclose that no warning is not assurance of safety. Only a qualified reviewer can complete clinical sign-off; leave the sign-off checklist empty until that review occurs. Emulator acceptance and physical-device acceptance are distinct results.

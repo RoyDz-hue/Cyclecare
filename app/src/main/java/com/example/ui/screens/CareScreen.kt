@@ -59,6 +59,8 @@ import com.example.ui.viewmodel.CareChatTurn
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
 
+internal const val SAFETY_LIMITATION_NOTICE = "Automated checks can miss important symptoms, especially in languages other than English. No warning does not mean you are safe. Seek urgent local medical help for severe or worsening symptoms; do not wait for an app or AI response."
+
 @Composable
 fun CareScreen(
     viewModel: CycleCareViewModel,
@@ -111,6 +113,14 @@ fun CareScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 12.dp)
         ) {
+            item(key = "safety_limitations") {
+                Text(
+                    SAFETY_LIMITATION_NOTICE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("care_safety_limitations")
+                )
+            }
             if (uiState.safetyEvaluation.level != SafetyLevel.LOW) {
                 item(key = "safety") { SafetyNotice(uiState) }
             }

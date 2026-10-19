@@ -5,6 +5,7 @@ import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
 import com.example.data.local.OnboardingProfile
 import com.example.data.local.OwnerDataGate
+import com.example.data.local.OwnerScopedDatabaseProvider
 import com.example.security.AuthPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,17 +23,24 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class SupabaseSyncService(
-    private val database: CycleCareDatabase,
+    private val legacyDatabase: CycleCareDatabase,
     private val authPreferences: AuthPreferences,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val databaseProvider: OwnerScopedDatabaseProvider =
+        OwnerScopedDatabaseProvider(authPreferences.context, authPreferences)
 ) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     // Release gate: full-field codecs alone do not provide safe two-device conflict handling.
     // Keep health transfer off until the forward schema AND revision/tombstone protocol are validated.
     private fun conflictSafeProtocolReleased(): Boolean = false
+
+    /** Never fall back to a legacy handle: it may belong to the account that was active before a switch. */
+    private fun currentDatabase(): CycleCareDatabase {
+        return databaseProvider.current()
+    }
 
     suspend fun syncAll(): SyncResult = withContext(Dispatchers.IO) {
         val ownerAtStart = authPreferences.userId
@@ -80,9 +88,9 @@ class SupabaseSyncService(
                     )
                 }
             }
-            var settings = database.cycleDao().getSettings() ?: CycleSettings()
-            var profile = database.onboardingDao().getProfile()
-            var logs = database.cycleDao().getAllLogsList()
+            var settings = currentDatabase().cycleDao().getSettings() ?: CycleSettings()
+            var profile = currentDatabase().onboardingDao().getProfile()
+            var logs = currentDatabase().cycleDao().getAllLogsList()
 
             val effectiveUserId = authPreferences.effectiveUserId
             val deviceId = authPreferences.deviceId
@@ -93,9 +101,9 @@ class SupabaseSyncService(
             if (!isOwnerStillCurrent(ownerAtStart)) return@withContext staleOwnerResult()
             val pulledCount = pullRemoteUpdatesInternal(effectiveUserId, token)
             if (!isOwnerStillCurrent(ownerAtStart)) return@withContext staleOwnerResult()
-            settings = database.cycleDao().getSettings() ?: settings
-            profile = database.onboardingDao().getProfile()
-            logs = database.cycleDao().getAllLogsList()
+            settings = currentDatabase().cycleDao().getSettings() ?: settings
+            profile = currentDatabase().onboardingDao().getProfile()
+            logs = currentDatabase().cycleDao().getAllLogsList()
 
             var profileSynced = false
             var cyclesSynced = 0
@@ -326,6 +334,7 @@ class SupabaseSyncService(
     }
 
     private suspend fun pullRemoteUpdatesInternal(userId: String, token: String): Int = withContext(Dispatchers.IO) {
+        if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext 0
         // Defense in depth for revocation racing an in-flight worker.
         if (!authPreferences.isCloudSyncAllowed) return@withContext 0
         var pulledCount = 0
@@ -351,11 +360,11 @@ class SupabaseSyncService(
                 val energy = pObj.optString("typical_energy", "")
                 val sleep = pObj.optString("typical_sleep", "")
 
-                val localSettings = database.cycleDao().getSettings() ?: CycleSettings()
+                val localSettings = currentDatabase().cycleDao().getSettings() ?: CycleSettings()
                 if (!localSettings.isOnboardingCompleted && (lastDate.isNotBlank() || goals.isNotBlank())) {
                     val safeCycleLength = cycleLen.takeIf { it in 21..45 } ?: 28
                     val safePeriodDuration = periodDur.takeIf { it in 2..10 } ?: 5
-                    database.cycleDao().saveSettings(
+                    currentDatabase().cycleDao().saveSettings(
                         localSettings.copy(
                             isOnboardingCompleted = true,
                             lastPeriodStartDate = lastDate,
@@ -364,7 +373,7 @@ class SupabaseSyncService(
                             selectedGoalsCsv = goals
                         )
                     )
-                    database.onboardingDao().insertOrUpdateProfile(
+                    currentDatabase().onboardingDao().insertOrUpdateProfile(
                         OnboardingProfile(
                             id = 1,
                             isCompleted = true,
@@ -388,7 +397,7 @@ class SupabaseSyncService(
         val pageSize = 100
         var offset = 0
         do {
-            if (!authPreferences.isCloudSyncAllowed) return@withContext pulledCount
+            if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext pulledCount
             val logsReq = Request.Builder()
                 .url("${SupabaseConfig.restUrl}/daily_logs?user_id=eq.$userId&order=date.desc&limit=$pageSize&offset=$offset")
                 .header("apikey", SupabaseConfig.anonKey)
@@ -402,7 +411,8 @@ class SupabaseSyncService(
                 for (i in 0 until lArray.length()) {
                     val item = lArray.getJSONObject(i)
                     val dateStr = item.optString("date", "")
-                    if (dateStr.isNotBlank() && database.cycleDao().getLogByDate(dateStr) == null) {
+                    if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext pulledCount
+                    if (dateStr.isNotBlank() && currentDatabase().cycleDao().getLogByDate(dateStr) == null) {
                     val newLog = CycleDayLog(
                         dateString = dateStr,
                         flowLevel = item.optString("flow", ""),
@@ -420,7 +430,7 @@ class SupabaseSyncService(
                         sleepQuality = item.optString("sleep_quality", ""),
                         waterGlasses = item.optInt("water_glasses", 0)
                     )
-                    database.cycleDao().insertOrUpdateLog(newLog)
+                    currentDatabase().cycleDao().insertOrUpdateLog(newLog)
                     pulledCount++
                     }
                 }

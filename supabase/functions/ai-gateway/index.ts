@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { isAccountRestricted, isConfiguredSecret } from "../_shared/payments.ts";
 import { normalizeAiProvider, SUPPORTED_AI_PROVIDERS, validateAiRequest } from "../_shared/request-contract.js";
+import { hybridReadiness } from "../_shared/hybrid-routing.js";
+import { fetchJsonBounded } from "../_shared/bounded-json.js";
 
 interface AiGatewayRequest {
   schema_version?: unknown;
@@ -116,6 +118,20 @@ function validateStructuredAnswer(value: Record<string, unknown>): Record<string
   return result;
 }
 
+async function boundedProviderJson(response: Response, maxBytes = 65_536): Promise<any> {
+  const length = Number(response.headers.get("content-length") || "0");
+  if (Number.isFinite(length) && length > maxBytes) throw new Error("provider_response_too_large");
+  const reader = response.body?.getReader();
+  if (!reader) return await response.json();
+  const chunks: Uint8Array[] = []; let total = 0;
+  try {
+    while (true) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength; if (total > maxBytes) throw new Error("provider_response_too_large"); chunks.push(value); }
+  } finally { reader.releaseLock(); }
+  const body = new Uint8Array(total); let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(body));
+}
+
 async function requestProvider(
   provider: AiProvider,
   apiKey: string,
@@ -139,7 +155,7 @@ async function requestProvider(
         }),
       });
       if (!response.ok) return { status: response.status };
-      const data = await response.json();
+      const data = await boundedProviderJson(response);
       const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: unknown }) =>
         typeof part?.text === "string" ? part.text : "").join("");
       return { text: typeof text === "string" && text.trim() ? text : undefined, status: response.status };
@@ -167,7 +183,7 @@ async function requestProvider(
       }),
     });
     if (!response.ok) return { status: response.status };
-    const data = await response.json();
+    const data = await boundedProviderJson(response);
     const text = provider === "COHERE"
       ? openAiContent(data?.message?.content)
       : openAiContent(data?.choices?.[0]?.message?.content);
@@ -194,12 +210,13 @@ serve(async (req: Request) => {
       return jsonResponse({ success: false, fallback: true, error: "Backend authentication is not configured" }, 503);
     }
 
-    const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    const { response: userResponse, data: userData } = await fetchJsonBounded(`${supabaseUrl}/auth/v1/user`, {
       headers: { apikey: anonKey, Authorization: authorization },
-    });
+    }, { timeoutMs: 10000, maxBytes: 65536 });
     if (!userResponse.ok) return jsonResponse({ success: false, error: "Invalid or expired session" }, 401);
-    const user = await userResponse.json();
-    if (!user?.id) return jsonResponse({ success: false, error: "Invalid user session" }, 401);
+    if (!userData || typeof userData !== "object" || Array.isArray(userData)) return jsonResponse({ success: false, error: "Invalid user session" }, 401);
+    const user = userData as Record<string, unknown>;
+    if (typeof user.id !== "string" || !user.id) return jsonResponse({ success: false, error: "Invalid user session" }, 401);
 
     if (await isAccountRestricted(supabaseUrl, adminKey, String(user.id))) {
       return jsonResponse({ success: false, error: "This account cannot use AI guidance" }, 403);
@@ -247,6 +264,12 @@ serve(async (req: Request) => {
     }
 
     const provider = normalizeAiProvider(runtime.active_ai_provider) as AiProvider | null;
+    // Hybrid is intentionally unreachable from v2 requests. Enabling it requires a
+    // separately reviewed server runtime contract and provider-specific consent.
+    if (String(runtime.active_ai_provider || "").trim().toUpperCase() === "HYBRID") {
+      const readiness = hybridReadiness({ enabled: false });
+      return jsonResponse({ success: false, fallback: true, error: readiness.reason, code: "HYBRID_UNAVAILABLE" }, 503);
+    }
     if (!provider || !SUPPORTED_AI_PROVIDERS.includes(provider)) {
       return jsonResponse({ success: false, fallback: true, error: "The selected AI provider is unsupported" }, 503);
     }

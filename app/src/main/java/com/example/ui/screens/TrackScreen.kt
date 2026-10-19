@@ -339,7 +339,7 @@ fun TrackScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Sleep", style = MaterialTheme.typography.titleSmall)
-                            Text(if (sleepHoursRecorded) String.format("%.1f hours", sleepHours) else "Not recorded", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                            Text(if (sleepHoursRecorded) String.format(java.util.Locale.getDefault(), "%.1f hours", sleepHours) else "Not recorded", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         }
                         Slider(
                             value = sleepHours,

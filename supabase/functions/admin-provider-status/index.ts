@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticatedUserId, isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
 import { aiProviderStatus, normalizeAiProvider } from "../_shared/request-contract.js";
+import { hybridReadiness } from "../_shared/hybrid-routing.js";
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return jsonResponse({ ok: true });
@@ -32,7 +33,8 @@ serve(async (req: Request) => {
       .eq("id", true)
       .maybeSingle();
     if (configError || !runtime) return jsonResponse({ error: "Runtime configuration is not initialized" }, 503);
-    const activeAi = normalizeAiProvider(runtime.active_ai_provider);
+    const rawActiveAi = String(runtime.active_ai_provider || "").trim().toUpperCase();
+    const activeAi = rawActiveAi === "HYBRID" ? "HYBRID" : normalizeAiProvider(rawActiveAi);
     if (!activeAi) return jsonResponse({ error: "Runtime AI provider is unsupported; no provider was selected" }, 503);
 
     const payheroReady = isConfiguredSecret(Deno.env.get("PAYHERO_API_USERNAME"))
@@ -48,11 +50,8 @@ serve(async (req: Request) => {
       COHERE: providerStatus("COHERE", isConfiguredSecret(Deno.env.get("COHERE_API_KEY"))),
       GEMINI: providerStatus("GEMINI", isConfiguredSecret(Deno.env.get("GEMINI_API_KEY"))),
       OPENROUTER: providerStatus("OPENROUTER", isConfiguredSecret(Deno.env.get("OPENROUTER_API_KEY"))),
-      HYBRID: {
-        configured: false,
-        validated: false,
-        reason: "Disabled: no consent-safe multi-provider contract; the gateway selects exactly one approved provider per request.",
-      },
+      // consent-safe multi-provider contract is deliberately unavailable until reviewed.
+      HYBRID: hybridReadiness({ enabled: false }),
     };
 
     return jsonResponse({

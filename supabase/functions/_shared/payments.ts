@@ -1,3 +1,5 @@
+import { fetchJsonBounded } from "./bounded-json.js";
+
 export interface CoinPackage {
   id: string;
   title: string;
@@ -40,12 +42,14 @@ export async function isAccountRestricted(supabaseUrl: string, secretKey: string
   const headers = { apikey: secretKey, Authorization: `Bearer ${secretKey}` };
   const profileUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=status,suspended_until&limit=1`;
   const economyUrl = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/economy_profiles?user_id=eq.${encodeURIComponent(userId)}&select=status,suspended_until&limit=1`;
-  const [profileResponse, economyResponse] = await Promise.all([
-    fetch(profileUrl, { headers }),
-    fetch(economyUrl, { headers }),
+  const [profileResult, economyResult] = await Promise.all([
+    fetchJsonBounded(profileUrl, { headers }, { timeoutMs: 5000, maxBytes: 8192 }),
+    fetchJsonBounded(economyUrl, { headers }, { timeoutMs: 5000, maxBytes: 8192 }),
   ]);
-  if (!profileResponse.ok || !economyResponse.ok) throw new Error("Could not verify CycleCare account status");
-  const [profiles, economyProfiles] = await Promise.all([profileResponse.json(), economyResponse.json()]);
+  if (!profileResult.response.ok || !economyResult.response.ok) throw new Error("Could not verify CycleCare account status");
+  const profiles = profileResult.data;
+  const economyProfiles = economyResult.data;
+  if (!Array.isArray(profiles) || !Array.isArray(economyProfiles)) throw new Error("Could not verify CycleCare account status");
   const rows = [...(Array.isArray(profiles) ? profiles : []), ...(Array.isArray(economyProfiles) ? economyProfiles : [])];
   return rows.some((row) => {
     const status = String(row?.status ?? "").toUpperCase();
@@ -66,12 +70,14 @@ export async function authenticatedUserId(req: Request): Promise<string | null> 
   const anonKey = supabasePublishableKey();
   if (!accessToken || !supabaseUrl || !anonKey) return null;
 
-  const response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) return null;
-  const user = await response.json();
-  return typeof user.id === "string" && user.id.length > 0 ? user.id : null;
+  try {
+    const { response, data } = await fetchJsonBounded(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
+      headers: { apikey: anonKey, Authorization: `Bearer ${accessToken}` },
+    }, { timeoutMs: 10000, maxBytes: 65536 });
+    if (!response.ok || !data || typeof data !== "object" || Array.isArray(data)) return null;
+    const user = data as Record<string, unknown>;
+    return typeof user.id === "string" && user.id.length > 0 ? user.id : null;
+  } catch { return null; }
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
