@@ -9,6 +9,7 @@ import com.example.domain.parser.NaturalLanguageLogParser
 import com.example.domain.safety.SafetyEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.security.AuthPreferences
 
 data class TiedDownChoice(
     val id: String,
@@ -66,7 +67,8 @@ object LayeredChatOrchestrator {
         forceAi: Boolean = false,
         contextSummary: String? = null,
         allowRemoteAi: Boolean = false,
-        conversationHistory: List<CareMemoryMessage> = emptyList()
+        conversationHistory: List<CareMemoryMessage> = emptyList(),
+        authPreferences: AuthPreferences? = null
     ): LayeredChatResult = withContext(Dispatchers.IO) {
         val trimmed = rawInput.trim()
 
@@ -107,6 +109,7 @@ object LayeredChatOrchestrator {
             contextSummary = contextSummary,
             aiSharingAllowed = true,
             conversationHistory = conversationHistory
+            ,authPreferences = authPreferences
         )
         if (isRemoteCareResponse(guided.source)) {
             return@withContext localResult.copy(

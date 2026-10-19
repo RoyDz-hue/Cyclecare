@@ -45,7 +45,12 @@ class CareScreenUiTest {
         compose.setContent { CycleCareTheme { CareScreen(vm, CycleUiState(authMode = "EMAIL")) } }
         compose.onNodeWithTag("care_query_input").assertIsDisplayed()
         compose.onNodeWithTag("care_submit_button").assertIsNotEnabled()
-        compose.onNodeWithTag("care_ai_sharing_switch").assertIsOff()
+        compose.onNodeWithTag("care_ai_sharing_switch").assertDoesNotExist()
+        compose.onNodeWithText("What is shared?").performClick()
+        for (provider in listOf("COHERE", "GEMINI", "OPENROUTER")) {
+            compose.onNodeWithTag("care_ai_consent_$provider").assertIsOff().assertIsNotEnabled()
+        }
+        compose.onNodeWithText("Hide details").performClick()
         compose.onNodeWithTag("care_context_switch").assertIsOff().assertIsNotEnabled()
         compose.onNodeWithTag("care_query_input").performTextInput("Why do periods cause cramps?")
         compose.onNodeWithTag("care_submit_button").assertIsEnabled()

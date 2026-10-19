@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { boundedJson, boundedResponseJson, fetchDeadline, verifiedProviderGate, PAYMENT_PROTOCOL_RELEASED } from './payment-request.ts';
 import { COIN_PACKAGES, jsonResponse } from './payments.ts';
+import { createPayPalHandler } from './paypal-handler.ts';
 
 function requestWithStream(stream) {
   return new Request('https://offline.invalid', { method: 'POST', body: stream, duplex: 'half' });
@@ -44,16 +45,19 @@ test('actual payment provider fetch deadline handles non-cooperative adapters', 
 });
 
 function realHandler(name) {
+  const source = readFileSync(new URL(`../${name}/index.ts`, import.meta.url), 'utf8');
+  assert.match(source, /createPayPalHandler\("(?:create|capture)"/);
   let accesses = 0;
-  const code = stripTypeScriptTypes(readFileSync(new URL(`../${name}/index.ts`, import.meta.url), 'utf8').replace(/^import .*;\s*$/mg, '')).replace('serve(', 'globalThis.handler = (');
-  const forbidden = () => { accesses++; throw new Error('Unreleased payment must not access persistence or a provider'); };
-  const scope = { Request, Response, URL, console: { error() {} }, COIN_PACKAGES, boundedJson, boundedResponseJson,
-    fetchDeadline: forbidden, verifiedProviderGate, jsonResponse, corsHeaders: {},
-    createClient: forbidden, authenticatedUserId: async () => 'fixture-owner', isAccountRestricted: forbidden,
-    isConfiguredSecret: () => true, supabaseSecretKey: forbidden, redactedProviderError: () => 'unavailable',
-    Deno: { env: { get: () => 'true' } } };
-  vm.runInNewContext(code, scope, { timeout: 1000 });
-  return { handler: scope.handler, accesses: () => accesses };
+  const forbidden = async () => { accesses++; throw new Error('Unreleased payment must not access persistence or a provider'); };
+  const deps = {
+    released: () => false,
+    authenticate: async () => 'fixture-owner',
+    config: () => { accesses++; throw new Error('provider config must not be read'); },
+    restricted: forbidden,
+    store: () => { accesses++; throw new Error('persistence must not be read'); },
+    api: () => { accesses++; throw new Error('provider must not be contacted'); },
+  };
+  return { handler: createPayPalHandler(name === 'paypal-create-order' ? 'create' : 'capture', deps), accesses: () => accesses };
 }
 
 for (const name of ['paypal-create-order', 'paypal-capture']) {

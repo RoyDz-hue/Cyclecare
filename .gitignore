@@ -39,3 +39,7 @@ supabase/.temp/
 hs_err_pid*.log
 replay_pid*.log
 *.hprof
+
+# Python contract-test caches
+__pycache__/
+*.py[cod]

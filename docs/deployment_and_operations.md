@@ -1,80 +1,81 @@
 # Deployment and operations
 
-## Current baseline and approval boundary
+## Production is unchanged
 
-The approved deployment receipt at `/workspace/cyclecare-fixes/approved-deployment/deployment-receipt.json` records migration `cyclecare_uuid_compatible_repairs_20261018` (version `20261018112033`), `ai-gateway` v12 and `image-generation` v5 on project `apjqcocxtylsofgxhetb`. Both functions have JWT verification enabled. The receipt is historical evidence, not a live health check or permission to deploy subsequent edits.
+The historical approved receipt records migration `cyclecare_uuid_compatible_repairs_20261018` (applied version `20261018112033`), `ai-gateway` v12 and `image-generation` v5. Both AI functions retain JWT verification. That receipt is not a live health check or approval for later changes.
 
-Admin/Android alignment and inspection fixes are reviewed source changes for the separately approved GitHub feature branches, not a production rollout. They do not change production provider selection, secrets, payments or hosting. Publication requires separate approval. Local tests do not establish signed-in production acceptance, clinical validity or provider-generation success.
+All subsequent changes are feature-branch source in `cue/ai-provider-alignment-20261018`. Android/backend and Admin PWA are separate repositories. A commit, debug APK or successful local test is not a production release. Do not merge, publish hosting, deploy functions, enable feature gates or change production secrets without separate approval.
 
-The subsequent release-hardening source adds bounded server authorization/payment I/O, an always-visible automated-safety/language limitation notice, offline Android acceptance tests, and proposal-only sync/settlement protocols. These are not evidence that all remaining release work is finished. The repositories are separate: this checkout is Android/backend; `Cyclecare-admin` owns the Admin build and Netlify configuration.
+## Forward SQL candidates, not replayable migration history
 
-## Database migrations: do not replay the local history
+Do not run a blanket `supabase db push` or replay the old full-schema, transaction-schema or timestamped migration history against the existing project. The approved UUID repair is retained as a reference proposal; its filename differs from the applied production version.
 
-Local migration filenames and production migration history differ. Do **not** run a blanket `supabase db push` against the existing project or replay all timestamped files. The two earlier audit migrations in `supabase/migrations/` are design history, not instructions to install them over the approved UUID-compatible repair. The reviewed SQL retained at `supabase/proposals/20261018120000_cyclecare_uuid_compatible_repairs.sql` corresponds to the separately recorded approved repair; its filename does not match the applied migration version.
+The new candidates are:
 
-Before any future schema change, compare the actual production catalog and applied migration history with the approved receipt, test a new forward-only migration on a disposable representative baseline, review grants/RLS/function bodies and concurrency behavior, then obtain rollout approval for that exact candidate. Never rewrite already-applied migration history. The old full-schema and transaction-schema scripts remain disabled and must not be applied.
+- `supabase/proposals/20261019000100_payment_settlement_protocol.sql` — service-only intent/evidence/ledger accounting and reconciliation.
+- `supabase/proposals/20261019090000_health_sync_v3.sql` — revision-safe sync and unified health erasure.
+- `supabase/proposals/20261019143000_cyclecare_ai_processor_consent_runtime.sql` — processor manifests, policy eligibility, consent CAS and protected Admin runtime writes.
 
-Administrator membership comes from the protected `cyclecare_admin_roles` table, never a profile role supplied by a client. Provision only an explicitly approved Auth identity; never grant the role to a public/shared account. Existing admin membership remains broad: action-level roles and session assurance are unfinished.
+Test the complete set on a fresh disposable representative catalog. Before any rollout, compare the actual production catalog, grants, owners, function bodies and applied history; create a separately reviewed forward-only migration from these candidates; then obtain approval for that exact rollout. Already-applied history must not be rewritten.
 
-## AI provider control
+## AI provider control and consent
 
-The supported **chat** providers are Cohere, Gemini and OpenRouter. The Admin PWA writes the singleton server runtime configuration through an authenticated, admin-authorized RPC. Android calls `ai-gateway` and does not select a cloud provider. Missing or unsupported configuration must fail closed, not silently choose a default.
+Cohere, Gemini and OpenRouter are chat providers. Pollinations is image-only. The authenticated Admin RPC controls the server selection; Android does not choose a cloud provider or silently substitute one when configuration is missing.
 
-Hybrid/multi-provider chat is not part of the deployed database contract. Its Admin option is unavailable until routing, provider-specific processing consent, bounded cost/failure handling and compatibility tests are reviewed and approved. There is no automatic cross-provider fallback. Android's deterministic local safety and local educational guidance remain independent of the selected remote provider; they are not evidence that multi-provider Hybrid is enabled.
+The candidate gateway requires schema v3 and authenticated, owner-bound, revision-matching processor receipts. Android loads the reviewed server manifest, discloses processors and upstream routing, and grants only after an authoritative matching receipt. Withdrawal is immediate locally and remains pending until the server confirms it. Account/session snapshots and consent CAS prevent late replies or an old login from restoring withdrawn permission. Legacy non-CAS receipt mutation is not exposed.
 
-Pollinations is **image-only**, not a selectable chat provider. AI status based on secret presence means configured, not authenticated, model-compatible or healthy. Prior Cohere/OpenRouter read-only key checks do not establish generation availability. Gemini previously returned an invalid-key error; no repaired key or successful Gemini generation is implied.
+Models, policy revisions and upstream details are pinned by the manifest. Candidate requests do not accept model environment overrides that would silently change the disclosed processor. OpenRouter pins its upstream, disables provider fallback and requests no collection and zero retention; those requested controls are not a promise of eligibility or actual provider retention. Account, audience and use-case policy records default to unreviewed.
 
-Keep credentials only in server-side Edge secrets:
+Hybrid has an actual sequential runtime and database contract, not parallel speculative requests. It requires both disclosed processors' current receipts, matching reviewed manifests, current restriction checks, bounded I/O and per-attempt quota before any dispatch. It remains source-disabled, database-disabled and unavailable in the production-compatible Admin selector. Enabling a database/environment flag alone cannot release it. The candidate Admin RPC rejects a closed or unreviewed Hybrid selection.
 
-| Purpose | Secret/config names |
-|---|---|
-| Chat | `COHERE_API_KEY`, `COHERE_MODEL`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
-| Images | `POLLINATIONS_API_KEY` and the image handler's approved model configuration |
-| Supabase | `SUPABASE_URL`, public anon/publishable key and server-only service-role/secret key |
-| PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE`, `PAYPAL_RETURN_URL`, `PAYPAL_CANCEL_URL` |
+Secret presence means configured, not authenticated or healthy. Prior Cohere/OpenRouter read-only key checks do not prove generation success. Gemini previously rejected its key; no replacement or successful generation is claimed. Production credentials stay in server-side Edge secrets, never Android, Vite, source or logs. A provider/account or model change requires a new reviewed manifest and fresh affected consent.
 
-Never put provider, service-role, payment, PAT or signing credentials in Android, Vite environment variables, source files or logs. JWT settings in `supabase/config.toml` are part of the boundary. Do not weaken them to work around an integration problem.
+## Durable health sync and erasure
 
-## Android and Admin builds
+Android now has Room v8 migrations, transactional owner-bound mutation journaling, a persisted outbox, retry metadata, revisions, cursors, tombstones and conflict records. Local mutation sequences and server CAS revisions are separate: an old receipt cannot acknowledge a newer local edit, and rebasing cannot decrease local ordering. A reviewed local/server conflict decision is rejected when the account, session or reviewed record has changed. Settings offers bounded previews and explicit Keep mine / Use server actions; server tombstones cannot be resurrected by Keep mine.
 
-Android requires JDK/Android SDK support for API 36. Only the public Supabase URL and anon key belong in `.env.android`; see `.env.android.example`.
+The v3-only transport validates typed receipts, logical identities, server consent epochs, cursor ordering and bounded response reads. Tombstones carry logical identity without old health payloads. Background sync cannot grant consent or enroll historical records automatically. An explicit future opt-in may separately choose to journal existing data. Legacy v2 health upload/download is not a fallback.
 
-Core-library desugaring preserves `java.time` compatibility with the declared minimum Android API 24; do not remove it or suppress NewApi errors to make lint pass. Explicit backend URL/key settings must validate as public-client configuration. Invalid or partial settings disable the connection instead of redirecting requests to production. A fully absent configuration retains the documented production default. Accepted staging URLs remain bound to their supplied key; legacy JWT project references are checked when present, while opaque publishable-key ownership must be verified by the selected project's authentication service.
+Device-local lock settings, notification preferences, account mode and legal/age acceptance are not cloud health payloads. Remote restores and tombstones preserve those local choices and cannot certify legal acceptance or turn off the device lock.
+
+The unified health-erasure transaction removes legacy logs, health-bearing profile fields, v3 records/operations and processor receipts under the shared owner lock. Local erasure also removes outbox, revision, cursor and conflict payloads. Only disabled monotonic security clocks remain so pre-erasure requests cannot become valid after a future explicit resumption. No historical health payload is kept in those clocks. Auth identity, financial/economy/audit records and the privacy deletion marker are distinct retained account records.
+
+Health erasure is not full account deletion, merchant-record deletion or provider-side AI erasure. A retention/account-lifecycle policy still needs explicit approval. The runtime health-transfer gate remains false until reviewed staging and two-device acceptance; local tests do not authorize a production enablement.
+
+## Payment reconciliation and economy accounting
+
+The PayPal candidate now includes durable owner/package request IDs, persistent provider-action claims, fixed provider origins, exact minor-unit amount/currency checks, server-recorded order matching, independent read-only order/capture verification and signature-verified webhook evidence. Reconciliation never initiates a charge or refund. An ambiguous create/capture is not blindly resubmitted after a timeout or provider idempotency expiry.
+
+Verified events and economy entries are immutable and replay-safe. Capture posts once; full refund/reversal removes purchased value once. Spent-value reversals create debt rather than negative spendable coins; subsequent credits repay that debt before becoming spendable. Purchased packages cannot farm permanent XP or retained paid entitlements through refund cycles. Same-reference identity conflicts, duplicate events, terminal-state conflicts and concurrent requests are tested transactionally. Partial or otherwise ambiguous provider evidence is quarantined, not guessed into success or a new credit.
+
+`PAYMENT_PROTOCOL_RELEASED = false` is a hard source gate. PayHero initiation/callback, M-Pesa, OKX/PayNexus and direct card processing remain closed where independent settlement controls are unavailable. The old approved rollout did not deploy these local payment gates; do not assume production behavior changed. Only the signature-authenticated PayPal webhook omits platform JWT verification; user-facing payment and consent endpoints retain it and the webhook remains source-gated.
+
+Tests use local fake provider responses, actual controllers and disposable PostgreSQL accounting/race fixtures. They are not PayPal-hosted sandbox acceptance, real charges, refunds, clinical approval or production settlement. Subscription renewals and expiry must not be inferred from coin-package metadata.
+
+## Build and isolated verification
+
+Android requires the configured JDK/SDK for API 36. Core-library desugaring preserves the declared API 24 minimum. Invalid or partial public backend configuration fails closed; it must not redirect requests into production. Only the public URL and public anon/publishable key belong in `.env.android`.
 
 ```bash
-./gradlew testDebugUnitTest assembleDebug
-cd admin-pwa
+./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+node --test supabase/functions/_shared/*.test.mjs
+# Separate sibling repository, not an Android subdirectory:
+cd ../Cyclecare-admin
 npm ci
 npm test
 npm run build
 ```
 
-A debug APK is not a store release. A release requires an approved private upload keystore, signing configuration and actual device acceptance. The encrypted local database uses an Android-Keystore-wrapped random SQLCipher passphrase. Account namespaces, legacy-data quarantine, guest-to-account transitions and upgrade recovery still need device tests. Android backup and device transfer are disabled for private app data.
+Database tests are for fresh disposable databases only. `health-sync-v3.sql` installs its representative fixture and all three candidates and asserts real public-wire behavior, erasure, permissions and consent epochs. The separate concurrency script requires `CYCLECARE_DISPOSABLE_DB=1` and `PGDATABASE`; use normal PG connection environment variables for the disposable server. `hybrid-consent-runtime.sql` runs after its fixture/candidate and rolls back its test-only review/membership grants. Payment SQL and concurrency fixtures exercise real accounting, not duplicated test-only arithmetic.
 
-Admin builds use only `VITE_SUPABASE_URL` and the public `VITE_SUPABASE_ANON_KEY`. A signed-in administrator's token authorizes management requests. Building `dist/` does not publish it. The standalone `Cyclecare-admin` repository owns its root `netlify.toml`; the Android/backend repository is not a Netlify web application.
+The Admin repository owns root `netlify.toml`, builds with `npm run build` and publishes `dist`. Building it is not publication. Retain session-refresh and provider-save concurrency tests. A valid access-token rotation is not a new login; logout/relogin must invalidate pending work.
 
-The standalone Admin repository configuration has no nested base directory, builds with `npm run build` and publishes `dist`. Historical combined-source copies are not instructions to host Android/backend as a web app. Keep hosting dashboard overrides consistent with the separate repository. Run Admin session-refresh and provider-save concurrency regressions before publishing; a valid access-token rotation is not a new user session, while logout/relogin must invalidate outstanding operations.
+## What still requires real approval or access
 
-## Health sync and deletion
+A qualified clinician must review escalation rules, fertility/pregnancy wording, intended users, supported languages and the matrix in [clinical acceptance](clinical_acceptance.md). English keyword checks can miss danger; no warning is not assurance of safety. Keep sign-off empty until the reviewer actually approves it.
 
-Health synchronization remains release-gated. Even with user consent and backend schema version 2, the Android client must not upload/download health records until owner-bound revisions, operation IDs/outbox, conflicts, tombstones, consent revocation and recovery are implemented and tested. A schema readiness marker does not release this gate.
+Physical-device and two-device authenticated staging acceptance must cover SQLCipher/Keystore recovery, account switching, outbox restarts, conflicts, erasure/revocation, accessibility and real keyboard behavior. JVM preferences and temporary Room databases do not establish hardware encryption or physical-device acceptance. A debug APK and built instrumentation APK are not a signed store release.
 
-`supabase/proposals/20261019090000_health_sync_v3.sql` is a fresh-install **candidate**, not an applied migration. Its disposable SQL tests cover owner-bound CAS, full operation-fingerprint replay checks, monotonic change cursors, revoked consent generations, tombstones, legacy-deletion gates and scoped permissions. A separate two-connection Python test exercises real concurrent CAS/retries/revocation. Operation receipts retain fingerprints rather than historical health payloads; health rows are not directly selectable by ordinary clients. Android's pure protocol model is not a durable outbox or a wired transport. The runtime transfer gate stays false; full Room/outbox/conflict UX, all-path erasure integration, canonical fingerprint interoperability and two-device staging acceptance remain unfinished.
+Provider eligibility requires account/DPA, retention, audience and use-case evidence; Gemini additionally needs a valid eligible server-side credential. PayPal-hosted sandbox lifecycle acceptance needs sandbox merchant client ID/secret, webhook ID and buyer access plus approved return/cancel origins and handling policy for ambiguous/partial refunds. No live merchant credentials or real-payment authorization are implied.
 
-Local erasure and `delete_my_cyclecare_health_data()` are distinct. Cloud-health deletion preserves local records and retained account/payment/economy/audit evidence, disables health sync and records a no-resurrection tombstone. It is not full account deletion or provider-side AI erasure. A safe resume workflow and retention policy remain unfinished.
-
-## Payments and economy remain gated
-
-The **local** PayHero initiation/callback code fails closed pending independent settlement verification. The latest receipt explicitly says payment functions were not modified by that approved rollout; do not assume production already has the local PayHero gate. Check this difference in a separately approved payment review before any production checkout. Do not retry a charge to discover the status of an ambiguous payment.
-
-PayPal requires sandbox lifecycle tests. OKX/PayNexus and direct card processing remain unavailable. Immutable economy events, unique settlement references, reconciliation, refunds/reversals and authoritative subscription expiry/revocation are not completed. Package metadata or an economy tier field is not proof of a finished subscription system. No real payment tests are authorized by this local task.
-
-PayPal now also has a hard source release gate (`PAYMENT_PROTOCOL_RELEASED = false`): environment flags alone cannot enable it. The settlement SQL candidate is a service-only, immutable evidence ledger with strict replay/terminal-event checks; it does **not** implement economy credit/reversal accounting or verified provider reconciliation. Tests execute the actual TypeScript helpers and both default-off handlers without provider contact. No mocked test proves PayPal sandbox settlement or a production charge/refund. Hybrid's sequential router is similarly a default-off foundation with live per-processor consent checks, per-attempt quota and deadlines; processor-specific Android consent and a releasable database/runtime contract remain unfinished.
-
-## Release acceptance
-
-Before separately approved publication, test ordinary users and admins with real authenticated staging sessions; denied/revoked consent; unavailable/invalid provider credentials and output; provider changes while requests are in flight; account switching; safety parity offline/online; no chat-derived writes before confirmation; and actual device accessibility/keyboard behavior. Verify the reviewed migrations and RLS on representative legacy schemas and test genuine concurrent operations. Clinical escalation/content and processor retention require qualified review.
-
-Do not interpret passing unit tests, a successful debug build or an old production receipt as closure of these remaining release blockers.
-
-The clinician-facing source and acceptance matrix is in [clinical acceptance](clinical_acceptance.md). Automated safety checks are English keyword heuristics and can miss red flags, including non-English input. The Care screen must disclose that no warning is not assurance of safety. Only a qualified reviewer can complete clinical sign-off; leave the sign-off checklist empty until that review occurs. Emulator acceptance and physical-device acceptance are distinct results.
+Production release, protected signing-key access and any future paid calls require their own explicit authorization. Passing tests does not replace those approvals.

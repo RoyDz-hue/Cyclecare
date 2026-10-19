@@ -10,11 +10,12 @@ const plan = (overrides = {}) => ({
     COHERE: { provider: 'COHERE', granted: true, revoked: false, revision: HYBRID_PROTOCOL_REVISION },
     GEMINI: { provider: 'GEMINI', granted: true, revoked: false, revision: HYBRID_PROTOCOL_REVISION }
   },
+  processor_receipts: [{ provider_id: 'COHERE', revision: 1, manifest_fingerprint: 'a'.repeat(64) }, { provider_id: 'GEMINI', revision: 1, manifest_fingerprint: 'b'.repeat(64) }],
   deadline_ms: 1000,
   deadline_at: Date.now() + 1000,
   ...overrides
 });
-const consent = async (provider) => ({ provider, granted: true, revoked: false, revision: HYBRID_PROTOCOL_REVISION });
+const consent = async (provider) => ({ provider, granted: true, revoked: false, revision: HYBRID_PROTOCOL_REVISION, revision_number: 1, manifest_fingerprint: provider === 'COHERE' ? 'a'.repeat(64) : 'b'.repeat(64) });
 
 test('Hybrid is disabled by default and cannot be enabled by a client-shaped plan', () => {
   assert.equal(hybridReadiness().available, false);
@@ -22,14 +23,14 @@ test('Hybrid is disabled by default and cannot be enabled by a client-shaped pla
 });
 
 test('Hybrid requires matching revisions and explicit per-provider consent', () => {
-  assert.equal(validateHybridPlan(plan({ consent_revision: 'old' }), { enabled: true }).code, 'revision_mismatch');
-  assert.equal(validateHybridPlan(plan({ consents: { COHERE: { provider: 'COHERE', granted: true, revision: HYBRID_PROTOCOL_REVISION } } }), { enabled: true }).code, 'provider_consent_missing');
-  assert.equal(validateHybridPlan(plan({ consents: { COHERE: { provider: 'COHERE', granted: true, revoked: true, revision: HYBRID_PROTOCOL_REVISION }, GEMINI: { provider: 'GEMINI', granted: true, revision: HYBRID_PROTOCOL_REVISION } } }), { enabled: true }).code, 'provider_consent_missing');
+  assert.equal(validateHybridPlan(plan({ consent_revision: 'old' }), { enabled: true, sourceReleased: true }).code, 'revision_mismatch');
+  assert.equal(validateHybridPlan(plan({ consents: { COHERE: { provider: 'COHERE', granted: true, revision: HYBRID_PROTOCOL_REVISION } } }), { enabled: true, sourceReleased: true }).code, 'provider_consent_missing');
+  assert.equal(validateHybridPlan(plan({ consents: { COHERE: { provider: 'COHERE', granted: true, revoked: true, revision: HYBRID_PROTOCOL_REVISION }, GEMINI: { provider: 'GEMINI', granted: true, revision: HYBRID_PROTOCOL_REVISION } } }), { enabled: true, sourceReleased: true }).code, 'provider_consent_missing');
 });
 
 test('Hybrid runs an ordered allowlist sequentially and accounts quota per attempt', async () => {
   const seen = [];
-  const result = await executeHybridPlan(plan(), { enabled: true, liveConsent: consent, runProvider: async (provider) => {
+  const result = await executeHybridPlan(plan(), { enabled: true, sourceReleased: true, liveConsent: consent, runProvider: async (provider) => {
     seen.push(provider);
     return provider === 'COHERE' ? { ok: false, code: 'provider_unavailable' } : { ok: true, output: 'safe' };
   }, consumeQuota: async (provider, attempt) => ({ allowed: seen.length < 2 || provider === 'GEMINI', provider, attempt }) });
@@ -41,14 +42,14 @@ test('Hybrid runs an ordered allowlist sequentially and accounts quota per attem
 
 test('Hybrid never falls back after safety refusal or malformed output', async () => {
   let calls = 0;
-  const result = await executeHybridPlan(plan(), { enabled: true, liveConsent: consent, runProvider: async () => { calls += 1; return { ok: false, code: 'malformed_output' }; } });
+  const result = await executeHybridPlan(plan(), { enabled: true, sourceReleased: true, liveConsent: consent, runProvider: async () => { calls += 1; return { ok: false, code: 'malformed_output' }; } });
   assert.equal(result.code, 'malformed_output');
   assert.equal(calls, 1);
 });
 
 test('Hybrid quota denial stops before any provider call', async () => {
   let calls = 0;
-  const result = await executeHybridPlan(plan(), { enabled: true, liveConsent: consent, consumeQuota: async () => ({ allowed: false }) , runProvider: async () => { calls += 1; return { ok: true, output: 'nope' }; } });
+  const result = await executeHybridPlan(plan(), { enabled: true, sourceReleased: true, liveConsent: consent, consumeQuota: async () => ({ allowed: false }) , runProvider: async () => { calls += 1; return { ok: true, output: 'nope' }; } });
   assert.equal(result.code, 'quota_denied');
   assert.equal(calls, 0);
 });
@@ -56,7 +57,7 @@ test('Hybrid quota denial stops before any provider call', async () => {
 
 test('Hybrid stops when live consent is revoked between attempts', async () => {
   let calls = 0;
-  const result = await executeHybridPlan(plan(), { enabled: true, liveConsent: async (provider, context) => ({ provider, granted: context.attempt === 1, revision: HYBRID_PROTOCOL_REVISION }), runProvider: async () => { calls += 1; return { ok: false, code: 'provider_unavailable' }; } });
+  const result = await executeHybridPlan(plan(), { enabled: true, sourceReleased: true, liveConsent: async (provider, context) => ({ provider, granted: context.attempt === 1, revision: HYBRID_PROTOCOL_REVISION, revision_number: 1, manifest_fingerprint: provider === 'COHERE' ? 'a'.repeat(64) : 'b'.repeat(64) }), runProvider: async () => { calls += 1; return { ok: false, code: 'provider_unavailable' }; } });
   assert.equal(result.code, 'provider_consent_missing');
   assert.equal(calls, 1);
 });

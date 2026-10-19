@@ -51,7 +51,7 @@ serve(async (req: Request) => {
       GEMINI: providerStatus("GEMINI", isConfiguredSecret(Deno.env.get("GEMINI_API_KEY"))),
       OPENROUTER: providerStatus("OPENROUTER", isConfiguredSecret(Deno.env.get("OPENROUTER_API_KEY"))),
       // consent-safe multi-provider contract is deliberately unavailable until reviewed.
-      HYBRID: hybridReadiness({ enabled: false }),
+      HYBRID: { ...hybridReadiness({ enabled: false }), source_gate: "closed", selection_authority: "server-only", manifest_revision: "cyclecare-ai-manifest-v3" },
     };
 
     return jsonResponse({

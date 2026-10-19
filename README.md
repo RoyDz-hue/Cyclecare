@@ -30,7 +30,7 @@ SQL tests in `supabase/tests/` are for fresh, disposable PostgreSQL databases on
 
 Admin selects Cohere, Gemini or OpenRouter on the server. Android does not choose an arbitrary cloud provider. Pollinations is image-only. Credential presence does not prove provider health or generation availability.
 
-Cloud sync, multi-provider Hybrid and payment checkout remain disabled. The new sync protocol, Hybrid router and settlement ledger are reviewed/testable foundations, **not finished release integrations**. Durable Android outbox/conflict-resolution wiring, provider-specific consent UI, payment reconciliation/reversal accounting, staging/provider acceptance and qualified clinical review are still required. Environment flags cannot release the unfinished payment protocol.
+Cloud sync, multi-provider Hybrid and payment checkout remain disabled. The feature branch now includes a durable Room v8 outbox and conflict UI, v3-only sync transport and unified health erasure, processor-specific Android consent and pinned server routing, plus verified payment reconciliation and credit/refund/reversal accounting. These are candidate integrations, not deployed or clinically approved releases. Physical-device/two-device staging acceptance, provider account-policy review, PayPal-hosted sandbox acceptance and qualified clinical sign-off remain required. Database or environment flags alone cannot release source-gated features.
 
 The files under `supabase/proposals/` are not applied production migrations. Do not replay the migration history or run a blanket `supabase db push` against the existing project. Source commits, successful builds and local SQL assertions neither deploy changes nor establish production/clinical acceptance.
 

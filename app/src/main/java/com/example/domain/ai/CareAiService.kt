@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.json.JSONArray
+import com.example.security.AuthPreferences
 import java.util.concurrent.TimeUnit
 
 data class CareResponse(
@@ -63,10 +64,11 @@ object CareAiService {
         .callTimeout(65, TimeUnit.SECONDS)
         .build()
 
-    internal fun requestPayload(question: String, forceAi: Boolean, contextSummary: String?, conversationHistory: List<CareMemoryMessage> = emptyList()): JSONObject = JSONObject().apply {
-        put("schema_version", 2)
+    internal fun requestPayload(question: String, forceAi: Boolean, contextSummary: String?, conversationHistory: List<CareMemoryMessage> = emptyList(), processorReceipts: List<AiProcessorReceipt> = emptyList()): JSONObject = JSONObject().apply {
+        put("schema_version", 3)
         put("user_question", question.trim().take(CareConversationPolicy.MAX_QUESTION_LENGTH))
         put("ai_consent", true)
+        put("processor_receipts", JSONArray().apply { processorReceipts.forEach { put(JSONObject().put("provider_id", it.providerId).put("revision", it.revision).put("manifest_fingerprint", it.manifestFingerprint)) } })
         if (conversationHistory.isNotEmpty()) put("conversation_history", JSONArray().apply {
             conversationHistory.filter { it.role in setOf("user", "assistant") }.takeLast(6).forEach {
                 put(JSONObject().put("role", it.role).put("content", it.content.take(600)))
@@ -86,7 +88,8 @@ object CareAiService {
         forceAi: Boolean = false,
         contextSummary: String? = null,
         aiSharingAllowed: Boolean = false,
-        conversationHistory: List<CareMemoryMessage> = emptyList()
+        conversationHistory: List<CareMemoryMessage> = emptyList(),
+        authPreferences: AuthPreferences? = null
     ): CareResponse = withContext(Dispatchers.IO) {
         val safetyEval = SafetyEngine.evaluateInput(userQuestion, recentLog)
         if (safetyEval.isRedFlag) return@withContext CareResponse(
@@ -107,14 +110,24 @@ object CareAiService {
             safetyAlert = if (safetyEval.level != SafetyLevel.LOW) safetyEval else null,
             source = "Curated care information"
         )
-        if (aiSharingAllowed && !accessToken.isNullOrBlank()) {
+        if (aiSharingAllowed && !accessToken.isNullOrBlank() && authPreferences != null) {
             try {
+                val consent = AiProcessorConsentService(authPreferences).fetchManifest(accessToken)
+                val manifest = (consent as? ConsentResult.Success)?.manifest
+                val receipts = manifest?.providers?.mapNotNull { p -> authPreferences.processorReceipt(p.id)?.takeIf { AiProcessorConsentService(authPreferences).cloudReceiptIsCurrent(manifest, p.id) } }.orEmpty()
+                // Do not trust a cached toggle: every cloud request needs a fresh manifest and receipt.
+                if (manifest == null || receipts.isEmpty()) return@withContext CareResponse(
+                    summary = "Online explanation unavailable", whatText = "Online AI processing is unavailable until current processor consent is confirmed.",
+                    understandText = article?.understandText ?: "Local guidance remains available.", careText = article?.careText ?: "Try the local care guidance.",
+                    watchText = article?.watchText ?: "Notice symptoms that are new, persistent or worsening.", escalateText = article?.escalateText ?: "Seek urgent medical help for severe, sudden or worsening symptoms.",
+                    safetyAlert = if (safetyEval.level != SafetyLevel.LOW) safetyEval else null, source = "Local guidance · online explanation unavailable"
+                )
                 val request = Request.Builder()
                     .url("${SupabaseConfig.url}/functions/v1/ai-gateway")
                     .header("apikey", SupabaseConfig.anonKey)
                     .header("Authorization", "Bearer ${accessToken.trim()}")
                     .header("Content-Type", "application/json")
-                    .post(requestPayload(userQuestion, forceAi, contextSummary, conversationHistory).toString().toRequestBody("application/json".toMediaType()))
+                    .post(requestPayload(userQuestion, forceAi, contextSummary, conversationHistory, receipts).toString().toRequestBody("application/json".toMediaType()))
                     .build()
                 httpClient.newCall(request).execute().use { response ->
                     val body = response.body

@@ -47,7 +47,14 @@ enum class PaymentStatus {
     PENDING,
     COMPLETED,
     FAILED,
-    CANCELLED
+    CANCELLED,
+    REFUNDED,
+    REVERSED,
+    AMBIGUOUS;
+
+    val isAuthoritativeTerminal: Boolean
+        get() = this == COMPLETED || this == FAILED || this == CANCELLED ||
+            this == REFUNDED || this == REVERSED
 }
 
 data class PaymentTransaction(

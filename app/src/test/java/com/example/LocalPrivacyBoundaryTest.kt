@@ -44,7 +44,7 @@ class LocalPrivacyBoundaryTest {
     @Test fun deniedConsentDoesNotResolveSessionOrMakeAnyNetworkRequest() = runBlocking {
         val db = database()
         try {
-            val prefs = AuthPreferences(context)
+            val prefs = AuthPreferences(context, context.getSharedPreferences("unit-privacy-${java.util.UUID.randomUUID()}", Context.MODE_PRIVATE), true).apply { userId = "11111111-1111-4111-8111-111111111111" }
             prefs.isCloudSyncAllowed = false
             val requests = AtomicInteger(0)
             val client = OkHttpClient.Builder().addInterceptor { requests.incrementAndGet(); throw AssertionError("No health request permitted") }.build()
@@ -58,14 +58,14 @@ class LocalPrivacyBoundaryTest {
     @Test fun consentAloneCannotEnableLegacyOrConflictUnsafeHealthTransfer() = runBlocking {
         val db = database()
         try {
-            val prefs = AuthPreferences(context)
+            val prefs = AuthPreferences(context, context.getSharedPreferences("unit-privacy-${java.util.UUID.randomUUID()}", Context.MODE_PRIVATE), true).apply { userId = "11111111-1111-4111-8111-111111111111" }
             OwnerDataGate.resumeAfterExplicitUserAction(context, prefs.userId)
             prefs.isCloudSyncAllowed = true
             val requests = AtomicInteger(0)
             val client = OkHttpClient.Builder().addInterceptor { requests.incrementAndGet(); throw AssertionError("Backend readiness must fail closed") }.build()
             val result = SupabaseSyncService(db, prefs, client).syncAll()
             assertFalse(result.isSuccess)
-            assertTrue(result.message.contains("conflict-safe"))
+            assertTrue(result.message.contains("pending"))
             assertEquals(0, requests.get())
         } finally { db.close() }
     }
@@ -73,7 +73,7 @@ class LocalPrivacyBoundaryTest {
     @Test fun wipePauseIsDurableAndCannotBeUndoneByReconnect() = runBlocking {
         val db = database()
         try {
-            val prefs = AuthPreferences(context)
+            val prefs = AuthPreferences(context, context.getSharedPreferences("unit-privacy-${java.util.UUID.randomUUID()}", Context.MODE_PRIVATE), true).apply { userId = "11111111-1111-4111-8111-111111111111" }
             prefs.isCloudSyncAllowed = true
             OwnerDataGate.markWiped(context, prefs.userId)
             val requests = AtomicInteger(0)

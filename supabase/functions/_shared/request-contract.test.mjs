@@ -23,19 +23,20 @@ test('admin provider status documents Hybrid as disabled without a multi-provide
   assert.match(source, /validated: false/);
 });
 
-test('AI v2 minimal requires request consent and has no health context', () => {
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true }).ok, true);
+const receipt = { provider_id: 'COHERE', revision: 1, manifest_fingerprint: 'a'.repeat(64) };
+test('AI v3 minimal requires request consent and has no health context', () => {
+  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true }).error, 'structure_update_required');
   assert.equal(validateAiRequest({ schema_version: 1, user_question: 'hello', context_mode: 'minimal', ai_consent: true }).ok, false);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true, context: { summary: 'raw' } }).ok, false);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: false }).ok, false);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true, conversation_history: [{ role: 'user', content: 'already shared' }] }).ok, true);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true, conversation_history: [{ role: 'system', content: 'unsafe' }] }).ok, false);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'hello', context_mode: 'minimal', ai_consent: true, conversation_history: Array.from({ length: 7 }, () => ({ role: 'user', content: 'x' })) }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'hello', context_mode: 'minimal', ai_consent: true, processor_receipts: [receipt], context: { summary: 'raw' } }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'hello', context_mode: 'minimal', ai_consent: false, processor_receipts: [receipt] }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'hello', context_mode: 'minimal', ai_consent: true, processor_receipts: [receipt], conversation_history: [{ role: 'user', content: 'already shared' }] }).ok, true);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'hello', context_mode: 'minimal', ai_consent: true, processor_receipts: [receipt], conversation_history: [{ role: 'system', content: 'unsafe' }] }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'hello', context_mode: 'minimal', ai_consent: true, processor_receipts: [receipt], conversation_history: Array.from({ length: 7 }, () => ({ role: 'user', content: 'x' })) }).ok, false);
 });
 test('expanded context is bounded and summary-only', () => {
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'q', context_mode: 'expanded', ai_consent: true, context: { summary: 'bounded visible summary' } }).ok, true);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'q', context_mode: 'expanded', ai_consent: true, context: { summary: 'x'.repeat(2401) } }).ok, false);
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'q'.repeat(1201), context_mode: 'minimal', ai_consent: true }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'q', context_mode: 'expanded', ai_consent: true, processor_receipts: [receipt], context: { summary: 'bounded visible summary' } }).ok, true);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'q', context_mode: 'expanded', ai_consent: true, processor_receipts: [receipt], context: { summary: 'x'.repeat(2401) } }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'q'.repeat(1201), context_mode: 'minimal', ai_consent: true, processor_receipts: [receipt] }).ok, false);
 });
 test('image requires consent and caps custom prompt', () => {
   assert.equal(validateImageRequest({ style: 'botanical', custom_prompt: 'calm', image_consent: true }).ok, true);
@@ -51,7 +52,7 @@ test('payment credit requires independent verification, exact amount, and callba
 test('tier/admin policy is not encoded as a consent bypass', () => {
   // Contract tests document the invariant enforced by gateway: admin bypass is tier only;
   // persisted consent remains required for every remote request.
-  assert.equal(validateAiRequest({ schema_version: 2, user_question: 'q', context_mode: 'minimal', ai_consent: false }).ok, false);
+  assert.equal(validateAiRequest({ schema_version: 3, user_question: 'q', context_mode: 'minimal', ai_consent: false, processor_receipts: [receipt] }).ok, false);
 });
 test('schema readiness is v2-only', () => {
   const migration = readFileSync(new URL('../../migrations/20261018110000_cyclecare_backend_contract_v2.sql', import.meta.url), 'utf8');

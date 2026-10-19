@@ -37,4 +37,7 @@ interface CycleDayLogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSettings(settings: CycleSettings)
+
+    @Query("DELETE FROM cycle_settings WHERE id = 1")
+    suspend fun deleteSettings()
 }

@@ -6,6 +6,9 @@ import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
 import com.example.data.local.OnboardingProfile
 import com.example.data.local.OwnerDataGate
+import com.example.data.local.HealthSyncOutboxEntry
+import com.example.data.local.HealthSyncPayloadCodec
+import com.example.data.local.HealthSyncRevision
 import com.example.data.model.CyclePhase
 import com.example.data.model.DayPrediction
 import com.example.security.AuthPreferences
@@ -14,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
+import androidx.room.withTransaction
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -85,6 +89,7 @@ class CycleRepository(database: CycleCareDatabase) {
     }
     private val dao get() = activeDatabase.value.cycleDao()
     private val onboardingDao get() = activeDatabase.value.onboardingDao()
+    private val consentGeneration: Long get() = lifecyclePreferences?.healthConsentGeneration ?: 0L
 
     fun activateCurrentOwner() {
         val context = lifecycleContext ?: return
@@ -150,7 +155,11 @@ class CycleRepository(database: CycleCareDatabase) {
     suspend fun getOnboardingProfile(): OnboardingProfile? = onboardingDao.getProfile()
 
     suspend fun saveOnboardingProfile(profile: OnboardingProfile) {
-        onboardingDao.insertOrUpdateProfile(profile)
+        val db = activeDatabase.value
+        val selectedOnboardingDao = db.onboardingDao()
+        journalMutation(db, "profile", HealthSyncPayloadCodec.profilePayload(profile)) {
+            selectedOnboardingDao.insertOrUpdateProfile(profile)
+        }
     }
 
     suspend fun getSettings(): CycleSettings {
@@ -169,7 +178,9 @@ class CycleRepository(database: CycleCareDatabase) {
                 lutealPhaseDays = 14,
                 remindFertile = profile?.remindFertileWindow ?: false
             )
-            dao.saveSettings(settings)
+            journalMutation(selectedDatabase, "settings", HealthSyncPayloadCodec.settingsPayload(settings)) {
+                dao.saveSettings(settings)
+            }
         }
         return settings
     }
@@ -182,8 +193,6 @@ class CycleRepository(database: CycleCareDatabase) {
         val selectedDatabase = activeDatabase.value
         val dao = selectedDatabase.cycleDao()
         val onboardingDao = selectedDatabase.onboardingDao()
-        onboardingDao.insertOrUpdateProfile(profile)
-
         val current = dao.getSettings() ?: CycleSettings()
         val updated = current.copy(
             isOnboardingCompleted = true,
@@ -194,7 +203,21 @@ class CycleRepository(database: CycleCareDatabase) {
             remindFertile = profile.remindFertileWindow,
             isAppLockEnabled = enableLock
         )
-        dao.saveSettings(updated)
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val capturedConsentGeneration = consentGeneration
+        selectedDatabase.withTransaction {
+            val sync = selectedDatabase.healthSyncDao()
+            val profilePayload = HealthSyncPayloadCodec.profilePayload(profile)
+            val profilePrior = sync.revision(owner, "profile")
+            onboardingDao.insertOrUpdateProfile(profile)
+            sync.putRevision(HealthSyncRevision(owner, "profile", (profilePrior?.revision ?: 0L) + 1L, HealthSyncPayloadCodec.hash(profilePayload), false, System.currentTimeMillis(), profilePrior?.serverRevision ?: 0L))
+            sync.enqueue(HealthSyncOutboxEntry(owner, java.util.UUID.randomUUID().toString(), "profile", "UPSERT", profilePrior?.serverRevision ?: 0L, (profilePrior?.revision ?: 0L) + 1L, profilePayload, HealthSyncPayloadCodec.hash(profilePayload), capturedConsentGeneration))
+            val settingsPayload = HealthSyncPayloadCodec.settingsPayload(updated)
+            val settingsPrior = sync.revision(owner, "settings")
+            dao.saveSettings(updated)
+            sync.putRevision(HealthSyncRevision(owner, "settings", (settingsPrior?.revision ?: 0L) + 1L, HealthSyncPayloadCodec.hash(settingsPayload), false, System.currentTimeMillis(), settingsPrior?.serverRevision ?: 0L))
+            sync.enqueue(HealthSyncOutboxEntry(owner, java.util.UUID.randomUUID().toString(), "settings", "UPSERT", settingsPrior?.serverRevision ?: 0L, (settingsPrior?.revision ?: 0L) + 1L, settingsPayload, HealthSyncPayloadCodec.hash(settingsPayload), capturedConsentGeneration))
+        }
 
         val periodStartDate = profile.lastPeriodDateString
             .takeIf(String::isNotBlank)
@@ -209,23 +232,129 @@ class CycleRepository(database: CycleCareDatabase) {
     }
 
     suspend fun saveSettings(settings: CycleSettings) {
-        dao.saveSettings(settings)
+        val db = activeDatabase.value
+        val selectedDao = db.cycleDao()
+        journalMutation(db, "settings", HealthSyncPayloadCodec.settingsPayload(settings)) {
+            selectedDao.saveSettings(settings)
+        }
+    }
+
+    private suspend fun journalMutation(
+        db: CycleCareDatabase,
+        recordId: String,
+        payload: String,
+        kind: String = "UPSERT",
+        write: suspend () -> Unit
+    ) {
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val capturedConsentGeneration = consentGeneration
+        db.withTransaction {
+            val sync = db.healthSyncDao()
+            val prior = sync.revision(owner, recordId)
+            val revision = (prior?.revision ?: 0L) + 1L
+            write()
+            sync.putRevision(HealthSyncRevision(owner, recordId, revision, HealthSyncPayloadCodec.hash(payload), false, System.currentTimeMillis(), prior?.serverRevision ?: 0L))
+            sync.enqueue(HealthSyncOutboxEntry(owner, java.util.UUID.randomUUID().toString(), recordId, kind, prior?.serverRevision ?: 0L, revision, payload, HealthSyncPayloadCodec.hash(payload), capturedConsentGeneration))
+        }
     }
 
     suspend fun getLogForDate(dateString: String): CycleDayLog? {
-        return dao.getLogByDate(dateString)
+        val selectedDatabase = activeDatabase.value
+        return selectedDatabase.cycleDao().getLogByDate(dateString)
+    }
+
+    suspend fun pendingSyncConflicts(): List<com.example.data.local.HealthSyncConflictEntity> =
+        activeDatabase.value.healthSyncDao().conflicts(lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest")
+
+    /** Keep the captured local snapshot, rebased on the reviewed server revision. */
+    suspend fun retainLocalConflict(recordId: String) {
+        val db = activeDatabase.value
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val capturedConsentGeneration = consentGeneration
+        db.withTransaction {
+            val sync = db.healthSyncDao()
+            val conflict = sync.conflicts(owner).firstOrNull { it.recordId == recordId } ?: return@withTransaction
+            if (conflict.remoteTombstone) throw IllegalStateException("keep_local_unavailable_server_tombstone")
+            val current = sync.revision(owner, recordId)
+            if (current == null || current.revision != conflict.localRevision || current.payloadHash != HealthSyncPayloadCodec.hash(conflict.localPayloadJson))
+                return@withTransaction
+            val localSeq = current.revision + 1L
+            val payload = conflict.localPayloadJson
+            sync.removeReviewedPending(owner, recordId, current.revision)
+            sync.putRevision(current.copy(revision = localSeq, serverRevision = conflict.remoteRevision, updatedAt = System.currentTimeMillis()))
+            sync.enqueue(HealthSyncOutboxEntry(owner, java.util.UUID.randomUUID().toString(), recordId, conflict.localKind, conflict.remoteRevision, localSeq, payload, HealthSyncPayloadCodec.hash(payload), capturedConsentGeneration))
+            sync.resolveConflict(owner, recordId, System.currentTimeMillis(), "RETAIN_LOCAL")
+        }
+    }
+
+    /** Apply the reviewed typed remote snapshot only if the local snapshot is still current. */
+    suspend fun acceptRemoteConflict(recordId: String) {
+        val db = activeDatabase.value
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        db.withTransaction {
+            val sync = db.healthSyncDao()
+            val conflict = sync.conflicts(owner).firstOrNull { it.recordId == recordId } ?: return@withTransaction
+            val current = sync.revision(owner, recordId)
+            if (current != null && (current.revision != conflict.localRevision || current.payloadHash != HealthSyncPayloadCodec.hash(conflict.localPayloadJson))) return@withTransaction
+            if (current == null && conflict.localRevision != 0L) return@withTransaction
+            val remoteRevision = conflict.remoteRevision
+            if (remoteRevision <= 0L) throw IllegalStateException("remote_record_missing_accept_unavailable")
+            val selectedDao = db.cycleDao()
+            val selectedOnboardingDao = db.onboardingDao()
+            if (conflict.remoteTombstone) {
+                if (conflict.remotePayloadJson != null) throw IllegalArgumentException("tombstone_payload")
+                when (recordId) { "settings" -> selectedDao.saveSettings(HealthSyncPayloadCodec.parseSettingsPayload(HealthSyncPayloadCodec.settingsPayload(CycleSettings()), recordId, selectedDao.getSettings())); "profile" -> selectedOnboardingDao.insertOrUpdateProfile(HealthSyncPayloadCodec.parseProfilePayload(HealthSyncPayloadCodec.profilePayload(OnboardingProfile()), recordId, selectedOnboardingDao.getProfile())); else -> selectedDao.deleteLog(recordId) }
+                sync.putRevision(HealthSyncRevision(owner, recordId, (current?.revision ?: 0L) + 1L, null, true, System.currentTimeMillis(), remoteRevision))
+            } else {
+                val payload = conflict.remotePayloadJson ?: throw IllegalArgumentException("missing_remote_payload")
+                when (recordId) {
+                    "settings" -> selectedDao.saveSettings(HealthSyncPayloadCodec.parseSettingsPayload(payload, recordId, selectedDao.getSettings()))
+                    "profile" -> selectedOnboardingDao.insertOrUpdateProfile(HealthSyncPayloadCodec.parseProfilePayload(payload, recordId, selectedOnboardingDao.getProfile()))
+                    else -> selectedDao.insertOrUpdateLog(HealthSyncPayloadCodec.parseLogPayload(payload, recordId))
+                }
+                sync.putRevision(HealthSyncRevision(owner, recordId, (current?.revision ?: 0L) + 1L, HealthSyncPayloadCodec.hash(payload), false, System.currentTimeMillis(), remoteRevision))
+            }
+            sync.removeReviewedPending(owner, recordId, conflict.localRevision)
+            sync.resolveConflict(owner, recordId, System.currentTimeMillis(), "ACCEPT_REMOTE")
+        }
     }
 
     fun getLogForDateFlow(dateString: String): Flow<CycleDayLog?> {
-        return dao.getLogByDateFlow(dateString)
+        return activeDatabase.value.cycleDao().getLogByDateFlow(dateString)
     }
 
     suspend fun saveLog(log: CycleDayLog) {
-        dao.insertOrUpdateLog(log)
+        val selectedDatabase = activeDatabase.value
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val capturedConsentGeneration = consentGeneration
+        val selectedDao = selectedDatabase.cycleDao()
+        selectedDatabase.withTransaction {
+            val sync = selectedDatabase.healthSyncDao()
+            val recordId = log.dateString
+            val prior = sync.revision(owner, recordId)
+            val revision = (prior?.revision ?: 0L) + 1L
+            val payload = HealthSyncPayloadCodec.logPayload(log)
+            val operationId = java.util.UUID.randomUUID().toString()
+            selectedDao.insertOrUpdateLog(log)
+            sync.putRevision(HealthSyncRevision(owner, recordId, revision, HealthSyncPayloadCodec.hash(payload), false, System.currentTimeMillis(), prior?.serverRevision ?: 0L))
+            sync.enqueue(HealthSyncOutboxEntry(owner, operationId, recordId, "UPSERT", prior?.serverRevision ?: 0L, revision, payload, HealthSyncPayloadCodec.hash(payload), capturedConsentGeneration))
+        }
     }
 
     suspend fun deleteLog(dateString: String) {
-        dao.deleteLog(dateString)
+        val selectedDatabase = activeDatabase.value
+        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val capturedConsentGeneration = consentGeneration
+        val selectedDao = selectedDatabase.cycleDao()
+        selectedDatabase.withTransaction {
+            val sync = selectedDatabase.healthSyncDao()
+            val prior = sync.revision(owner, dateString)
+            val revision = (prior?.revision ?: 0L) + 1L
+            val operationId = java.util.UUID.randomUUID().toString()
+            selectedDao.deleteLog(dateString)
+            sync.putRevision(HealthSyncRevision(owner, dateString, revision, null, true, System.currentTimeMillis(), prior?.serverRevision ?: 0L))
+            sync.enqueue(HealthSyncOutboxEntry(owner, operationId, dateString, "DELETE", prior?.serverRevision ?: 0L, revision, null, HealthSyncPayloadCodec.hash(null), capturedConsentGeneration))
+        }
     }
 
     suspend fun deleteAllLogs() {
@@ -233,20 +362,27 @@ class CycleRepository(database: CycleCareDatabase) {
         val selectedDatabase = activeDatabase.value
         val dao = selectedDatabase.cycleDao()
         val onboardingDao = selectedDatabase.onboardingDao()
+        val capturedPreferences = lifecyclePreferences
+        val capturedContext = lifecycleContext
         // Persist pause before deleting, so concurrent sync cannot resurrect the cleared namespace.
-        lifecycleContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
-        dao.deleteAllLogs()
-        onboardingDao.deleteProfile()
+        capturedContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
+        if (capturedPreferences != null && capturedPreferences.userId == wipeOwner) {
+            capturedPreferences.isCloudSyncAllowed = false
+            listOf("COHERE", "GEMINI", "OPENROUTER").forEach(capturedPreferences::revokeProcessorReceipt)
+        }
+        val owner = wipeOwner?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        selectedDatabase.withTransaction {
+            dao.deleteAllLogs()
+            onboardingDao.deleteProfile()
+            dao.deleteSettings()
+            selectedDatabase.healthSyncDao().eraseOutbox(owner)
+            selectedDatabase.healthSyncDao().eraseRevisions(owner)
+            selectedDatabase.healthSyncDao().eraseCursor(owner)
+            selectedDatabase.healthSyncDao().eraseConflicts(owner)
+            dao.saveSettings(CycleSettings(isOnboardingCompleted = false, lastPeriodStartDate = "", averageCycleLength = 28, periodDuration = 5))
+        }
         storedPeriodDateRange = null
-        dao.saveSettings(
-            CycleSettings(
-                isOnboardingCompleted = false,
-                lastPeriodStartDate = "",
-                averageCycleLength = 28,
-                periodDuration = 5
-            )
-        )
-        lifecycleContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
+        capturedContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
     }
 
     fun calculateDayPrediction(date: LocalDate, settings: CycleSettings): DayPrediction? {

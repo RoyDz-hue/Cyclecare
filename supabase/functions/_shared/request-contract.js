@@ -21,9 +21,14 @@ export function cleanText(value, max) {
 }
 export function validateAiRequest(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "object_required" };
-  const allowed = new Set(["schema_version", "user_question", "context_mode", "ai_consent", "context", "conversation_history"]);
+  const allowed = new Set(["schema_version", "user_question", "context_mode", "ai_consent", "context", "conversation_history", "processor_receipts"]);
   if (Object.keys(body).some((key) => !allowed.has(key))) return { ok: false, error: "unknown_field" };
-  if (body.schema_version !== 2) return { ok: false, error: "schema_version_2_required" };
+  if (body.schema_version === 2) return { ok: false, error: "structure_update_required" };
+  if (body.schema_version !== 3) return { ok: false, error: "schema_version_3_required" };
+  if (!Array.isArray(body.processor_receipts) || body.processor_receipts.length < 1 || body.processor_receipts.length > 2) return { ok: false, error: "processor_receipts_required" };
+  for (const receipt of body.processor_receipts) {
+    if (!receipt || typeof receipt !== "object" || typeof receipt.provider_id !== "string" || !Number.isInteger(receipt.revision) || receipt.revision < 1 || typeof receipt.manifest_fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(receipt.manifest_fingerprint)) return { ok: false, error: "processor_receipt_invalid" };
+  }
   const question = cleanText(body.user_question, MAX_QUESTION);
   if (!question) return { ok: false, error: "question_invalid" };
   if (body.ai_consent !== true) return { ok: false, error: "request_consent_required" };
@@ -47,7 +52,7 @@ export function validateAiRequest(body) {
     });
     if (conversationHistory.some((turn) => turn === null)) return { ok: false, error: "conversation_history_invalid" };
   }
-  return { ok: true, question, contextMode: body.context_mode, summary, conversationHistory };
+  return { ok: true, question, contextMode: body.context_mode, summary, conversationHistory, processorReceipts: body.processor_receipts };
 }
 export function validateImageRequest(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "object_required" };

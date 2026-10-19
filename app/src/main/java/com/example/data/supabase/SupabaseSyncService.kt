@@ -1,470 +1,182 @@
 package com.example.data.supabase
 
-import com.example.data.local.CycleCareDatabase
-import com.example.data.local.CycleDayLog
-import com.example.data.local.CycleSettings
-import com.example.data.local.OnboardingProfile
-import com.example.data.local.OwnerDataGate
-import com.example.data.local.OwnerScopedDatabaseProvider
+import androidx.room.withTransaction
+import com.example.data.local.*
 import com.example.security.AuthPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+/** Cloud transfer stays source-gated. Neither background work nor a server flag may grant consent. */
 class SupabaseSyncService(
     private val legacyDatabase: CycleCareDatabase,
     private val authPreferences: AuthPreferences,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build(),
-    private val databaseProvider: OwnerScopedDatabaseProvider =
-        OwnerScopedDatabaseProvider(authPreferences.context, authPreferences)
+    private val client: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build(),
+    private val databaseProvider: OwnerScopedDatabaseProvider = OwnerScopedDatabaseProvider(authPreferences.context, authPreferences)
 ) {
-    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-    // Release gate: full-field codecs alone do not provide safe two-device conflict handling.
-    // Keep health transfer off until the forward schema AND revision/tombstone protocol are validated.
-    private fun conflictSafeProtocolReleased(): Boolean = false
+    private fun conflictSafeProtocolReleased() = false
+    private fun wireRecordId(owner: String, logicalId: String) = UUID.nameUUIDFromBytes("cyclecare-v3:$owner:$logicalId".toByteArray(Charsets.UTF_8)).toString()
+    private fun current(owner: String, session: Long, local: Long, server: Long) = authPreferences.userId == owner && authPreferences.sessionGeneration == session && authPreferences.healthConsentGeneration == local && authPreferences.serverHealthConsentGeneration == server && authPreferences.isCloudSyncAllowed && !OwnerDataGate.isWiped(authPreferences.context, owner)
+    private fun validLogicalId(id: String) = id in setOf("profile", "settings") || runCatching { LocalDate.parse(id) }.isSuccess
+    private fun envelope(id: String, value: JSONObject) = JSONObject().put("kind", "UPSERT").put("logicalRecordId", id).put("value", value)
 
-    /** Never fall back to a legacy handle: it may belong to the account that was active before a switch. */
-    private fun currentDatabase(): CycleCareDatabase {
-        return databaseProvider.current()
+    /** Explicit consent action only. Withdrawal remains available even while release is closed. */
+    suspend fun requestV3Consent(enabled: Boolean, transport: HealthSyncV3Transport, accessToken: String, includeExistingData: Boolean = false): V3ConsentReceipt = withContext(Dispatchers.IO) {
+        val owner = authPreferences.userId ?: error("owner_required"); val session = authPreferences.sessionGeneration
+        if (enabled) {
+            check(conflictSafeProtocolReleased()) { "v3_release_policy_closed" }
+            check(authPreferences.isCloudSyncAllowed && !authPreferences.hasPendingHealthSyncRevoke) { "explicit_current_consent_required" }
+        }
+        val local = if (enabled) authPreferences.healthConsentGeneration else authPreferences.pauseHealthSyncFor(owner, session) ?: error("owner_changed")
+        val receipt = transport.setConsent(enabled, accessToken) // Failed revocation leaves the durable pending flag set.
+        check(receipt.enabled == enabled && authPreferences.saveServerHealthConsentReceipt(owner, session, local, receipt.generation, enabled)) { "stale_or_invalid_consent_receipt" }
+        // Historical health data is never automatically enrolled by background sync.
+        if (enabled && includeExistingData) journalExplicitSnapshot(owner, session, local, receipt.generation)
+        receipt
+    }
+    private suspend fun journalExplicitSnapshot(owner: String, session: Long, local: Long, server: Long) {
+        val db = databaseProvider.current(); val dao = db.healthSyncDao()
+        db.withTransaction {
+            check(current(owner, session, local, server)) { "consent_changed" }
+            suspend fun journal(id: String, payload: String) {
+                val prior = dao.revision(owner, id); val sequence = Math.addExact(prior?.revision ?: 0L, 1L)
+                dao.removeReviewedPending(owner, id, prior?.revision ?: 0L)
+                dao.putRevision(HealthSyncRevision(owner, id, sequence, HealthSyncPayloadCodec.hash(payload), false, System.currentTimeMillis(), prior?.serverRevision ?: 0L))
+                dao.enqueue(HealthSyncOutboxEntry(owner, UUID.randomUUID().toString(), id, "UPSERT", prior?.serverRevision ?: 0L, sequence, payload, HealthSyncPayloadCodec.hash(payload), local))
+            }
+            for (log in db.cycleDao().getAllLogsList()) journal(log.dateString, HealthSyncPayloadCodec.logPayload(log))
+            db.cycleDao().getSettings()?.let { journal("settings", HealthSyncPayloadCodec.settingsPayload(it)) }
+            db.onboardingDao().getProfile()?.let { journal("profile", HealthSyncPayloadCodec.profilePayload(it)) }
+        }
+    }
+
+    suspend fun executeV3Outbox(transport: HealthSyncV3Transport, accessToken: String): Int = withContext(Dispatchers.IO) {
+        if (!conflictSafeProtocolReleased()) return@withContext 0
+        val owner = authPreferences.userId ?: return@withContext 0; val session = authPreferences.sessionGeneration
+        val local = authPreferences.healthConsentGeneration; val server = authPreferences.serverHealthConsentGeneration ?: return@withContext 0
+        if (!current(owner, session, local, server)) return@withContext 0
+        val db = databaseProvider.current(); val dao = db.healthSyncDao(); var applied = 0
+        val blockedRecords = mutableSetOf<String>()
+        val operations = dao.pending(owner).sortedBy { it.revision }.take(100).map { it.operationId }
+        for (operationId in operations) {
+            if (!current(owner, session, local, server)) break
+            // Re-read after each ACK: a prior operation may have rebased this operation.
+            val e = dao.pending(owner).firstOrNull { it.operationId == operationId } ?: continue
+            if (e.recordId in blockedRecords || e.consentGeneration != local) continue
+            if (e.attempts >= 8 || e.nextAttemptAt > System.currentTimeMillis()) { blockedRecords += e.recordId; continue }
+            try {
+                check(validLogicalId(e.recordId)) { "invalid_logical_identity" }
+                val revision = Math.addExact(e.baseRevision, 1L)
+                val payload = if (e.kind == "DELETE") null else envelope(e.recordId, JSONObject(e.payloadJson ?: error("missing_payload")))
+                val r = transport.apply(V3WireOperation(e.operationId, wireRecordId(owner, e.recordId), e.baseRevision, revision, e.kind, payload, server, e.recordId), accessToken)
+                if (!current(owner, session, local, server)) break
+                when (r.status) {
+                    "applied", "duplicate" -> {
+                        check(r.recordId == wireRecordId(owner, e.recordId) && r.operationId == e.operationId && r.revision == revision && r.logicalRecordId == e.recordId && r.payloadHash?.matches(Regex("^[a-f0-9]{64}$")) == true) { "invalid_ack" }
+                        val committed = db.withTransaction {
+                            if (!current(owner, session, local, server)) return@withTransaction false
+                            dao.revision(owner, e.recordId)?.let { dao.putRevision(it.copy(serverRevision = maxOf(it.serverRevision, revision))) }
+                            dao.acknowledgeMatched(owner, e.operationId, e.recordId, e.revision)
+                            dao.rebasePending(owner, e.recordId, e.baseRevision, revision)
+                            true
+                        }
+                        if (committed) applied++
+                    }
+                    "conflict" -> {
+                        blockedRecords += e.recordId
+                        db.withTransaction {
+                            if (!current(owner, session, local, server)) return@withTransaction
+                            val latest = dao.pending(owner).filter { it.recordId == e.recordId }.maxByOrNull { it.revision } ?: e
+                            val remoteValue = r.remotePayload?.optJSONObject("value")
+                            check(r.remoteTombstone || r.revision == 0L || remoteValue != null) { "invalid_conflict_payload" }
+                            dao.putConflict(HealthSyncConflictEntity(owner, e.recordId, latest.operationId, latest.revision, latest.payloadJson, latest.kind, r.revision ?: error("missing_remote_revision"), remoteValue?.toString(), r.remoteTombstone, System.currentTimeMillis()))
+                        }
+                    }
+                    else -> error("v3_operation_rejected")
+                }
+            } catch (_: Exception) {
+                blockedRecords += e.recordId
+                if (!current(owner, session, local, server)) break
+                dao.retry(owner, e.operationId, System.currentTimeMillis() + (1_000L shl e.attempts.coerceIn(0, 6)), "Sync retry or manual conflict review required")
+            }
+        }
+        applied
     }
 
     suspend fun syncAll(): SyncResult = withContext(Dispatchers.IO) {
-        val ownerAtStart = authPreferences.userId
-        if (OwnerDataGate.isWiped(authPreferences.context, ownerAtStart)) {
-            return@withContext SyncResult(true, "Local data was wiped; cloud sync is paused until explicitly resumed.", timestamp = System.currentTimeMillis())
+        if (!authPreferences.isCloudSyncAllowed && !authPreferences.hasPendingHealthSyncRevoke)
+            return@withContext SyncResult(true, "Cloud sync is disabled; no health request was made.")
+        val owner = authPreferences.userId ?: return@withContext SyncResult(false, "An authenticated account is required.")
+        if (OwnerDataGate.isWiped(authPreferences.context, owner) && !authPreferences.hasPendingHealthSyncRevoke) return@withContext SyncResult(true, "Local data was wiped; cloud sync remains paused.")
+        // A pending withdrawal sends only a consent decision, never a health payload.
+        if (!authPreferences.hasPendingHealthSyncRevoke && (!authPreferences.isCloudSyncAllowed || !conflictSafeProtocolReleased()))
+            return@withContext SyncResult(false, "Cloud health sync is paused pending V3 release acceptance.")
+        val token = when (val state = SupabaseSessionManager.resolveAccessToken(authPreferences)) {
+            is AccessTokenResolution.Valid -> state.token
+            is AccessTokenResolution.Missing, is AccessTokenResolution.ReauthenticationRequired -> return@withContext SyncResult(false, "Sign in to complete consent revocation or sync.", requiresAuthentication = true)
+            AccessTokenResolution.TemporarilyUnavailable -> return@withContext SyncResult(false, "Secure session unavailable; local data remains private.", shouldRetry = true)
         }
-        // Consent is enforced here (and in pullRemoteUpdates), not only by UI/worker callers.
-        // A denied/revoked consent must perform no health upload or download.
-        if (!authPreferences.isCloudSyncAllowed) {
-            authPreferences.lastSyncSuccess = false
-            val message = "Cloud health sync is disabled. Local data remains on this device."
-            authPreferences.lastSyncMessage = message
-            return@withContext SyncResult(
-                isSuccess = true, message = message, timestamp = System.currentTimeMillis()
-            )
-        }
-        if (!conflictSafeProtocolReleased()) return@withContext SyncResult(
-            isSuccess = false,
-            message = "Cloud health sync is paused until the conflict-safe backend protocol is ready. Your records remain on this device.",
-            timestamp = System.currentTimeMillis()
-        )
+        val transport = OkHttpHealthSyncV3Transport(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client)
         try {
-            val token = when (val tokenState = SupabaseSessionManager.resolveAccessToken(authPreferences)) {
-                is AccessTokenResolution.Valid -> tokenState.token
-                AccessTokenResolution.Missing, AccessTokenResolution.ReauthenticationRequired -> {
-                    val message = "A secure CycleCare session is required to sync. Reconnect and sign in again."
-                    authPreferences.lastSyncMessage = message
-                    authPreferences.lastSyncSuccess = false
-                    return@withContext SyncResult(
-                        isSuccess = false,
-                        message = message,
-                        timestamp = System.currentTimeMillis(),
-                        requiresAuthentication = true
-                    )
-                }
-                AccessTokenResolution.TemporarilyUnavailable -> {
-                    val message = "The secure session could not be refreshed because of a temporary connection problem. Retry when connected."
-                    authPreferences.lastSyncMessage = message
-                    authPreferences.lastSyncSuccess = false
-                    return@withContext SyncResult(
-                        isSuccess = false,
-                        message = message,
-                        timestamp = System.currentTimeMillis(),
-                        shouldRetry = true
-                    )
-                }
+            if (authPreferences.hasPendingHealthSyncRevoke) {
+                requestV3Consent(false, transport, token)
+                return@withContext SyncResult(true, "Cloud sync consent withdrawal confirmed.")
             }
-            var settings = currentDatabase().cycleDao().getSettings() ?: CycleSettings()
-            var profile = currentDatabase().onboardingDao().getProfile()
-            var logs = currentDatabase().cycleDao().getAllLogsList()
-
-            val effectiveUserId = authPreferences.effectiveUserId
-            val deviceId = authPreferences.deviceId
-            val authMode = authPreferences.accountMode
-
-            // Restore the account's existing profile before uploading anything from
-            // a new device. This prevents empty local defaults from replacing it.
-            if (!isOwnerStillCurrent(ownerAtStart)) return@withContext staleOwnerResult()
-            val pulledCount = pullRemoteUpdatesInternal(effectiveUserId, token)
-            if (!isOwnerStillCurrent(ownerAtStart)) return@withContext staleOwnerResult()
-            settings = currentDatabase().cycleDao().getSettings() ?: settings
-            profile = currentDatabase().onboardingDao().getProfile()
-            logs = currentDatabase().cycleDao().getAllLogsList()
-
-            var profileSynced = false
-            var cyclesSynced = 0
-            var logsSynced = 0
-
-            // Create the remote profile on first auth so the app-scoped device ID
-            // is bound to this guest/email identity before onboarding is complete.
-            if (!isOwnerStillCurrent(ownerAtStart) || !authPreferences.isCloudSyncAllowed) return@withContext SyncResult(
-                isSuccess = true,
-                message = "Cloud health sync revoked before upload.",
-                timestamp = System.currentTimeMillis()
-            )
-            profileSynced = syncProfile(
-                profile = profile,
-                settings = settings,
-                userId = effectiveUserId,
-                deviceId = deviceId,
-                accountMode = authMode,
-                token = token
-            )
-            if (!profileSynced) {
-                val message = "We couldn't sync your profile right now. Your local data is safe; please try again."
-                authPreferences.lastSyncMessage = message
-                authPreferences.lastSyncSuccess = false
-                return@withContext SyncResult(
-                    isSuccess = false,
-                    message = message,
-                    timestamp = System.currentTimeMillis()
-                )
-            }
-
-            // 2. Sync Cycle Record
-            if (settings.lastPeriodStartDate.isNotBlank()) {
-                if (!isOwnerStillCurrent(ownerAtStart) || !authPreferences.isCloudSyncAllowed) return@withContext SyncResult(
-                    isSuccess = true,
-                    message = "Cloud health sync revoked before upload.",
-                    timestamp = System.currentTimeMillis()
-                )
-                syncCycle(
-                    settings = settings,
-                    userId = effectiveUserId,
-                    token = token
-                )
-                cyclesSynced = 1
-            }
-
-            // All profile, cycle, and daily-log payloads are health data and are consent-gated above.
-            if (logs.isNotEmpty()) {
-                if (!isOwnerStillCurrent(ownerAtStart) || !authPreferences.isCloudSyncAllowed) return@withContext SyncResult(
-                    isSuccess = true,
-                    message = "Cloud health sync revoked before upload.",
-                    timestamp = System.currentTimeMillis()
-                )
-                logsSynced = syncDailyLogs(logs, effectiveUserId, token)
-            }
-
-            val timestamp = System.currentTimeMillis()
-            val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(timestamp))
-            val summaryMsg = if (pulledCount > 0) {
-                "Synced successfully at $timeStr ($logsSynced uploaded, $pulledCount pulled from cloud)"
-            } else {
-                "Synced successfully at $timeStr ($logsSynced logs, $cyclesSynced cycle, profile updated)"
-            }
-
-            authPreferences.lastSyncTimestamp = timestamp
-            authPreferences.lastSyncMessage = summaryMsg
-            authPreferences.lastSyncSuccess = true
-
-            SyncResult(
-                isSuccess = true,
-                message = summaryMsg,
-                syncedCyclesCount = cyclesSynced,
-                syncedLogsCount = logsSynced,
-                profileSynced = profileSynced,
-                timestamp = timestamp
-            )
-        } catch (e: SyncFailureException) {
-            val errMsg = if (e.requiresAuthentication) {
-                "Your session needs a quick refresh. Sign in again before syncing private data."
-            } else {
-                "Sync couldn't finish. Your local data is safe. Please try again when connected."
-            }
-            authPreferences.lastSyncMessage = errMsg
-            authPreferences.lastSyncSuccess = false
-
-            SyncResult(
-                isSuccess = false,
-                message = errMsg,
-                timestamp = System.currentTimeMillis(),
-                shouldRetry = e.shouldRetry,
-                requiresAuthentication = e.requiresAuthentication
-            )
-        } catch (e: Exception) {
-            val errMsg = if (e is IOException) {
-                "Network interruption prevented cloud sync. Your local data is safe; retry when connected."
-            } else {
-                "Cloud sync could not be completed. Your local data is safe; review the connection and try again."
-            }
-            authPreferences.lastSyncMessage = errMsg
-            authPreferences.lastSyncSuccess = false
-            SyncResult(
-                isSuccess = false,
-                message = errMsg,
-                timestamp = System.currentTimeMillis(),
-                shouldRetry = e is IOException
-            )
-        }
+            val local = authPreferences.healthConsentGeneration; val session = authPreferences.sessionGeneration
+            val server = authPreferences.serverHealthConsentGeneration ?: return@withContext SyncResult(false, "Explicit V3 consent is required.")
+            val pulled = pull(owner, local, server, session, transport, token); val uploaded = executeV3Outbox(transport, token)
+            if (!current(owner, session, local, server)) return@withContext SyncResult(false, "Sync stopped because the account or consent changed.")
+            val timestamp = System.currentTimeMillis(); val conflicts = databaseProvider.current().healthSyncDao().conflicts(owner).size
+            authPreferences.lastSyncTimestamp = timestamp; authPreferences.lastSyncSuccess = conflicts == 0
+            val message = if (conflicts > 0) "$conflicts sync conflict(s) need your review; no automatic overwrite was performed." else "V3 sync completed ($uploaded uploaded, $pulled received)."
+            authPreferences.lastSyncMessage = message
+            SyncResult(conflicts == 0, message, syncedLogsCount = uploaded + pulled, timestamp = timestamp)
+        } catch (_: Exception) { SyncResult(false, "Sync or consent withdrawal could not finish. Local changes remain saved; retry is required.", shouldRetry = true) }
     }
-
-    private fun syncProfile(
-        profile: OnboardingProfile?,
-        settings: CycleSettings,
-        userId: String,
-        deviceId: String,
-        accountMode: String,
-        token: String
-    ): Boolean {
-        val json = JSONObject().apply {
-            put("p_device_id", deviceId)
-            put("p_account_mode", accountMode)
-            put("p_goals", profile?.selectedGoalsCsv ?: settings.selectedGoalsCsv)
-            val lastDate = profile?.lastPeriodDateString?.ifBlank { settings.lastPeriodStartDate }
-            put("p_last_period_date", lastDate ?: JSONObject.NULL)
-            put("p_cycle_length", profile?.cycleLengthDays ?: settings.averageCycleLength)
-            put("p_period_duration", profile?.periodDurationDays ?: settings.periodDuration)
-            put("p_typical_symptoms", profile?.typicalSymptomsCsv ?: "")
-            put("p_typical_energy", profile?.typicalEnergy ?: "")
-            put("p_typical_sleep", profile?.typicalSleepQuality ?: "")
-        }
-
-        val request = Request.Builder()
-            .url("${SupabaseConfig.restUrl}/rpc/sync_my_profile")
-            .header("apikey", SupabaseConfig.anonKey)
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .post(json.toString().toRequestBody(jsonMediaType))
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw syncFailure("profile/device handshake", response.code)
-            if (!runCatching { JSONObject(body).optBoolean("success", false) }.getOrDefault(false)) {
-                throw syncFailure("profile/device handshake", response.code)
-            }
-        }
-        return true
-    }
-
-    private fun syncCycle(settings: CycleSettings, userId: String, token: String) {
-        val cycleId = UUID.nameUUIDFromBytes("$userId:${settings.lastPeriodStartDate}".toByteArray()).toString()
-        val json = JSONObject().apply {
-            put("id", cycleId)
-            put("user_id", userId)
-            put("start_date", settings.lastPeriodStartDate)
-            // Do not fabricate an end date from duration; absence is safer than an
-            // estimated date in the canonical period_end_date field.
-            put("cycle_length", settings.averageCycleLength)
-            put("period_length", settings.periodDuration)
-            put("notes", "Synced from CycleCare mobile client")
-        }
-
-        val request = Request.Builder()
-            .url("${SupabaseConfig.restUrl}/cycles?on_conflict=id")
-            .header("apikey", SupabaseConfig.anonKey)
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .header("Prefer", "resolution=merge-duplicates")
-            .post(json.toString().toRequestBody(jsonMediaType))
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw syncFailure("cycle upload", response.code)
-        }
-    }
-
-    private fun syncDailyLogs(logs: List<CycleDayLog>, userId: String, token: String): Int {
-        val array = JSONArray()
-        for (log in logs) {
-            val logId = UUID.nameUUIDFromBytes("$userId:${log.dateString}".toByteArray()).toString()
-            val obj = JSONObject().apply {
-                put("schema_version", 2)
-                put("id", logId)
-                put("user_id", userId)
-                put("date", log.dateString)
-                put("flow", log.flowLevel)
-                put("energy", log.energyLevel)
-                put("pain", if (log.painIntensity > 0) "${log.painIntensity}/10" else "NONE")
-                put("pain_intensity", log.painIntensity)
-                put("mood", log.moodLevel)
-                put("symptoms", log.symptomsCsv)
-                put("vaginal_health", log.vaginalHealthCsv)
-                put("urinary_health", log.urinaryHealthCsv)
-                put("cervical_mucus", log.cervicalMucus)
-                put("ovulation_test", log.ovulationTest)
-                put("temperature", if (log.bbtCelsius > 0.0f) log.bbtCelsius.toDouble() else JSONObject.NULL)
-                put("sleep_hours", if (log.sleepHours > 0.0f) log.sleepHours.toDouble() else JSONObject.NULL)
-                put("sleep_quality", log.sleepQuality)
-                put("water_glasses", log.waterGlasses)
-                put("notes", log.notes)
-                // Never infer sexual activity from free text or symptom labels.
-                // The field is intentionally omitted until an explicit, consented
-                // first-class observation exists in the local model and backend.
-            }
-            array.put(obj)
-        }
-
-        val request = Request.Builder()
-            .url("${SupabaseConfig.restUrl}/daily_logs?on_conflict=id")
-            .header("apikey", SupabaseConfig.anonKey)
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .header("Prefer", "resolution=merge-duplicates")
-            .post(array.toString().toRequestBody(jsonMediaType))
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw syncFailure("daily-log upload", response.code)
-        }
-        return logs.size
-    }
-
-    /** Pull remote profile and daily-log data; failures are surfaced to the caller. */
     suspend fun pullRemoteUpdates(userId: String): Int = withContext(Dispatchers.IO) {
-        if (!authPreferences.isCloudSyncAllowed || !conflictSafeProtocolReleased()) return@withContext 0
-        val token = SupabaseSessionManager.validAccessToken(authPreferences)
-            ?: throw syncFailure("session validation", 401)
-        pullRemoteUpdatesInternal(userId, token)
+        if (!conflictSafeProtocolReleased() || !authPreferences.isCloudSyncAllowed) return@withContext 0
+        val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext 0
+        val server = authPreferences.serverHealthConsentGeneration ?: return@withContext 0
+        pull(userId, authPreferences.healthConsentGeneration, server, authPreferences.sessionGeneration, OkHttpHealthSyncV3Transport(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client), token)
     }
-
-    private suspend fun pullRemoteUpdatesInternal(userId: String, token: String): Int = withContext(Dispatchers.IO) {
-        if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext 0
-        // Defense in depth for revocation racing an in-flight worker.
-        if (!authPreferences.isCloudSyncAllowed) return@withContext 0
-        var pulledCount = 0
-
-        // Pull the profile when this device has not completed onboarding.
-        val profileReq = Request.Builder()
-            .url("${SupabaseConfig.restUrl}/profiles?user_id=eq.$userId")
-            .header("apikey", SupabaseConfig.anonKey)
-            .header("Authorization", "Bearer $token")
-            .get()
-            .build()
-
-        client.newCall(profileReq).execute().use { profileRes ->
-            if (!profileRes.isSuccessful) throw syncFailure("profile download", profileRes.code)
-            val pArray = JSONArray(profileRes.body?.string().orEmpty())
-            if (pArray.length() > 0) {
-                val pObj = pArray.getJSONObject(0)
-                val lastDate = pObj.optString("last_period_date", "")
-                val cycleLen = pObj.optInt("cycle_length", 28)
-                val periodDur = pObj.optInt("period_duration", 5)
-                val goals = pObj.optString("goals", "")
-                val symptoms = pObj.optString("typical_symptoms", "")
-                val energy = pObj.optString("typical_energy", "")
-                val sleep = pObj.optString("typical_sleep", "")
-
-                val localSettings = currentDatabase().cycleDao().getSettings() ?: CycleSettings()
-                if (!localSettings.isOnboardingCompleted && (lastDate.isNotBlank() || goals.isNotBlank())) {
-                    val safeCycleLength = cycleLen.takeIf { it in 21..45 } ?: 28
-                    val safePeriodDuration = periodDur.takeIf { it in 2..10 } ?: 5
-                    currentDatabase().cycleDao().saveSettings(
-                        localSettings.copy(
-                            isOnboardingCompleted = true,
-                            lastPeriodStartDate = lastDate,
-                            averageCycleLength = safeCycleLength,
-                            periodDuration = safePeriodDuration,
-                            selectedGoalsCsv = goals
-                        )
-                    )
-                    currentDatabase().onboardingDao().insertOrUpdateProfile(
-                        OnboardingProfile(
-                            id = 1,
-                            isCompleted = true,
-                            approximatePeriodChoice = if (lastDate.isNotBlank()) "APPROXIMATE" else "UNKNOWN",
-                            lastPeriodDateString = lastDate,
-                            cycleLengthOption = "${safeCycleLength} days",
-                            cycleLengthDays = safeCycleLength,
-                            periodDurationDays = safePeriodDuration,
-                            selectedGoalsCsv = goals,
-                            typicalSymptomsCsv = symptoms,
-                            typicalEnergy = energy,
-                            typicalSleepQuality = sleep
-                        )
-                    )
-                }
-            }
-        }
-
-        // Paginate instead of silently truncating at 100 rows. This remains bounded
-        // per request and stops when the server returns a short page.
-        val pageSize = 100
-        var offset = 0
-        do {
-            if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext pulledCount
-            val logsReq = Request.Builder()
-                .url("${SupabaseConfig.restUrl}/daily_logs?user_id=eq.$userId&order=date.desc&limit=$pageSize&offset=$offset")
-                .header("apikey", SupabaseConfig.anonKey)
-                .header("Authorization", "Bearer $token")
-                .get()
-                .build()
-
-            val pageCount = client.newCall(logsReq).execute().use { logsRes ->
-                if (!logsRes.isSuccessful) throw syncFailure("daily-log download", logsRes.code)
-                val lArray = JSONArray(logsRes.body?.string().orEmpty())
-                for (i in 0 until lArray.length()) {
-                    val item = lArray.getJSONObject(i)
-                    val dateStr = item.optString("date", "")
-                    if (authPreferences.effectiveUserId != userId || !authPreferences.isCloudSyncAllowed) return@withContext pulledCount
-                    if (dateStr.isNotBlank() && currentDatabase().cycleDao().getLogByDate(dateStr) == null) {
-                    val newLog = CycleDayLog(
-                        dateString = dateStr,
-                        flowLevel = item.optString("flow", ""),
-                        energyLevel = item.optString("energy", ""),
-                        moodLevel = item.optString("mood", ""),
-                        symptomsCsv = item.optString("symptoms", ""),
-                        vaginalHealthCsv = item.optString("vaginal_health", ""),
-                        urinaryHealthCsv = item.optString("urinary_health", ""),
-                        cervicalMucus = item.optString("cervical_mucus", ""),
-                        ovulationTest = item.optString("ovulation_test", "NONE"),
-                        notes = item.optString("notes", ""),
-                        painIntensity = item.optInt("pain_intensity", parsePainString(item.optString("pain", "0"))),
-                        bbtCelsius = item.optDouble("temperature", 0.0).toFloat(),
-                        sleepHours = item.optDouble("sleep_hours", 0.0).toFloat(),
-                        sleepQuality = item.optString("sleep_quality", ""),
-                        waterGlasses = item.optInt("water_glasses", 0)
-                    )
-                    currentDatabase().cycleDao().insertOrUpdateLog(newLog)
-                    pulledCount++
+    private suspend fun pull(owner: String, local: Long, server: Long, session: Long, transport: HealthSyncV3Transport, token: String): Int {
+        val db = databaseProvider.current(); val dao = db.healthSyncDao(); var cursor = dao.cursor(owner)?.changeSeq ?: 0L; var count = 0
+        while (current(owner, session, local, server)) {
+            val page = transport.readChanges(cursor, 100, server, token)
+            if (!current(owner, session, local, server) || page.isEmpty()) break
+            db.withTransaction {
+                check(current(owner, session, local, server)) { "consent_changed" }
+                for (change in page) {
+                    check(current(owner, session, local, server)) { "consent_changed" }
+                    val id = change.logicalRecordId ?: error("missing_logical_identity")
+                    check(validLogicalId(id) && change.recordId == wireRecordId(owner, id)) { "record_identity_mismatch" }
+                    val value = change.payload?.optJSONObject("value")
+                    check(change.tombstone || (change.payload?.optString("logicalRecordId") == id && change.payload.optString("kind") == "UPSERT" && value != null)) { "invalid_remote_payload" }
+                    val prior = dao.revision(owner, id)
+                    if (change.revision > (prior?.serverRevision ?: 0L)) {
+                        val pending = dao.pending(owner).filter { it.recordId == id }.maxByOrNull { it.revision }
+                        if (pending != null) dao.putConflict(HealthSyncConflictEntity(owner, id, pending.operationId, prior?.revision ?: pending.revision, pending.payloadJson, pending.kind, change.revision, value?.toString(), change.tombstone, System.currentTimeMillis()))
+                        else {
+                            if (change.tombstone) when (id) { "settings" -> db.cycleDao().saveSettings(HealthSyncPayloadCodec.parseSettingsPayload(HealthSyncPayloadCodec.settingsPayload(CycleSettings()), id, db.cycleDao().getSettings())); "profile" -> db.onboardingDao().insertOrUpdateProfile(HealthSyncPayloadCodec.parseProfilePayload(HealthSyncPayloadCodec.profilePayload(OnboardingProfile()), id, db.onboardingDao().getProfile())); else -> db.cycleDao().deleteLog(id) }
+                            else applyRemote(db, id, value!!.toString())
+                            dao.putRevision(HealthSyncRevision(owner, id, Math.addExact(prior?.revision ?: 0L, 1L), value?.toString()?.let(HealthSyncPayloadCodec::hash), change.tombstone, System.currentTimeMillis(), change.revision)); count++
+                        }
                     }
+                    cursor = change.changeSeq; dao.putCursor(HealthSyncCursor(owner, cursor))
                 }
-                lArray.length()
             }
-            offset += pageCount
-        } while (pageCount == pageSize)
-        pulledCount
+            if (page.size < 100) break
+        }
+        return count
     }
-
-    private fun isOwnerStillCurrent(ownerAtStart: String?): Boolean =
-        authPreferences.userId == ownerAtStart &&
-            !OwnerDataGate.isWiped(authPreferences.context, ownerAtStart)
-
-    private fun staleOwnerResult() = SyncResult(
-        isSuccess = true,
-        message = "Sync abandoned because the account changed or local data was wiped.",
-        timestamp = System.currentTimeMillis()
-    )
-
-    private fun syncFailure(stage: String, httpStatus: Int): SyncFailureException =
-        SyncFailureException(stage, httpStatus)
-
-    private class SyncFailureException(
-        val stage: String,
-        val httpStatus: Int,
-        val requiresAuthentication: Boolean = httpStatus == 401,
-        val shouldRetry: Boolean = httpStatus == 408 || httpStatus == 425 || httpStatus == 429 || httpStatus in 500..599
-    ) : IOException("$stage failed (HTTP $httpStatus)")
-
-    private fun parsePainString(pain: String): Int {
-        return try {
-            val num = pain.takeWhile { it.isDigit() }
-            if (num.isNotBlank()) num.toInt().coerceIn(0, 10) else 0
-        } catch (_: Exception) { 0 }
+    private suspend fun applyRemote(db: CycleCareDatabase, id: String, payload: String) {
+        when (id) {
+            "settings" -> db.cycleDao().saveSettings(HealthSyncPayloadCodec.parseSettingsPayload(payload, id, db.cycleDao().getSettings()))
+            "profile" -> db.onboardingDao().insertOrUpdateProfile(HealthSyncPayloadCodec.parseProfilePayload(payload, id, db.onboardingDao().getProfile()))
+            else -> db.cycleDao().insertOrUpdateLog(HealthSyncPayloadCodec.parseLogPayload(payload, id))
+        }
     }
 }

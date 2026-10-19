@@ -2,22 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateSettlement, replayDecision } from './settlement.ts';
-const source = name => readFileSync(new URL(`../../functions/${name}/index.ts`, import.meta.url), 'utf8');
+const source = name => readFileSync(new URL(`../${name}/index.ts`, import.meta.url), 'utf8');
+const shared = name => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8');
 
-test('PayPal handlers are default-off and use bounded/deadline helpers', () => {
-  for (const name of ['paypal-create-order', 'paypal-capture']) {
-    const text = source(name);
-    assert.match(text, /verifiedProviderGate\("paypal"\)/);
-    assert.match(text, /boundedJson/);
-    assert.match(text, /fetchDeadline/);
-    assert.doesNotMatch(text, /fetch\(/); // provider calls must be deadline-wrapped
+test('real PayPal entrypoints use the guarded shared controller without direct provider fetches', () => {
+  for (const [name, action] of [['paypal-create-order', 'create'], ['paypal-capture', 'capture'], ['paypal-reconcile', 'reconcile'], ['paypal-webhook', 'webhook']]) {
+    assert.ok(source(name).includes(`createPayPalHandler("${action}", payPalRuntimeDependencies())`));
+    assert.doesNotMatch(source(name), /\bfetch\(/);
   }
+  assert.match(shared('paypal-runtime.ts'), /verifiedProviderGate\("paypal"\)/);
+  assert.match(shared('paypal-handler.ts'), /boundedJson/);
+  assert.match(shared('paypal-handler.ts'), /fetchDeadline/);
 });
 
-test('create persists local intent before any provider call and old schema fails closed', () => {
-  const text = source('paypal-create-order');
-  assert.ok(text.indexOf('from("payment_intents")') < text.indexOf('fetchDeadline(`${base}/v1/oauth2/token`'));
-  assert.match(text, /no provider call was made/);
+test('real persistence and provider-action claims precede order submission', () => {
+  const text = shared('paypal-handler.ts');
+  assert.match(shared('paypal-runtime.ts'), /create_payment_intent/);
+  assert.match(shared('paypal-runtime.ts'), /claim_payment_provider_action/);
+  const submit = text.indexOf('fetchDeadline(`${api.base}/v2/checkout/orders`');
+  assert.ok(submit > 0);
+  assert.ok(text.indexOf('await store.create(') < submit);
+  assert.ok(text.indexOf('await store.claim(') < submit);
+  assert.match(shared('paypal-runtime.ts'), /get_payment_protocol_readiness/);
 });
 
 test('wrong owner, currency, amount, and missing reference reject settlement', () => {
@@ -37,9 +43,9 @@ test('capture/reversal/refund replays are idempotent and conflicts are ambiguous
   assert.equal(replayDecision({ eventType: 'reversal', providerReference: 'rev-1' }, 'reversal', 'rev-1'), 'duplicate');
 });
 
-test('forward SQL is proposal-only and has immutable unique event key', () => {
+test('forward SQL is proposal-only and has an immutable unique event key', () => {
   const sql = readFileSync(new URL('../../proposals/20261019000100_payment_settlement_protocol.sql', import.meta.url), 'utf8');
   assert.match(sql, /PROPOSAL ONLY/);
-  assert.match(sql, /UNIQUE\(provider, provider_reference, event_type\)/);
+  assert.match(sql, /UNIQUE\s*\(\s*provider,\s*provider_reference,\s*event_type\s*\)/);
   assert.match(sql, /RAISE EXCEPTION 'payment event ambiguous'/);
 });

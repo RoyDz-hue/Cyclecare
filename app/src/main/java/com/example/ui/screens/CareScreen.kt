@@ -102,7 +102,7 @@ fun CareScreen(
             uiState = uiState,
             aiSharingExpanded = showAiSharingDetails,
             onAiSharingExpanded = { showAiSharingDetails = !showAiSharingDetails },
-            onAiSharingChanged = viewModel::setAiSharingAllowed,
+            onAiProviderSharingChanged = viewModel::setAiProviderSharingAllowed,
             onClear = viewModel::clearCareChatHistory,
             onCreateImage = { showImageDialog = true }
         )
@@ -239,7 +239,7 @@ private fun CareHeader(
     uiState: CycleUiState,
     aiSharingExpanded: Boolean,
     onAiSharingExpanded: () -> Unit,
-    onAiSharingChanged: (Boolean) -> Unit,
+    onAiProviderSharingChanged: (String, Boolean) -> Unit,
     onClear: () -> Unit,
     onCreateImage: () -> Unit
 ) {
@@ -262,15 +262,35 @@ private fun CareHeader(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
             Text("Allow AI processing", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
             TextButton(onClick = onAiSharingExpanded) { Text(if (aiSharingExpanded) "Hide details" else "What is shared?") }
-            Switch(checked = uiState.isAiSharingAllowed, onCheckedChange = onAiSharingChanged, modifier = Modifier.testTag("care_ai_sharing_switch"))
         }
         if (aiSharingExpanded) {
             Text(
-                "Off by default. When enabled, your question and up to three recent online exchanges go to the configured AI provider. Relevant saved records are optional and separately reviewed. Cycle data is only included when you explicitly turn on relevant context for a message.",
+                "Choose each processor separately. Consent is off by default, tied to this account, and can be revoked at any time. CycleCare does not promise provider-side retention or deletion.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
+            val manifest = uiState.aiProcessorManifest
+            if (manifest == null) Text("Provider availability is unknown until the authenticated server manifest loads. Online AI stays off.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            val entries = manifest?.providers ?: listOf("COHERE" to "Cohere", "GEMINI" to "Google Gemini", "OPENROUTER" to "OpenRouter").map { (id, name) ->
+                com.example.domain.ai.AiProcessor(id, name, "Unknown", "", "", emptyList(), false, "Manifest unavailable", false, 0)
+            }
+            entries.forEach { entry ->
+                val provider = entry.id
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("${entry.displayName} · ${entry.model}", style = MaterialTheme.typography.bodySmall)
+                        if (!entry.eligible) Text(entry.unavailableReason.ifBlank { "Unavailable" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        entry.processors.forEach { processor -> Text("${processor.name}: ${processor.policyUrl}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    Switch(
+                        checked = uiState.aiProviderConsents[provider] == true,
+                        onCheckedChange = { onAiProviderSharingChanged(provider, it) },
+                        enabled = entry.eligible && manifest?.version == 3,
+                        modifier = Modifier.testTag("care_ai_consent_$provider")
+                    )
+                }
+            }
         }
         if (uiState.authMode == "ANONYMOUS") {
             Text("Limited account mode: conversation is local to this screen until the end of this session; some features may be unavailable.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)

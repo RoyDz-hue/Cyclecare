@@ -57,6 +57,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +74,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.UserTonePreference
+import com.example.data.local.HealthSyncConflictEntity
 import com.example.ui.viewmodel.CycleCareViewModel
 import com.example.ui.viewmodel.CycleUiState
 
@@ -94,6 +96,13 @@ fun SettingsScreen(
     var exportMessage by remember { mutableStateOf<String?>(null) }
     var tempPin by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
+    var selectedConflict by remember { mutableStateOf<HealthSyncConflictEntity?>(null) }
+    var selectedResolution by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(uiState.localDataOwnerKey) {
+        selectedConflict = null
+        selectedResolution = null
+        viewModel.loadSyncConflicts()
+    }
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -261,6 +270,71 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.error
                                 )
                             }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("sync_conflict_status_card")
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Text("Cloud sync review", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            if (uiState.lastSyncSuccess) "No unresolved sync error is reported." else "Sync is paused or needs attention. CycleCare never silently overwrites a conflicting health record.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(uiState.lastSyncMessage, style = MaterialTheme.typography.bodySmall)
+                        if (!uiState.lastSyncSuccess) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(onClick = viewModel::triggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
+                                Text("Review / retry")
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Section: owner-bound local conflict review. Cloud sync remains disabled pending release.
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("sync_conflict_review_card")
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Text("Review local sync conflicts", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            "Cloud health sync remains disabled pending release. These locally retained conflicts can still be reviewed offline. There is no automatic merge.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        uiState.syncConflictMessage?.let {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = viewModel::loadSyncConflicts,
+                            enabled = !uiState.isLoadingSyncConflicts && !uiState.isResolvingSyncConflict,
+                            modifier = Modifier.testTag("refresh_sync_conflicts_button")
+                        ) { Text(if (uiState.isLoadingSyncConflicts) "Refreshing…" else "Refresh conflicts") }
+                        if (uiState.syncConflicts.isEmpty() && !uiState.isLoadingSyncConflicts) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("No unresolved local conflicts.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        uiState.syncConflicts.forEach { conflict ->
+                            SyncConflictReviewRow(
+                                conflict = conflict,
+                                busy = uiState.isResolvingSyncConflict,
+                                onChoose = { keepLocal -> selectedConflict = conflict; selectedResolution = keepLocal }
+                            )
                         }
                     }
                 }
@@ -707,6 +781,38 @@ fun SettingsScreen(
         )
     }
 
+    val conflict = selectedConflict
+    val keepLocal = selectedResolution
+    if (conflict != null && keepLocal != null) {
+        val localPreview = conflict.localPayloadJson?.let(::boundedConflictPreview) ?: "(local payload unavailable)"
+        val remotePreview = if (conflict.remoteTombstone) "(server deletion — this deletion is final)"
+        else conflict.remotePayloadJson?.let(::boundedConflictPreview) ?: "(server payload unavailable)"
+        AlertDialog(
+            onDismissRequest = { if (!uiState.isResolvingSyncConflict) { selectedConflict = null; selectedResolution = null } },
+            title = { Text(if (keepLocal) "Keep this local version?" else "Use this server version?") },
+            text = {
+                Column {
+                    Text("Review the bounded previews before resolving. This action does not merge values.")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Local revision ${conflict.localRevision}", fontWeight = FontWeight.Bold)
+                    Text(localPreview, style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Server revision ${conflict.remoteRevision}", fontWeight = FontWeight.Bold)
+                    Text(remotePreview, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.resolveSyncConflict(conflict.recordId, keepLocal)
+                        selectedConflict = null; selectedResolution = null
+                    },
+                    enabled = !uiState.isResolvingSyncConflict
+                ) { Text(if (keepLocal) "Keep mine" else "Use server version") }
+            },
+            dismissButton = { TextButton(onClick = { selectedConflict = null; selectedResolution = null }, enabled = !uiState.isResolvingSyncConflict) { Text("Cancel") } }
+        )
+    }
 }
 
 @Composable
@@ -744,6 +850,41 @@ private fun SettingStepperRow(
                 modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Increase $label", tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+
+
+}
+
+private fun boundedConflictPreview(payload: String): String = runCatching {
+    org.json.JSONObject(payload).toString(2).take(2000)
+}.getOrElse { "(malformed payload; unavailable for safe preview)" }
+
+@Composable
+private fun SyncConflictReviewRow(
+    conflict: HealthSyncConflictEntity,
+    busy: Boolean,
+    onChoose: (Boolean) -> Unit
+) {
+    val localMissing = conflict.localKind.equals("UPSERT", ignoreCase = true) && conflict.localPayloadJson.isNullOrBlank()
+    val keepDisabled = conflict.remoteTombstone || localMissing || conflict.localKind.equals("REMOTE", ignoreCase = true)
+    val remoteValid = conflict.remoteRevision > 0L && (conflict.remoteTombstone || runCatching {
+        val json = org.json.JSONObject(conflict.remotePayloadJson ?: return@runCatching false)
+        json.length() > 0
+    }.getOrDefault(false))
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Record ${conflict.recordId}", fontWeight = FontWeight.Bold)
+            Text("Created ${java.time.Instant.ofEpochMilli(conflict.createdAt)}", style = MaterialTheme.typography.bodySmall)
+            Text("Local revision ${conflict.localRevision} • Server revision ${conflict.remoteRevision}", style = MaterialTheme.typography.bodySmall)
+            if (conflict.remoteTombstone) Text("The server version is a deletion; deletions are final.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (localMissing) Text("Keep mine unavailable: local payload is missing.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (conflict.localKind.equals("REMOTE", ignoreCase = true)) Text("Keep mine unavailable for a server-originated local record.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (!remoteValid) Text("Use server version unavailable: server revision or metadata is malformed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                OutlinedButton(onClick = { onChoose(true) }, enabled = !busy && !keepDisabled, modifier = Modifier.testTag("keep_local_${conflict.recordId}")) { Text("Keep mine") }
+                Button(onClick = { onChoose(false) }, enabled = !busy && remoteValid, modifier = Modifier.testTag("use_server_${conflict.recordId}")) { Text("Use server version") }
             }
         }
     }

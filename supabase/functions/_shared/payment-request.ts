@@ -1,7 +1,7 @@
 export const MAX_PAYMENT_BODY_BYTES = 16_384;
 export const PAYMENT_DEADLINE_MS = 8_000;
-// Independent reconciliation, reversal accounting and provider sandbox acceptance are not complete.
-// Environment flags are not sufficient to enable a partially implemented payment protocol.
+// Candidate v3 accounting is local-only; independent provider sandbox/policy acceptance
+// is still required. Environment flags alone cannot release financial operations.
 export const PAYMENT_PROTOCOL_RELEASED = false;
 
 async function withinDeadline<T>(operation: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
@@ -73,8 +73,8 @@ export function redactedProviderError(provider: string, error?: unknown): string
 /** Neither live nor sandbox checkout is released by environment flags alone. */
 export function verifiedProviderGate(provider: string): boolean {
   if (!PAYMENT_PROTOCOL_RELEASED || !["paypal", "payhero"].includes(provider)) return false;
-  return Deno.env.get(`${provider.toUpperCase()}_RELEASE_GATE`) === "verified-v2" &&
-    Deno.env.get("PAYMENT_PROTOCOL_VERSION") === "v2" &&
+  return Deno.env.get(`${provider.toUpperCase()}_RELEASE_GATE`) === "verified-v3" &&
+    Deno.env.get("PAYMENT_PROTOCOL_VERSION") === "v3" &&
     Deno.env.get("PAYMENT_PROVIDER_CALLS_ENABLED") === "true";
 }
 

@@ -21,7 +21,10 @@ class SupabasePaymentService(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val releasePolicy: PaymentReleasePolicy = DisabledPaymentReleasePolicy,
+    private val checkoutRequestIds: CheckoutRequestIdManager = CheckoutRequestIdManager(UnavailableCheckoutRequestStore),
+    private val ownerProvider: AuthenticatedOwnerProvider = AuthenticatedOwnerProvider { authPreferences.userId }
 ) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
@@ -34,6 +37,7 @@ class SupabasePaymentService(
         pkg: CoinPurchasePackage,
         profile: EconomyProfile
     ): UnifiedPaymentResult = withContext(Dispatchers.IO) {
+        if (!releasePolicy.allows(PaymentProvider.PAYHERO, PaymentOperation.INITIATE)) return@withContext UnifiedPaymentResult(false, message = "Payments are unavailable until checkout safety review is complete.")
         val phoneValidation = com.example.util.PaymentInputValidator.validateKenyanPhoneNumber(phoneNumber)
         if (!phoneValidation.isValid) {
             return@withContext UnifiedPaymentResult(
@@ -43,7 +47,11 @@ class SupabasePaymentService(
         }
         val sanitizedPhone = com.example.util.PaymentInputValidator.sanitizeKenyanPhoneNumber(phoneNumber)
         val totalCoins = pkg.coins + pkg.bonusCoins
-        val userId = profile.userId.ifBlank { authPreferences.userId ?: "local_user" }
+        val userId = ownerProvider.currentOwnerId()?.takeIf { it.isNotBlank() }
+            ?: return@withContext UnifiedPaymentResult(false, message = "Sign in again before starting checkout.")
+        if (profile.userId != userId) return@withContext UnifiedPaymentResult(false, message = "Checkout identity changed. Please try again.")
+        val checkoutRequestId = checkoutRequestIds.getOrCreate(userId, pkg.id)
+            ?: return@withContext UnifiedPaymentResult(false, message = "Secure checkout storage is unavailable.")
 
         try {
             val token = SupabaseSessionManager.validAccessToken(authPreferences)
@@ -54,6 +62,7 @@ class SupabasePaymentService(
                 put("amount_kes", amountKes)
                 put("package_id", pkg.id)
                 put("coins_to_credit", totalCoins)
+                put("checkout_request_id", checkoutRequestId)
             }
 
             val request = Request.Builder()
@@ -135,8 +144,13 @@ class SupabasePaymentService(
         pkg: CoinPurchasePackage,
         profile: EconomyProfile
     ): UnifiedPaymentResult = withContext(Dispatchers.IO) {
+        if (!releasePolicy.allows(PaymentProvider.PAYPAL_STANDARD, PaymentOperation.INITIATE)) return@withContext UnifiedPaymentResult(false, message = "Payments are unavailable until checkout safety review is complete.")
         val totalCoins = pkg.coins + pkg.bonusCoins
-        val userId = profile.userId.ifBlank { authPreferences.userId ?: "local_user" }
+        val userId = ownerProvider.currentOwnerId()?.takeIf { it.isNotBlank() }
+            ?: return@withContext UnifiedPaymentResult(false, message = "Sign in again before starting checkout.")
+        if (profile.userId != userId) return@withContext UnifiedPaymentResult(false, message = "Checkout identity changed. Please try again.")
+        val checkoutRequestId = checkoutRequestIds.getOrCreate(userId, pkg.id)
+            ?: return@withContext UnifiedPaymentResult(false, message = "Secure checkout storage is unavailable.")
         val amountUsd = parsePriceUsd(pkg.priceUsd)
 
         try {
@@ -148,6 +162,7 @@ class SupabasePaymentService(
                 put("package_id", pkg.id)
                 put("coins_to_credit", totalCoins)
                 put("is_acdc_card", false)
+                put("checkout_request_id", checkoutRequestId)
             }
 
             val request = Request.Builder()
@@ -224,9 +239,13 @@ class SupabasePaymentService(
     /**
      * Execute PayPal Capture Edge Function
      */
-    suspend fun capturePaypalOrder(externalReference: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun capturePaypalOrder(externalReference: String): Boolean =
+        capturePaypalOrderStatus(externalReference) == PaymentStatus.COMPLETED
+
+    suspend fun capturePaypalOrderStatus(externalReference: String): PaymentStatus = withContext(Dispatchers.IO) {
+        if (!releasePolicy.allows(PaymentProvider.PAYPAL_STANDARD, PaymentOperation.CAPTURE)) return@withContext PaymentStatus.AMBIGUOUS
         try {
-            val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext false
+            val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext PaymentStatus.AMBIGUOUS
             val payload = JSONObject().apply {
                 put("external_reference", externalReference)
             }
@@ -240,9 +259,9 @@ class SupabasePaymentService(
                 .build()
 
             val response = client.newCall(request).execute()
-            response.isSuccessful
+            PaymentStatusVerifier.captureStatus(response.isSuccessful, response.body?.string().orEmpty())
         } catch (_: Exception) {
-            false
+            PaymentStatus.AMBIGUOUS
         }
     }
 
@@ -254,7 +273,7 @@ class SupabasePaymentService(
         try {
             val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext "auth_required"
             val request = Request.Builder()
-                .url("${SupabaseConfig.restUrl}/transactions?external_reference=eq.$externalReference&select=status")
+                .url(encodedTransactionStatusUrl(SupabaseConfig.restUrl, externalReference))
                 .header("apikey", SupabaseConfig.anonKey)
                 .header("Authorization", "Bearer $token")
                 .get()
@@ -268,12 +287,12 @@ class SupabasePaymentService(
                 if (array.length() > 0) {
                     val obj = array.getJSONObject(0)
                     val status = obj.optString("status", "pending").lowercase()
-                    return@withContext if (status in listOf("success", "completed", "paid")) "success" else status
+                    return@withContext PaymentStatusVerifier.historyStatus(status)
                 }
             }
-            "pending"
+            "ambiguous"
         } catch (e: Exception) {
-            "pending"
+            "ambiguous"
         }
     }
 

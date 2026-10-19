@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
 import com.example.data.local.OnboardingProfile
+import com.example.data.local.HealthSyncConflictEntity
 import com.example.data.model.DayPrediction
 import com.example.data.model.HealthPattern
 import com.example.data.model.LearnedObservation
@@ -83,6 +84,9 @@ data class CycleUiState(
     val pendingCareTurnId: String? = null,
     val careContextPreview: String? = null,
     val isAiSharingAllowed: Boolean = false,
+    val aiProviderConsents: Map<String, Boolean> = mapOf("COHERE" to false, "GEMINI" to false, "OPENROUTER" to false),
+    val aiProcessorManifest: com.example.domain.ai.AiProcessorManifest? = null,
+    val isLoadingAiProcessorManifest: Boolean = false,
     val generatedCareImage: ByteArray? = null,
     val isGeneratingCareImage: Boolean = false,
     val careImageError: String? = null,
@@ -139,6 +143,10 @@ data class CycleUiState(
     val isEastAfricaRegion: Boolean = false,
     val isPasswordSetupRequired: Boolean = false,
     val passwordSetupMessage: String? = null
+    ,val syncConflicts: List<HealthSyncConflictEntity> = emptyList()
+    ,val isLoadingSyncConflicts: Boolean = false
+    ,val isResolvingSyncConflict: Boolean = false
+    ,val syncConflictMessage: String? = null
 )
 
 class CycleCareViewModel(
@@ -166,6 +174,59 @@ class CycleCareViewModel(
     private var activeUiOwner = authPreferences.effectiveUserId
     private var pendingQuickLogOwner: String? = null
     private var pendingCareProposal: com.example.domain.ai.ProposedCareLog? = null
+    private val processorConsentService = com.example.domain.ai.AiProcessorConsentService(authPreferences)
+
+    private data class ConflictOwnerSnapshot(val owner: String, val session: Long)
+
+    private fun captureConflictOwnerSnapshot(): ConflictOwnerSnapshot {
+        resetIdentityUiIfNeeded()
+        return ConflictOwnerSnapshot(authPreferences.effectiveUserId, authPreferences.sessionGeneration)
+    }
+
+    private fun isCurrentConflictSnapshot(snapshot: ConflictOwnerSnapshot): Boolean =
+        activeUiOwner == snapshot.owner && authPreferences.effectiveUserId == snapshot.owner &&
+            authPreferences.sessionGeneration == snapshot.session
+
+    /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
+    fun loadSyncConflicts() {
+        val snapshot = captureConflictOwnerSnapshot()
+        _uiState.value = _uiState.value.copy(isLoadingSyncConflicts = true, syncConflictMessage = null)
+        viewModelScope.launch {
+            val result = runCatching { repository.pendingSyncConflicts() }
+            if (!isCurrentConflictSnapshot(snapshot)) return@launch
+            _uiState.value = _uiState.value.copy(
+                syncConflicts = result.getOrDefault(emptyList()),
+                isLoadingSyncConflicts = false,
+                syncConflictMessage = result.exceptionOrNull()?.let { "Could not load local conflict review." }
+            )
+        }
+    }
+
+    fun resolveSyncConflict(recordId: String, keepLocal: Boolean) {
+        if (_uiState.value.isResolvingSyncConflict) return
+        val snapshot = captureConflictOwnerSnapshot()
+        if (!isCurrentConflictSnapshot(snapshot)) return
+        _uiState.value = _uiState.value.copy(isResolvingSyncConflict = true, syncConflictMessage = null)
+        viewModelScope.launch {
+            val operation = runCatching {
+                if (keepLocal) repository.retainLocalConflict(recordId)
+                else repository.acceptRemoteConflict(recordId)
+            }
+            if (!isCurrentConflictSnapshot(snapshot)) return@launch
+            val remaining = runCatching { repository.pendingSyncConflicts() }.getOrNull()
+            if (!isCurrentConflictSnapshot(snapshot)) return@launch
+            val stillUnresolved = remaining?.any { it.recordId == recordId } == true
+            _uiState.value = _uiState.value.copy(
+                syncConflicts = remaining ?: _uiState.value.syncConflicts,
+                isResolvingSyncConflict = false,
+                syncConflictMessage = when {
+                    operation.isFailure -> "Conflict was not changed: ${operation.exceptionOrNull()?.message ?: "review is unavailable"}."
+                    stillUnresolved -> "This conflict changed while it was being reviewed. Refresh before choosing again."
+                    else -> "Conflict resolved. Review is complete; no automatic merge was performed."
+                }
+            )
+        }
+    }
 
     private fun resetPrivateConversation() {
         careJob?.cancel()
@@ -203,7 +264,11 @@ class CycleCareViewModel(
             todayPrediction = null, selectedDatePrediction = null, patterns = emptyList(),
             learnedObservations = emptyList(), clinicianReportText = "", explainMyBodyResult = null,
             isCloudSyncAllowed = authPreferences.isCloudSyncAllowed,
-            isAiSharingAllowed = authPreferences.isAiSharingAllowed
+            isAiSharingAllowed = authPreferences.isAiSharingAllowed,
+            aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted },
+            syncConflicts = emptyList(), isLoadingSyncConflicts = false,
+            isResolvingSyncConflict = false, syncConflictMessage = null
+            ,aiProcessorManifest = null, isLoadingAiProcessorManifest = false
         )
     }
 
@@ -300,6 +365,7 @@ class CycleCareViewModel(
             if (hasCompletedInitialAuth) {
                 autoSyncSilently()
             }
+            refreshAiProcessorManifest()
         }
 
         // Reactive network connectivity observer
@@ -606,9 +672,60 @@ class CycleCareViewModel(
     }
 
     fun setAiSharingAllowed(enabled: Boolean) {
+        // Compatibility path for existing callers. The care UI uses the explicit
+        // provider mutation below and never infers consent from server selection.
         authPreferences.isAiSharingAllowed = enabled
         if (!enabled) resetPrivateConversation()
-        _uiState.value = _uiState.value.copy(isAiSharingAllowed = enabled, careContextPreview = null)
+        _uiState.value = _uiState.value.copy(
+            isAiSharingAllowed = authPreferences.isAiSharingAllowed,
+            aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted },
+            careContextPreview = null
+        )
+    }
+
+    fun setAiProviderSharingAllowed(provider: String, enabled: Boolean) {
+        val owner = authPreferences.effectiveUserId
+        if (!enabled) {
+            // Revoke locally before network I/O; the pending queue survives offline operation.
+            authPreferences.revokeProcessorReceipt(provider)
+            authPreferences.setProviderConsent(provider, false)
+            resetPrivateConversation()
+            _uiState.value = _uiState.value.copy(isAiSharingAllowed = authPreferences.isAiSharingAllowed,
+                aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted }, careContextPreview = null)
+            viewModelScope.launch {
+                val token = authPreferences.accessToken ?: return@launch
+                val manifest = (processorConsentService.fetchManifest(token) as? com.example.domain.ai.ConsentResult.Success)?.manifest ?: return@launch
+                if (owner == authPreferences.effectiveUserId) processorConsentService.setConsent(token, manifest, provider, false)
+            }
+            return
+        }
+        // Enabling is explicit but never optimistic: require a fresh eligible manifest and server receipt.
+        viewModelScope.launch {
+            val token = authPreferences.accessToken
+            val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.example.domain.ai.ConsentResult.Failure("Sign in to enable online AI")
+            val manifest = (manifestResult as? com.example.domain.ai.ConsentResult.Success)?.manifest
+            val result = if (manifest != null) processorConsentService.setConsent(token!!, manifest, provider, true) else manifestResult
+            if (owner != authPreferences.effectiveUserId) return@launch
+            if (result is com.example.domain.ai.ConsentResult.Success) authPreferences.setProviderConsent(provider, true)
+            _uiState.value = _uiState.value.copy(isAiSharingAllowed = authPreferences.isAiSharingAllowed,
+                aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted }, careContextPreview = null,
+                careSavedReviewMessage = if (result is com.example.domain.ai.ConsentResult.Failure) result.reason else null)
+        }
+    }
+
+    fun refreshAiProcessorManifest() {
+        val token = authPreferences.accessToken ?: return
+        if (authPreferences.isLocalOnlyMode) return
+        val owner = authPreferences.effectiveUserId
+        _uiState.value = _uiState.value.copy(isLoadingAiProcessorManifest = true)
+        viewModelScope.launch {
+            val result = processorConsentService.fetchManifest(token)
+            if (owner != authPreferences.effectiveUserId) return@launch
+            _uiState.value = _uiState.value.copy(
+                aiProcessorManifest = (result as? com.example.domain.ai.ConsentResult.Success)?.manifest,
+                isLoadingAiProcessorManifest = false
+            )
+        }
     }
 
     fun previewCareContext(question: String) {
@@ -692,7 +809,8 @@ class CycleCareViewModel(
                         .filter { it.response.source == "CycleCare AI" }.takeLast(3).flatMap {
                             listOf(com.example.domain.ai.CareMemoryMessage("user", it.userQuery.take(600)),
                                 com.example.domain.ai.CareMemoryMessage("assistant", (it.response.summary + " " + it.response.whatText).take(600)))
-                        } else emptyList()
+                        } else emptyList(),
+                    authPreferences = authPreferences
                 )
                 if (owner != authPreferences.effectiveUserId) return@launch
                 val turn = CareChatTurn(id = turnId, userQuery = cleanQuestion, response = result.mainResponse,

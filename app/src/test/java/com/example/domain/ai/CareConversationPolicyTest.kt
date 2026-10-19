@@ -57,7 +57,8 @@ class CareConversationPolicyTest {
     }
     @Test fun minimalPayloadContainsQuestionAndConsentButNoHiddenHealthFields() {
         val payload = CareAiService.requestPayload("Hello", false, "NOT_APPROVED")
-        assertEquals(2, payload.getInt("schema_version"))
+        assertEquals(3, payload.getInt("schema_version"))
+        assertEquals(0, payload.getJSONArray("processor_receipts").length())
         assertEquals("minimal", payload.getString("context_mode"))
         assertTrue(payload.getBoolean("ai_consent"))
         assertFalse(payload.has("context"))
