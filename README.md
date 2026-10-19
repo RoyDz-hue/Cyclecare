@@ -35,3 +35,13 @@ Cloud sync, multi-provider Hybrid and payment checkout remain disabled. The feat
 The files under `supabase/proposals/` are not applied production migrations. Do not replay the migration history or run a blanket `supabase db push` against the existing project. Source commits, successful builds and local SQL assertions neither deploy changes nor establish production/clinical acceptance.
 
 See [deployment and operations](docs/deployment_and_operations.md), [clinical acceptance](docs/clinical_acceptance.md), and [debug diagnostics privacy](docs/remote_debug_architecture.md). Production deployment and merging to `main` require separate approval.
+
+## Optional developer diagnostics
+
+Normal debug builds do not embed a temporary developer service URL. Diagnostic pairing/sending is unavailable unless an approved HTTPS origin is explicitly supplied for that build:
+
+```bash
+./gradlew :app:assembleDebug -Pcyclecare.debugBridgeUrl=https://diagnostics.example.test
+```
+
+Use your own authorized temporary origin, not the example. Credentials, paths, queries and fragments are rejected. Release builds remain unconfigured and runtime-disabled regardless of this property. A configured endpoint does not replace the owner's per-session pairing and snapshot consent. See [debug diagnostics privacy](docs/remote_debug_architecture.md).

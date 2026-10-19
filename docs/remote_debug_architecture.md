@@ -1,63 +1,31 @@
-# CycleCare Remote Debug: Architecture and Limits
+# Optional debug diagnostics
 
-## What this build does
+## Scope and default
 
-This is a **debug-only CycleCare APK** with a small opt-in support panel. It helps the owner and developer confirm that the app is running on a real Android device, inspect a deliberately limited device/build/connectivity snapshot, and deliver that snapshot to the current development environment.
+Normal debug builds have **no configured diagnostic destination**. Pairing and sending stay disabled until a developer explicitly supplies an approved temporary HTTPS origin for that build. Release builds retain an empty endpoint and the runtime refuses diagnostics outside debug builds.
 
-It is not a generic remote-control agent. It does not capture the screen, read Android logcat, access the CycleCare database, collect symptoms or notes, or accept remote taps/commands.
+This feature is an owner-approved technical snapshot, not remote screen control, logcat access, health-record extraction or automatic telemetry. The debug application ID ends in `.debug`; that separates local app storage, not the configured backend.
 
-## Components
+## Configure an authorized session
 
-```mermaid
-flowchart LR
-    A[CycleCare debug APK on owner's phone] -->|HTTPS one-time pairing code| B[Temporary bridge in Linux development environment]
-    A -->|HTTPS only after user taps Send snapshot| B
-    B --> C[Private local allowlisted snapshot file]
-    D[Developer in the same environment] -->|reads local snapshot| C
-    E[APK download page] -->|HTTPS APK download| A
+The bridge implementation is `debug-bridge/bridge_server.py`, a temporary Python standard-library service. Arrange an authorized HTTPS endpoint forwarding to that service, then explicitly build:
+
+```bash
+./gradlew :app:assembleDebug -Pcyclecare.debugBridgeUrl=https://diagnostics.example.test
 ```
 
-- **Android app:** The regular CycleCare debug build, shown as **CycleCare Debug**, with an internal `RemoteDebugActivity` linked from Settings only when `BuildConfig.DEBUG` is true. Debug builds use a `.debug` application ID suffix so they install beside, not over, a production CycleCare app and use separate app storage.
-- **Bridge:** `debug-bridge/bridge_server.py`, a short-lived Python standard-library HTTP service bound to port 8765. The environment's public service URL terminates HTTPS and forwards to that port. The bridge itself does not persist requester IPs in its access log.
-- **Pairing:** On bridge startup, it creates a random 10-character one-time code that expires after 24 hours. The owner enters the code and approves the temporary session in the app. The bridge returns a random bearer token; the app keeps it in memory only. Pairing requests are rate-limited, the code is consumed once, and disconnect invalidates the session.
-- **Snapshot:** The app sends no report automatically. The owner must tap **Send diagnostic snapshot**. The bridge accepts an exact field allowlist and writes only the latest snapshot to a local directory with owner-only permissions; it does not expose a public report-reading endpoint or retain requester IP access logs.
+Replace the example with your own approved temporary origin. It must use HTTPS, with an optional valid port and optional trailing slash, but no credentials, application path, query or fragment. Invalid values fail build configuration without echoing the supplied value. Omitting the property keeps diagnostics unavailable. Do not put tokens in the URL or commit a temporary endpoint into the build script.
 
-## Exact data boundary
+Install the separate debug app with a test account and test data. In Settings, open **Remote debug (test build)**, enter the one-time code and approve that diagnostic session. Pairing sends the code only. A snapshot leaves the phone only after the owner deliberately taps **Send diagnostic snapshot**. End the session when finished and stop the temporary bridge.
 
-The snapshot contains only:
+## Exact data and privacy boundary
 
-- CycleCare app version string
-- Android release string and API level
-- Whether Android currently reports an internet-capable active network
-- UTC report timestamp
+Snapshots include only app version, Android release/API level, current internet-connectivity indication and UTC timestamp. They exclude cycle dates, symptoms, notes, identity/email, auth tokens, device identifiers, screen content, contacts and payment details.
 
-It excludes cycle dates, symptoms, free-text notes, account identifiers/email, authentication tokens, device serial/advertising IDs, app database contents, screen contents, contacts, and payment information. The app pairs using the code only; it sends the snapshot separately, only after the owner presses the send button.
+The bridge creates a random one-time pairing code expiring after 24 hours, rate-limits pairing, consumes the code once and issues an in-memory session token. It accepts an exact field allowlist and stores only the latest report with owner-only permissions. It has no public report-reading endpoint and does not retain requester IP access logs. The app must never send a snapshot merely because a build endpoint exists.
 
-## Install and test
+The runtime independently rejects blank, malformed, non-HTTPS, credential-bearing, path/query/fragment-bearing or out-of-range-port configuration before opening a connection. Release mode is always rejected. The UI explains unavailable configuration rather than offering a pairing action that cannot work.
 
-1. Open the APK download page supplied with the task on the Android phone and download the debug APK.
-2. If Android prompts, permit the browser/file manager to install this one APK. The build is debug-signed and not a Play Store release.
-3. Open the separate **CycleCare Debug** app, complete its initial setup with a test account, and go to **Settings → Remote debug (test build)**.
-4. Enter the one-time pairing code supplied in chat and approve the session. Tap **Send diagnostic snapshot** only when you choose to share it.
-5. The developer can inspect the saved snapshot locally at `/tmp/cyclecare-debug-bridge/last_report.json` while the bridge is running. End the session from the app when done.
+## Acceptance limits
 
-Use a test account and test data. The debug APK connects to the app's configured services just like the app build; the debug suffix isolates local app storage, but it does not create a separate backend.
-
-## Security and operational limits
-
-- The bridge is temporary and should be stopped when the debug session is complete. Its pairing code is one-time and short-lived; the session token exists only in the app's memory and in the running bridge process.
-- HTTPS is required by the app. There is no plaintext HTTP fallback. The server accepts only the listed fields and rejects extra/free-text fields.
-- This is snapshot-based troubleshooting, not live telemetry. It cannot show a screen, extract logcat, inspect local health records, tap the app, or reinstall/upgrade the app remotely.
-- A physical Android phone is needed for real device validation; the current Linux environment has no `/dev/kvm`, so the Android emulator is not a reliable validation path here.
-
-## If interactive remote debugging is needed later
-
-Use a dedicated opt-in foreground session, separate from this MVP:
-
-1. The owner starts screen sharing and approves Android's `MediaProjection` system prompt. A persistent Android foreground-service notification must remain visible with an obvious stop action.
-2. The phone initiates an outbound TLS WebSocket to a short-lived relay; do not open an inbound phone port or embed a long-lived server credential in the APK.
-3. Keep screen video off by default and do not persist recordings. Health screens should be hidden/redacted; require an explicit per-session consent screen before any video leaves the device.
-4. Do not implement remote taps by default. Android accessibility control is a distinct, powerful permission the owner must enable in system Settings; if a future workflow truly needs it, scope actions narrowly, display each action, and provide immediate revoke/stop controls.
-5. Prefer Android Studio/ADB over USB or Android Wireless Debugging on a trusted local network for developer-level logs and instrumentation. A cloud sandbox cannot ordinarily reach a phone's private LAN address, so a relay is needed for off-network sessions.
-
-Before enabling any future live control, separately assess security, store-policy/privacy disclosure, health-data minimization, authentication, session expiry, auditability, and the intended test-account/backend environment.
+Unit tests cover configuration policy; builds and built instrumentation do not establish hardware acceptance or prove a bridge is online. Actual pairing, revoke/expiry and snapshot handling need an authorized phone and temporary bridge. Use USB/Android Wireless Debugging on a trusted network for full developer instrumentation. Any future screen sharing or remote control requires separate consent, implementation and security/privacy review; it is not provided here.
