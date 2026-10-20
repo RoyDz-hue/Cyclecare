@@ -34,8 +34,10 @@ docs/*CREDENTIAL*
 **/.gradle/
 **/build/
 **/node_modules/
-admin-pwa/dist/
+**/dist/
+AdminPWA/dist/
 supabase/.temp/
+**/supabase/.temp/
 hs_err_pid*.log
 replay_pid*.log
 *.hprof
