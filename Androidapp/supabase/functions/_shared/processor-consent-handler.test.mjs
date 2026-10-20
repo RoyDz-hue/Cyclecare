@@ -10,7 +10,7 @@ import { boundedJson } from './payment-request.ts';
 const owner = '11111111-1111-4111-8111-111111111111';
 const canonical = await manifestWithFingerprint('COHERE');
 const original = readFileSync(new URL('../ai-provider-consent/index.ts', import.meta.url), 'utf8');
-const executable = stripTypeScriptTypes(original.replace(/^import .*;\n/gm, ''));
+const executable = stripTypeScriptTypes(original.split('\n').filter(line => !line.trim().startsWith('import ')).join('\n'));
 function load(options = {}) {
   let handler;
   vm.runInNewContext(executable, { serve(fn) { handler = fn; }, Request, Response, Headers, URL, JSON, Number, String, Object, Array, Error,
