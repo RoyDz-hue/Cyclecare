@@ -36,7 +36,7 @@ Local mode is not an authenticated cloud identity. Owner, login-session and cons
 | **Guided Chats (Circles)** | `chat_topics`, `chat_messages` (500-char max), `chat_memberships`, `admin-chat-moderation` edge function | Implemented in migration `20261020150000` & repository layer |
 | **Safety Events Audit** | `safety_events` table for red-flag auditing and clinical escalation tracking | Implemented in migration `20261020150000_guided_chats_and_safety_events.sql` |
 | **Intelligence Engines** | `PatternEngine` (phase mapping, exp recency weighting, MAD anomaly detection), `SomethingChangedEngine` (90-day baseline shift detector), `AttentionEngine` (multi-tier cards), `CareKnowledgeBase` (22 clinical/educational articles) | Implemented & unit-tested in Android domain |
-| **Admin Control Center** | Feature Flags (`v3_sync_enabled`), Clinical Safety Audit, Circles Moderation, Coin Ledger, Sync Health dashboard | Implemented in `Cyclecare-admin/src/components/`, Vite build verified |
+| **Admin Control Center** | Feature Flags (`v3_sync_enabled`), Clinical Safety Audit, Circles Moderation, Coin Ledger, Sync Health dashboard | Implemented in `AdminPWA/src/components/`, Vite build verified |
 | **Health sync and health erasure** | Durable Room outbox/retries, revisions/cursors/tombstones, conflict records and Settings decisions; v3-only validation; unified cloud/local health erasure | **Closed** pending authenticated staging and two-device acceptance |
 | **Provider-specific AI consent** | Reviewed manifest disclosure, owner/session-bound revision receipts, pending withdrawal/CAS, stale-response protection and Admin-enforced single-provider selection | Candidate integration needs provider eligibility and staging review |
 | **Sequential Hybrid** | Sequential, bounded attempts with quota, restriction checks and both processors' matching current receipts/manifests | **Closed** in source/runtime/Admin; flags alone cannot release it |
@@ -52,7 +52,7 @@ CycleCare enforces a deterministic local safety layer before any server-routed A
 
 ## Admin PWA Control Center
 
-The Admin PWA (`Cyclecare-admin`) provides governance and observability over production data without exposing raw private health details:
+The Admin PWA (`AdminPWA`) provides governance and observability over production data without exposing raw private health details:
 - **Feature Flags Manager:** Governs server runtime flags including `v3_sync_enabled` and provider switches.
 - **Safety Audit Viewer:** Live inspection of anonymized red-flag clinical safety events.
 - **Circles Moderation:** Community topic management (activate, archive, pin) and message moderation.
