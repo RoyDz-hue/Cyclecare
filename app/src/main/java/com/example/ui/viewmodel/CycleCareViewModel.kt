@@ -42,11 +42,18 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 enum class AppNavTab(val title: String) {
-    HOME("Today"),
+    TODAY("Today"),
     CYCLE("Cycle"),
-    TRACK("Log"),
-    INSIGHTS("Insights"),
-    CARE("Care")
+    ASK("Ask"),
+    YOU("You"),
+    SPACE("Space");
+
+    companion object {
+        val HOME get() = TODAY
+        val TRACK get() = ASK
+        val INSIGHTS get() = YOU
+        val CARE get() = ASK
+    }
 }
 
 data class CareChatTurn(
@@ -61,7 +68,7 @@ data class CareChatTurn(
 data class CycleUiState(
     val currentDate: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
-    val activeTab: AppNavTab = AppNavTab.HOME,
+    val activeTab: AppNavTab = AppNavTab.TODAY,
     val settings: CycleSettings = CycleSettings(),
     val todayPrediction: DayPrediction? = null,
     val selectedDatePrediction: DayPrediction? = null,
@@ -163,6 +170,7 @@ class CycleCareViewModel(
     val notificationService = com.example.data.notification.SupabaseNotificationService(authPreferences)
 
     val paymentUseCase = PaymentUseCase(supabasePaymentService, economyService, authPreferences)
+    val earnCoinsUseCase = com.example.domain.economy.EarnCoinsUseCase(economyService, authPreferences)
     val miningUseCase = MiningUseCase(economyService, authPreferences)
     val syncUseCase = SyncUseCase(syncService, authPreferences)
 
@@ -511,7 +519,7 @@ class CycleCareViewModel(
 
     fun openTrackForDate(date: LocalDate) {
         selectDate(date)
-        selectTab(AppNavTab.TRACK)
+        selectTab(AppNavTab.ASK)
     }
 
     fun logPeriodStart(date: LocalDate) {
@@ -1400,9 +1408,9 @@ class CycleCareViewModel(
         _uiState.value = _uiState.value.copy(isVaultOpen = open)
     }
 
-    fun mineCoinsManual() {
+    fun claimCoinsManual() {
         viewModelScope.launch {
-            val res = miningUseCase.mineDailyAttunement(_uiState.value.economyProfile, baseReward = 30L)
+            val res = earnCoinsUseCase.claimDailyAttunement(_uiState.value.economyProfile, baseReward = 30L)
             if (res is com.example.data.economy.EconomyResult.Success) {
                 SoundFeedbackManager.playGentleRewardChime()
                 _uiState.value = _uiState.value.copy(
@@ -1413,6 +1421,10 @@ class CycleCareViewModel(
                 _uiState.value = _uiState.value.copy(economyToastMessage = res.errorMessage)
             }
         }
+    }
+
+    fun mineCoinsManual() {
+        claimCoinsManual()
     }
 
     fun transferCoins(recipientEmail: String, amount: Long) {

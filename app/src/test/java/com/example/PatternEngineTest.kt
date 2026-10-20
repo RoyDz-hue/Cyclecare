@@ -75,6 +75,51 @@ class PatternEngineTest {
         assertFalse(result.isRegular)
     }
 
+    @Test
+    fun calculatePhaseForDateMapsCorrectlyAcrossCycle() {
+        val settings = CycleSettings(
+            averageCycleLength = 28,
+            periodDuration = 5,
+            lutealPhaseDays = 14,
+            lastPeriodStartDate = "2026-04-01"
+        )
+        // Day 1 to 5: Menstrual
+        assertEquals(com.example.data.model.CyclePhase.MENSTRUAL, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-01"), settings))
+        assertEquals(com.example.data.model.CyclePhase.MENSTRUAL, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-05"), settings))
+
+        // Day 6 to 8: Follicular
+        assertEquals(com.example.data.model.CyclePhase.FOLLICULAR, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-06"), settings))
+        assertEquals(com.example.data.model.CyclePhase.FOLLICULAR, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-08"), settings))
+
+        // Fertile window: Day 9 to 15 (Ovulation day is 14) -> OVULATION
+        assertEquals(com.example.data.model.CyclePhase.OVULATION, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-14"), settings))
+
+        // Day 16 to 28: Luteal
+        assertEquals(com.example.data.model.CyclePhase.LUTEAL, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-20"), settings))
+        assertEquals(com.example.data.model.CyclePhase.LUTEAL, PatternEngine.calculatePhaseForDate(java.time.LocalDate.parse("2026-04-28"), settings))
+    }
+
+    @Test
+    fun detectPatternsIdentifiesRecurrentSymptomsInPhase() {
+        val settings = CycleSettings(
+            averageCycleLength = 28,
+            periodDuration = 5,
+            lastPeriodStartDate = "2026-04-01"
+        )
+        // Two logs in luteal phase with acne
+        val logs = listOf(
+            CycleDayLog(dateString = "2026-04-20", symptomsCsv = "acne,bloating"),
+            CycleDayLog(dateString = "2026-04-22", symptomsCsv = "acne")
+        )
+
+        val patterns = PatternEngine.detectPatterns(settings, logs)
+        val acnePattern = patterns.find { it.id.contains("acne") }
+
+        assertTrue("Acne pattern should be recognized with 2 occurrences", acnePattern != null)
+        assertEquals(com.example.data.model.CyclePhase.LUTEAL.title, acnePattern!!.cyclePhase)
+        assertTrue(acnePattern.supportingObservations.contains("2 times"))
+    }
+
     private fun bleed(date: String, flow: String = "LIGHT") = CycleDayLog(
         dateString = date,
         flowLevel = flow

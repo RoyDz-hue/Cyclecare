@@ -2,9 +2,12 @@ package com.example.domain.pattern
 
 import com.example.data.local.CycleDayLog
 import com.example.data.local.CycleSettings
+import com.example.data.model.CyclePhase
 import com.example.data.model.HealthPattern
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -19,13 +22,19 @@ data class BaselineMetrics(
     val observedCycleIntervals: Int = 0
 )
 
+data class EvaluatedPattern(
+    val symptomKey: String,
+    val phase: CyclePhase,
+    val totalCount: Int,
+    val recentCount: Int,
+    val weightedScore: Double,
+    val confidence: String,
+    val isAnomaly: Boolean
+)
+
 object PatternEngine {
     /**
      * Computes cycle-length statistics from distinct observed bleeding episodes.
-     * A bleeding episode is grouped up to the configured period duration to avoid
-     * counting every logged bleeding day as a new cycle start. The current profile
-     * start date is included when it is valid. With fewer than two observed starts,
-     * the user's configured cycle length is shown as an estimate, not as measured history.
      */
     fun computeBaseline(settings: CycleSettings, logs: List<CycleDayLog>): BaselineMetrics {
         val starts = observedPeriodStarts(settings, logs)
@@ -98,36 +107,157 @@ object PatternEngine {
     }
 
     /**
-     * Surfaces repeated entries without assigning them to an estimated phase or claiming a cause.
-     * A single observation is shown in the log summary, not promoted to a recurring pattern.
+     * Determines the estimated cycle phase for a specific date based on settings.
      */
-    fun detectPatterns(@Suppress("UNUSED_PARAMETER") settings: CycleSettings, logs: List<CycleDayLog>): List<HealthPattern> {
+    fun calculatePhaseForDate(date: LocalDate, settings: CycleSettings): CyclePhase {
+        val lastStart = settings.lastPeriodStartDate.takeIf(String::isNotBlank)?.let {
+            runCatching { LocalDate.parse(it) }.getOrNull()
+        } ?: return CyclePhase.FOLLICULAR
+
+        val cycleLength = settings.averageCycleLength.coerceIn(21, 45)
+        val periodDuration = settings.periodDuration.coerceIn(2, 10)
+        val lutealLength = settings.lutealPhaseDays.coerceIn(10, 16)
+        val ovulationDay = (cycleLength - lutealLength).coerceIn(periodDuration + 1, cycleLength - 1)
+        val fertileStart = (ovulationDay - 5).coerceAtLeast(periodDuration + 1)
+        val fertileEnd = (ovulationDay + 1).coerceAtMost(cycleLength)
+
+        val daysDiff = ChronoUnit.DAYS.between(lastStart, date).toInt()
+        val cycleDay = Math.floorMod(daysDiff, cycleLength) + 1
+
+        return when {
+            cycleDay <= periodDuration -> CyclePhase.MENSTRUAL
+            cycleDay < fertileStart -> CyclePhase.FOLLICULAR
+            cycleDay <= fertileEnd -> CyclePhase.OVULATION
+            else -> CyclePhase.LUTEAL
+        }
+    }
+
+    /**
+     * Spec §17-20: Advanced pattern detection with:
+     * 1. Cycle phase correlation
+     * 2. Exponential recency weighting (half-life ~23 days)
+     * 3. Windowed statistics (all-time vs recent 90-day window)
+     * 4. Median Absolute Deviation (MAD) for anomaly detection
+     * 5. Multi-factor confidence scoring
+     */
+    fun detectPatterns(settings: CycleSettings, logs: List<CycleDayLog>): List<HealthPattern> {
+        val today = LocalDate.now()
         val datedLogs = logs.mapNotNull { log ->
             runCatching { LocalDate.parse(log.dateString) to log }.getOrNull()
         }.distinctBy { it.first }
+
         if (datedLogs.isEmpty()) return emptyList()
 
-        val symptomCounts = datedLogs.flatMap { (_, log) ->
-            log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).distinct()
-        }.groupingBy { it }.eachCount()
+        // 1. Map each dated entry to symptom occurrences with date and phase
+        data class SymptomOccurrence(val symptom: String, val date: LocalDate, val phase: CyclePhase)
+        val occurrences = datedLogs.flatMap { (date, log) ->
+            val phase = calculatePhaseForDate(date, settings)
+            log.symptomsCsv.split(',')
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct()
+                .map { symptom -> SymptomOccurrence(symptom, date, phase) }
+        }
 
-        val repeatedSymptoms = symptomCounts.entries
-            .filter { it.value >= 2 }
-            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-            .take(6)
+        if (occurrences.isEmpty()) return emptyList()
 
-        return repeatedSymptoms.map { (symptom, count) ->
-            val label = symptom.replace('_', ' ').replaceFirstChar { it.titlecase() }
-            HealthPattern(
-                id = "logged_${symptom.lowercase().replace(Regex("[^a-z0-9]+"), "_")}",
-                title = "Repeated log: $label",
-                supportingObservations = "Recorded on $count of ${datedLogs.size} saved dates",
-                confidence = "Observed in saved logs",
-                cyclePhase = "Not assigned",
-                explanation = "This is a repeated entry in your records only. The dates do not establish a cause, phase relationship, or medical significance.",
-                actionableCare = "Review the dated entries and share them with a qualified health professional if you would like help interpreting them."
+        // 2. Group by symptom and phase
+        val grouped = occurrences.groupBy { it.symptom to it.phase }
+
+        val evaluatedList = mutableListOf<EvaluatedPattern>()
+
+        for (entry in grouped.entries) {
+            val symptom = entry.key.first
+            val phase = entry.key.second
+            val list = entry.value
+            val totalCount = list.size
+            if (totalCount < 2) continue // Minimum 2 occurrences to form a pattern
+
+            // Recency weighting: weight = exp(-lambda * daysAgo)
+            val weightedScore = list.sumOf { occ ->
+                val daysAgo = maxOf(0L, ChronoUnit.DAYS.between(occ.date, today))
+                exp(-0.03 * daysAgo.toDouble())
+            }
+
+            val recentCount = list.count { occ ->
+                ChronoUnit.DAYS.between(occ.date, today) <= 90L
+            }
+
+            // Anomaly detection via MAD over intervals
+            val sortedDates: List<LocalDate> = list.map { it.date }.sorted()
+            val intervals: List<Double> = sortedDates.zipWithNext { a, b -> ChronoUnit.DAYS.between(a, b).toDouble() }
+            val isAnomaly = if (intervals.size >= 3) {
+                val medianInterval = computeMedian(intervals)
+                val absoluteDeviations = intervals.map { abs(it - medianInterval) }
+                val mad = computeMedian(absoluteDeviations)
+                val prevDate = sortedDates[sortedDates.size - 2]
+                val lastDate = sortedDates[sortedDates.size - 1]
+                val lastInterval = ChronoUnit.DAYS.between(prevDate, lastDate).toDouble()
+                mad > 0.0 && abs(lastInterval - medianInterval) > (2.5 * mad)
+            } else false
+
+            // Confidence score based on consistency and recency
+            val confidence = when {
+                totalCount >= 5 && recentCount >= 2 -> "High"
+                totalCount >= 3 || recentCount >= 2 -> "Moderate"
+                else -> "Emerging"
+            }
+
+            evaluatedList += EvaluatedPattern(
+                symptomKey = symptom,
+                phase = phase,
+                totalCount = totalCount,
+                recentCount = recentCount,
+                weightedScore = weightedScore,
+                confidence = confidence,
+                isAnomaly = isAnomaly
             )
         }
+
+        // Sort by weighted score descending, prioritizing active and frequent patterns
+        val topPatterns = evaluatedList.sortedByDescending { it.weightedScore }.take(6)
+
+        return topPatterns.map { ep ->
+            val label = ep.symptomKey.replace('_', ' ').replaceFirstChar { it.titlecase() }
+            val phaseTitle = ep.phase.title
+
+            val explanation = when (ep.phase) {
+                CyclePhase.LUTEAL -> "Progesterone fluctuations before menstruation commonly accompany recurring $label in your luteal phase."
+                CyclePhase.MENSTRUAL -> "Inflammatory prostaglandins and shedding uterine tissue frequently correlate with $label during menstrual bleeding."
+                CyclePhase.OVULATION -> "The rapid LH surge and estrogen peak around ovulation may trigger $label."
+                CyclePhase.FOLLICULAR -> "Rising follicular estrogen and metabolic activity frequently align with $label."
+            }
+
+            val careAdvice = when (ep.phase) {
+                CyclePhase.LUTEAL -> "Ensure magnesium-rich nourishment, gentle hydration, and warm compresses for comfort."
+                CyclePhase.MENSTRUAL -> "Rest, warm herbal infusions, and light restorative pacing support ease during this phase."
+                CyclePhase.OVULATION -> "Stay hydrated and observe whether this recurring signal assists your natural body awareness."
+                CyclePhase.FOLLICULAR -> "Support rising vitality with balanced nutrition, hydration, and active movement."
+            }
+
+            val observationsText = if (ep.recentCount > 0) {
+                "Observed ${ep.totalCount} times (${ep.recentCount} in past 3 months) during $phaseTitle"
+            } else {
+                "Observed ${ep.totalCount} times historically during $phaseTitle"
+            }
+
+            HealthPattern(
+                id = "pattern_${ep.symptomKey.lowercase()}_${ep.phase.name.lowercase()}",
+                title = "$label during $phaseTitle",
+                supportingObservations = observationsText,
+                confidence = ep.confidence,
+                cyclePhase = phaseTitle,
+                explanation = explanation,
+                actionableCare = careAdvice
+            )
+        }
+    }
+
+    private fun computeMedian(values: List<Double>): Double {
+        if (values.isEmpty()) return 0.0
+        val sorted = values.sorted()
+        val n = sorted.size
+        return if (n % 2 == 1) sorted[n / 2] else (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     }
 
     private fun validLogDateCount(logs: List<CycleDayLog>): Int = logs

@@ -126,7 +126,7 @@ fun VaultEconomyScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
                         Text(
-                            text = "CycleCare Rewards",
+                            text = "Atelier & Rewards",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(

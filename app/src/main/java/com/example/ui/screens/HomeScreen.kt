@@ -421,7 +421,7 @@ fun HomeScreen(
                         }
                         TextButton(onClick = {
                             viewModel.selectDate(uiState.currentDate)
-                            viewModel.selectTab(AppNavTab.TRACK)
+                            viewModel.selectTab(AppNavTab.ASK)
                         }) {
                             Text("Add details")
                         }
@@ -444,8 +444,8 @@ fun HomeScreen(
                     Text("A NOTE FOR TODAY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     Text(headline, style = MaterialTheme.typography.titleMedium)
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { viewModel.selectTab(AppNavTab.CARE) }) {
-                        Text("Explore in Care")
+                    TextButton(onClick = { viewModel.selectTab(AppNavTab.ASK) }) {
+                        Text("Explore in Ask")
                     }
                 }
             }
@@ -540,8 +540,8 @@ fun HomeScreen(
                                 }
                             }
                         }
-                        TextButton(onClick = { viewModel.setVaultOpen(true) }) {
-                            Text("View rewards")
+                        TextButton(onClick = { viewModel.selectTab(AppNavTab.SPACE) }) {
+                            Text("View Atelier")
                         }
                     }
                 }
@@ -659,7 +659,7 @@ fun HomeScreen(
                         val question = premiumChatPrompt.trim()
                         premiumChatPrompt = ""
                         showPremiumChatDialog = false
-                        viewModel.selectTab(AppNavTab.CARE)
+                        viewModel.selectTab(AppNavTab.ASK)
                         viewModel.consultCare(question, includeFullContext = true)
                     }
                 ) { Text("Ask CycleCare") }

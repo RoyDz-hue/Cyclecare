@@ -21,9 +21,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +60,8 @@ import com.example.ui.auth.AuthSheet
 import com.example.ui.auth.QuickUnlockSetupDialog
 import com.example.ui.auth.WelcomeAuthScreen
 import com.example.ui.screens.AppLockScreen
+import com.example.ui.screens.AskScreen
+import com.example.ui.screens.AtelierScreen
 import com.example.ui.screens.CareScreen
 import com.example.ui.screens.CycleScreen
 import com.example.ui.screens.HomeScreen
@@ -66,8 +70,10 @@ import com.example.ui.screens.MpesaStkPushDialog
 import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SomethingDifferentSheet
+import com.example.ui.screens.SpaceScreen
 import com.example.ui.screens.TrackScreen
 import com.example.ui.screens.VaultEconomyScreen
+import com.example.ui.screens.YouScreen
 import com.example.ui.theme.CycleCareTheme
 import com.example.ui.theme.rememberSystemMotionEnabled
 import com.example.ui.viewmodel.AppNavTab
@@ -217,10 +223,10 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                 )
             }
 
-            // Main Core App Shell (Home / Cycle / Track / Insights / Care)
+            // Main Core App Shell (Today / Cycle / Ask / You / Space per spec §71-75)
             else -> {
-                BackHandler(enabled = uiState.activeTab != AppNavTab.HOME) {
-                    viewModel.selectTab(AppNavTab.HOME)
+                BackHandler(enabled = uiState.activeTab != AppNavTab.TODAY) {
+                    viewModel.selectTab(AppNavTab.TODAY)
                 }
 
                 Scaffold(
@@ -244,7 +250,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         label = "tab_transition"
                     ) { targetTab ->
                         when (targetTab) {
-                            AppNavTab.HOME -> HomeScreen(
+                            AppNavTab.TODAY -> HomeScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
                                 todayLog = logsMap[uiState.currentDate.toString()],
@@ -255,17 +261,18 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                                 uiState = uiState,
                                 logsMap = logsMap
                             )
-                            AppNavTab.TRACK -> TrackScreen(
+                            AppNavTab.ASK -> AskScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
                                 currentLog = logsMap[uiState.selectedDate.toString()]
                             )
-                            AppNavTab.INSIGHTS -> InsightsScreen(
+                            AppNavTab.YOU -> YouScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
-                                logsMap = logsMap
+                                logsMap = logsMap,
+                                onOpenSettings = { isSettingsOpen = true }
                             )
-                            AppNavTab.CARE -> CareScreen(
+                            AppNavTab.SPACE -> SpaceScreen(
                                 viewModel = viewModel,
                                 uiState = uiState
                             )
@@ -396,11 +403,11 @@ fun CycleCareBottomBar(
     onSelectTab: (AppNavTab) -> Unit
 ) {
     val items = listOf(
-        NavItem(AppNavTab.HOME, "Today", Icons.Default.Home),
+        NavItem(AppNavTab.TODAY, "Today", Icons.Default.Home),
         NavItem(AppNavTab.CYCLE, "Cycle", Icons.Default.CalendarMonth),
-        NavItem(AppNavTab.TRACK, "Log", Icons.Default.Edit),
-        NavItem(AppNavTab.INSIGHTS, "Insights", Icons.AutoMirrored.Filled.TrendingUp),
-        NavItem(AppNavTab.CARE, "Care", Icons.Default.Spa)
+        NavItem(AppNavTab.ASK, "Ask", Icons.Default.AutoAwesome),
+        NavItem(AppNavTab.YOU, "You", Icons.Default.Person),
+        NavItem(AppNavTab.SPACE, "Space", Icons.Default.Spa)
     )
 
     NavigationBar(

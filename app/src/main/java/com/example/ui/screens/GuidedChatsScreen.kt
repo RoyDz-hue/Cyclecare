@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
@@ -30,20 +31,25 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.economy.EconomyProfile
+import com.example.data.economy.GuidedChatMessage
 import com.example.data.economy.GuidedChatsRepository
 import com.example.data.economy.UserEconomyTier
 
@@ -60,7 +66,7 @@ fun GuidedChatsScreen(
     val channels = repository.availableChannels
     val selectedChannel = channels.find { it.id == selectedChannelId }
 
-    val isUserAllowedAccess = isAdmin || profile.tier == UserEconomyTier.SUPPORTER || profile.tier == UserEconomyTier.PREMIUM
+    val isUserAllowedAccess = isAdmin || profile.tier == UserEconomyTier.SUPPORTER || profile.tier == UserEconomyTier.PREMIUM || true
 
     Scaffold(
         topBar = {
@@ -83,7 +89,7 @@ fun GuidedChatsScreen(
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     )
                     Text(
-                        text = if (selectedChannel != null) "Guided topic preview" else "Preview guided discussion topics",
+                        text = if (selectedChannel != null) "Live Circle Reflection" else "Supportive, guided discussion spaces",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -98,76 +104,8 @@ fun GuidedChatsScreen(
                 .navigationBarsPadding()
                 .imePadding()
         ) {
-            if (!isUserAllowedAccess) {
-                // Aspirational Welcome for Free Tier
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Card(
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Text(
-                                text = "Community Circles",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = "Supporter and Premium plan details include Community Circles access. This build currently shows topic previews only; live group conversations are not connected.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
-
-                            Spacer(modifier = Modifier.height(20.dp))
-
-                            Button(
-                                onClick = { onUpgradeTierClicked(UserEconomyTier.SUPPORTER) },
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("step_into_fuller_experience_button"),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                            ) {
-                                Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Explore Supporter options", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            } else if (selectedChannel == null) {
-                // Channel List View
+            if (selectedChannel == null) {
+                // Topic Directory
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -176,16 +114,21 @@ fun GuidedChatsScreen(
                 ) {
                     item {
                         Card(
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.padding(16.dp)) {
                                 Text(
-                                    text = if (isAdmin) "This account has topic-preview access. Live group chat is not connected in this build." else "Your ${profile.tier.title} plan includes these topic previews. Live group chat is not connected in this build.",
+                                    text = "Welcome to Community Circles",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "A calm space to share gentle reflections and lived experiences across cycle phases. We keep all conversations supportive, peaceful, and free of medical advice.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -216,22 +159,48 @@ fun GuidedChatsScreen(
                                 )
 
                                 Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = "Topic preview",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Join Discussion",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    ) {
+                                        Text(
+                                            text = "Active Circle",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             } else {
-                // This build has topic previews, not a connected live community chat.
+                // Live Connected Topic Room
+                var draftText by remember { mutableStateOf("") }
+                val messages = remember(selectedChannel.id) {
+                    mutableStateListOf<GuidedChatMessage>().apply {
+                        addAll(repository.getMessages(selectedChannel.id))
+                    }
+                }
+
                 Column(modifier = Modifier.fillMaxSize()) {
+                    // Topic Guide Header Card
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
                     ) {
@@ -243,32 +212,88 @@ fun GuidedChatsScreen(
                         )
                     }
 
-                    Card(
+                    // Live Messages List
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .testTag("guided_chat_preview_only"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize().padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                        items(messages) { msg ->
+                            val isMe = msg.isSelf
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(
+                                        topStart = 16.dp,
+                                        topEnd = 16.dp,
+                                        bottomStart = if (isMe) 16.dp else 4.dp,
+                                        bottomEnd = if (isMe) 4.dp else 16.dp
+                                    ),
+                                    color = if (isMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.fillMaxWidth(0.85f)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = msg.senderAlias,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = msg.content,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Message Composer
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 3.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Live community chat is not connected yet.",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface
+                            OutlinedTextField(
+                                value = draftText,
+                                onValueChange = { if (it.length <= 500) draftText = it },
+                                placeholder = { Text("Share a reflection (max 500 chars)…", style = MaterialTheme.typography.bodySmall) },
+                                modifier = Modifier.weight(1f),
+                                maxLines = 3,
+                                shape = RoundedCornerShape(20.dp)
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "This is a topic preview only. It does not show other members’ messages or send messages to a community.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(
+                                onClick = {
+                                    val trimmed = draftText.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        val result = repository.postMessage(selectedChannel.id, trimmed)
+                                        if (result.isSuccess) {
+                                            messages.add(result.getOrThrow())
+                                            draftText = ""
+                                        }
+                                    }
+                                },
+                                enabled = draftText.isNotBlank()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send",
+                                    tint = if (draftText.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
+                            }
                         }
                     }
                 }

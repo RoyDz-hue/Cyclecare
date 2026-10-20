@@ -22,9 +22,12 @@ class HealthSyncRoomAcceptanceTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val names = mutableListOf<String>()
     private val handles = mutableListOf<CycleCareDatabase>()
-    private fun open(name: String): CycleCareDatabase = Room.databaseBuilder(context, CycleCareDatabase::class.java, name)
-        .allowMainThreadQueries().addMigrations(CycleCareDatabase.createMigration5To6(), CycleCareDatabase.createMigration6To7(), CycleCareDatabase.createMigration7To8())
-        .build().also { handles += it }
+    private fun open(name: String): CycleCareDatabase {
+        context.getDatabasePath(name).parentFile?.mkdirs()
+        return Room.databaseBuilder(context, CycleCareDatabase::class.java, name)
+            .allowMainThreadQueries().addMigrations(CycleCareDatabase.createMigration5To6(), CycleCareDatabase.createMigration6To7(), CycleCareDatabase.createMigration7To8())
+            .build().also { handles += it }
+    }
     private fun name() = "room-sync-unit-${UUID.randomUUID()}".also { names += it }
     private fun entry(owner: String = "owner-a", revision: Long = 1) = HealthSyncOutboxEntry(owner, UUID.randomUUID().toString(),
         "2026-10-19", "UPSERT", 0, revision, "{\"date\":\"2026-10-19\"}", "a".repeat(64), 7)

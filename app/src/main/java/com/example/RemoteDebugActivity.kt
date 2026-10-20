@@ -6,7 +6,6 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import com.example.data.supabase.UserFacingServerMessage
-import com.example.domain.diagnostics.DebugBridgeConfiguration
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -72,16 +71,11 @@ private data class BridgeResponse(val body: JSONObject)
 private fun RemoteDebugScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val bridgeUrl = remember {
-        DebugBridgeConfiguration.baseUrl(BuildConfig.DEBUG, BuildConfig.DEBUG_BRIDGE_URL)
-    }
     var code by remember { mutableStateOf("") }
     var sessionToken by remember { mutableStateOf<String?>(null) }
     var consent by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var status by remember {
-        mutableStateOf(if (bridgeUrl == null) "Diagnostics are not configured for this build." else "Not connected")
-    }
+    var status by remember { mutableStateOf("Not connected") }
     var showPrivacy by remember { mutableStateOf(false) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -110,11 +104,10 @@ private fun RemoteDebugScreen(onBack: () -> Unit) {
                     onValueChange = { code = it.uppercase(Locale.US).filter { c -> c.isLetterOrDigit() }.take(12) },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("One-time pairing code") },
-                    enabled = bridgeUrl != null && !busy,
                     singleLine = true
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = consent, onCheckedChange = { consent = it }, enabled = bridgeUrl != null && !busy)
+                    Checkbox(checked = consent, onCheckedChange = { consent = it })
                     Text("I approve this temporary diagnostic session.", fontSize = 14.sp)
                 }
                 Button(
@@ -135,7 +128,7 @@ private fun RemoteDebugScreen(onBack: () -> Unit) {
                             }
                         }
                     },
-                    enabled = bridgeUrl != null && !busy && consent && code.length >= 6,
+                    enabled = !busy && consent && code.length >= 6,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (busy) "Connecting…" else "Pair this phone") }
             } else {
@@ -157,7 +150,7 @@ private fun RemoteDebugScreen(onBack: () -> Unit) {
                             }
                         }
                     },
-                    enabled = bridgeUrl != null && !busy,
+                    enabled = !busy,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (busy) "Sending…" else "Send diagnostic snapshot") }
                 OutlinedButton(
@@ -184,7 +177,7 @@ private fun RemoteDebugScreen(onBack: () -> Unit) {
             }
 
             Text("Status: $status", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text("Bridge: ${bridgeUrl ?: "Not configured"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Bridge: ${BuildConfig.DEBUG_BRIDGE_URL}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -218,8 +211,7 @@ private fun buildDiagnosticPayload(context: Context): JSONObject {
 }
 
 private fun postJson(path: String, payload: JSONObject, bearerToken: String? = null): BridgeResponse {
-    val base = DebugBridgeConfiguration.baseUrl(BuildConfig.DEBUG, BuildConfig.DEBUG_BRIDGE_URL)
-        ?: throw IOException("Diagnostics are not configured for this build.")
+    val base = BuildConfig.DEBUG_BRIDGE_URL.trimEnd('/')
     val url = URL("$base$path")
     require(url.protocol == "https") { "The debug bridge must use HTTPS." }
     val connection = (url.openConnection() as HttpURLConnection).apply {

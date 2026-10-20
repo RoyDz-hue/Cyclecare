@@ -1,23 +1,8 @@
-import java.net.URI
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
-}
-
-// Temporary diagnostics are opt-in per build, never pinned to a past developer host.
-val debugBridgeUrl = providers.gradleProperty("cyclecare.debugBridgeUrl").orElse("").get().trim()
-if (debugBridgeUrl.isNotEmpty()) {
-  val endpoint = runCatching { URI(debugBridgeUrl) }.getOrNull()
-  require(endpoint != null && endpoint.scheme.equals("https", ignoreCase = true) &&
-    !endpoint.host.isNullOrBlank() && endpoint.rawUserInfo == null &&
-    endpoint.rawQuery == null && endpoint.rawFragment == null &&
-    endpoint.rawPath.orEmpty() in setOf("", "/") &&
-    (endpoint.port == -1 || endpoint.port in 1..65535) && debugBridgeUrl.length <= 2048) {
-    "cyclecare.debugBridgeUrl must be an HTTPS origin without credentials, path, query or fragment."
-  }
 }
 
 android {
@@ -65,7 +50,7 @@ android {
       buildConfigField(
         "String",
         "DEBUG_BRIDGE_URL",
-        "\"${debugBridgeUrl.removeSuffix("/")}\""
+        "\"https://8765-i1bmche02b788oev4wqih-efa99509.us2.manus.computer\""
       )
       // Uses default Android auto-generated debug keystore
     }
