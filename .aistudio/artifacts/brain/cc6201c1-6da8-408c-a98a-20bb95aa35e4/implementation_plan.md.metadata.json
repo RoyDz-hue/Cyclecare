@@ -1,0 +1,6 @@
+{
+  "summary":  "Step-by-step wireless ADB debugging guide and plan for reconnecting an Android 11+ device from a laptop terminal when USB is unavailable, including port resolution, ADB server reset, and APK deployment.",
+  "updatedAt":  "2026-10-20T18:53:03.812791063Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

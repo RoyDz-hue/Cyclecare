@@ -1,87 +1,122 @@
-# Onboarding Persistence in Room & First-Launch Experience
+# CycleCare Comprehensive Evolution Implementation Plan
+## Transforming Period Tracker into a Personal Women's Health Intelligence System
 
-This plan establishes a dedicated Room persistence model (`OnboardingProfile` and `OnboardingProfileDao`) to store all cycle tracking answers, legal consent, and user preferences collected during onboarding, while resolving the issue that prevented the onboarding screen from displaying on the device.
-
----
-
-## 1. Root Cause Analysis: Why Onboarding Was Not Showing
-
-1. **Premature Completion Flag**: In `CycleSettings.kt`, `isOnboardingCompleted` defaulted to `true` (`val isOnboardingCompleted: Boolean = true`).
-2. **Repository Pre-seeding**: In `CycleRepository.kt`, when settings were absent, it created `CycleSettings(isOnboardingCompleted = true)`.
-3. **ViewModel Initial State**: `CycleUiState.showOnboarding` initialized to `false` and loaded `!settings.isOnboardingCompleted`, immediately rendering the core tab shell (`HomeScreen`) instead of `OnboardingScreen`.
-
-### Resolution
-- Update `CycleSettings.isOnboardingCompleted` to default to `false`.
-- Ensure repository initial settings honor `isOnboardingCompleted = false` for fresh installations.
-- When `showOnboarding == true`, the device directly renders the progressive 5-screen `OnboardingScreen`.
+This implementation plan incorporates the full progressive product philosophy and the Master Build Specification into the CycleCare Android codebase while keeping health tracking neutral, accurate, and intelligently layered.
 
 ---
 
-## 2. Room Architecture: Dedicated Onboarding Persistence
+## 1. Architecture & Persistence Updates
 
-### A. Entity: `OnboardingProfile` (`com.example.data.local`)
-Create `@Entity(tableName = "onboarding_profiles")`:
-- `id: Int = 1` (`@PrimaryKey`)
-- `isCompleted: Boolean` (true upon finishing)
-- `completedAtTimestamp: Long` (System epoch millis)
-- `isAgeVerified: Boolean` (Adult 18+ confirmation)
-- `isTermsAgreed: Boolean` (Terms of Service & Privacy Policy consent)
-- `accountMode: String` (`"PRIVATE"` or `"SYNC_ACCOUNT"`)
-- `selectedGoalsCsv: String` (e.g. `"🌸 Understand my cycle,🩷 Track my periods"`)
-- `lastPeriodDateString: String` (YYYY-MM-DD or user estimate)
-- `approximatePeriodChoice: String` (`"EXACT"`, `"Today"`, `"A few days ago"`, `"About a week ago"`, etc.)
-- `cycleLengthOption: String` (`"25–28 days"`, `"21–24 days"`, etc.)
-- `cycleLengthDays: Int` (e.g., 28)
-- `remindFertileWindow: Boolean` (User opt-in for fertile window reminders)
-
-### B. DAO: `OnboardingProfileDao` (`com.example.data.local`)
-Create `@Dao`:
-- `fun getProfileFlow(): Flow<OnboardingProfile?>`: Reactive stream of the profile.
-- `suspend fun getProfile(): OnboardingProfile?`: Direct fetch.
-- `suspend fun insertOrUpdateProfile(profile: OnboardingProfile)`: `@Insert(onConflict = OnConflictStrategy.REPLACE)`
-- `suspend fun deleteProfile()`: `@Query("DELETE FROM onboarding_profiles")`
-
-### C. Room Database Migration (`CycleCareDatabase.kt`)
-- Register `OnboardingProfile::class` in `@Database(entities = [CycleDayLog::class, CycleSettings::class, OnboardingProfile::class], version = 3)`.
-- Expose `abstract fun onboardingDao(): OnboardingProfileDao`.
+### A. Extended Onboarding & Baseline Entity (`OnboardingProfile.kt` & `CycleSettings.kt`)
+- Extend `OnboardingProfile`:
+  - `typicalSymptomsCsv: String` (e.g., `"cramps,headaches,fatigue"`)
+  - `typicalEnergy: String` (`"LOW"`, `"NORMAL"`, `"HIGH"`, `"VARIABLE"`)
+  - `typicalSleepQuality: String` (`"DEEP"`, `"RESTLESS"`, `"LIGHT"`, `"VARIABLE"`)
+  - `hasCompletedDeepBaseline: Boolean`
+- Update `CycleCareDatabase.kt`:
+  - Increment database version to 4 with clean migration / fallback.
+- Update `CycleRepository.kt`:
+  - Store and retrieve the enhanced onboarding profile and baseline preferences.
 
 ---
 
-## 3. Repository & Data Synchronization (`CycleRepository.kt`)
+## 2. Progressive Onboarding: Optional "Learn About Me" Flow
+*(Files: `OnboardingViewModel.kt`, `OnboardingScreen.kt`)*
 
-1. **Expose Onboarding Profile Flow**:
-   - `val onboardingProfileFlow: Flow<OnboardingProfile?> = dao.getProfileFlow()`
-2. **Complete Onboarding Transaction**:
-   - Save `OnboardingProfile`.
-   - Update `CycleSettings`:
-     - `isOnboardingCompleted = true`
-     - `selectedGoalsCsv = profile.selectedGoalsCsv`
-     - `lastPeriodStartDate = profile.lastPeriodDateString`
-     - `averageCycleLength = profile.cycleLengthDays`
-     - `remindFertile = profile.remindFertileWindow`
-3. **Generate Initial Cycle Logs**:
-   - Based on user answer ("Generate initial cycle data matching the user's entered period date"):
-     - If user specified an exact or relative period start date, automatically populate period logs (`flowLevel = "MODERATE"`, `"HEAVY"`, etc.) for those days in `cycle_day_logs`.
-     - Ensures the Home calendar and cycle wheel immediately show active or recent period data tailored to the user.
+- Add **Step 6: "Learn About Me"** (Optional progressive step after the initial cycle picture is calculated in Step 5):
+  - Headline: *"Want CycleCare to understand you a little better?"*
+  - Subtitle: *"This helps us learn what is typical for you versus what is new."*
+  - Three gentle, high-impact sections:
+    1. *"What do you usually notice around your period?"* (cramps, headaches, tiredness, mood changes, bloating, breast tenderness, back pain, acne, appetite changes, nothing noticeable, I'm not sure)
+    2. *"How about your energy?"* (Steady, Lower before period, Peaks mid-cycle, It changes)
+    3. *"And your sleep?"* (Generally good, Restless before period, Hard to fall asleep, Variable)
+  - Clear dual CTA:
+    - Primary: **"Save & Continue to CycleCare"**
+    - Secondary: **"Skip for now — learn as I go"**
 
 ---
 
-## 4. ViewModel & UI Integration
+## 3. Continuous Intelligence: "CycleCare Learns" & "You vs You" Baseline
+*(Files: `LearningEngine.kt`, `HomeScreen.kt`, `InsightsScreen.kt`, `PatternEngine.kt`)*
 
-1. **`OnboardingViewModel.kt`**:
-   - Ensure all parameters from the 5-step flow (Goals, Last Period, Cycle Length, Age Verification, Terms Agreement, Fertile Reminder) are structured into an `OnboardingProfile`.
-2. **`MainActivity.kt` & `CycleCareViewModel.kt`**:
-   - On fresh launch, verify `uiState.showOnboarding == true` so the user is greeted with Screen 1 (Welcome).
-   - Once completed, persist to Room and transition smoothly to the main app dashboard with personalized metrics.
+### A. Upgraded `LearningEngine.kt`
+- Compute multi-cycle statistics:
+  - Exact average vs median cycle length and standard deviation.
+  - Cycle shift detection: compare the last 2 cycles against the overall historical baseline.
+  - Symptom recurrence detection: correlation between cycle phase (menstrual, follicular, fertile, luteal) and symptoms/energy.
+- Generate structured `LearnedObservation`:
+  - Category: *"Your pattern"* (e.g., premenstrual fatigue, ovulatory vitality).
+  - Category: *"Your usual cycle"* (e.g., baseline duration, consistency).
+  - Category: *"Something changing"* (e.g., recent cycles running longer or shorter).
+  - Category: *"Still learning"* (e.g., sleep data needed).
+
+### B. "CycleCare Learns" Home Module (`HomeScreen.kt`)
+- Dedicated carousel/cards on the Home screen showing what the app has learned about her so far.
+- Adds an explicit *"Why this appeared"* toggle with clear clinical or observational explanations.
+
+### C. "My Baseline" (You vs You) (`InsightsScreen.kt`)
+- Replace generic charts with **"You vs You"**:
+  - Your Usual Cycle vs Current Cycle.
+  - Your Usual Period Bleeding Duration.
+  - Typical Phase-by-Phase Energy & Sleep Trends.
+  - Common Recurring Symptoms vs New Deviations.
+- Longitudinal **Personal Health Timeline**:
+  - Month-by-month card timeline showing cycle lengths, dominant symptoms, and discovered patterns.
 
 ---
 
-## 5. Verification Plan
+## 4. Adaptive Home Screen & Time-of-Day Context
+*(File: `HomeScreen.kt`)*
 
-1. **Compilation Check**:
-   - Run `compile_applet` to verify Room entity annotation processing (KSP) and database schema compilation.
-2. **Unit Tests**:
-   - Add unit test coverage in `OnboardingProfileTest.kt` verifying DAO insertion, profile retrieval, and settings synchronization.
-   - Run `gradle :app:testDebugUnitTest`.
-3. **Device / Emulator Verification**:
-   - Verify that launching the application immediately presents the CycleCare Onboarding experience on screen.
+- **Time-of-Day Contextual Greetings & Check-In**:
+  - Morning (before 12 PM): *"Good morning. You are around Day X of your cycle."*
+  - Fast-action morning chips: `[Feeling good]` `[Something feels different]` `[Log period]` `[Not now]`.
+  - Afternoon/Evening: Calm check-in reflecting the current phase.
+- **Intelligently Layered Quick Tracking**:
+  - Keep tracking neutral and comprehensive without discouraging entries.
+  - Dynamic symptom suggestions based on the active cycle phase (e.g. cramps/flow during menstrual phase; cervical mucus/LH during fertile window; fatigue/mood during luteal phase).
+
+---
+
+## 5. Conversational Unpacking: "Ask Without Knowing What to Ask" & "Explain My Body"
+*(Files: `SomethingDifferentSheet.kt`, `CareScreen.kt`, `CareAiService.kt`)*
+
+### A. Conversational Unpacking in `SomethingDifferentSheet.kt`
+- When a user types an ambiguous query (e.g. *"I'm just feeling weird today"* or *"everything feels off"*):
+  - Empathic prompt: *"I can help you unpack that. Is it more physical, emotional, or just generally different?"*
+  - One-tap category chips: `[Physical pain / discomfort]` `[Mood / Emotions]` `[Low Energy / Exhaustion]` `[Vaginal / Pelvic]` `[Digestive / Stomach]`.
+  - Selecting a category reveals precise, structured symptom tags that map directly into verified database fields.
+
+### B. "Explain My Body" in `CareScreen.kt`
+- Dedicated structured view synthesizing:
+  - 1. *What might be happening*
+  - 2. *What supports that*
+  - 3. *What else could explain it*
+  - 4. *What you can do*
+  - 5. *What to watch*
+  - 6. *When to get checked*
+
+---
+
+## 6. End-of-Cycle Summary & Clinician-Ready Health Export
+*(Files: `CycleScreen.kt`, `SettingsScreen.kt`, `CycleCareViewModel.kt`)*
+
+- **End-of-Cycle Summary Sheet**:
+  - Displays cycle length, period duration, predominant symptoms, and comparison against baseline.
+- **Clinician Visit Summary (Doctor Report)**:
+  - Accessible via Settings & Insights.
+  - Clean, formatted patient report containing:
+    - Cycle regularity & variability statistics
+    - Period duration & flow characteristics
+    - Pain intensity distribution (ratings out of 10)
+    - Symptom frequency by cycle phase
+    - Identified clinical red flags (if any)
+    - Specific questions to ask her healthcare provider
+  - One-tap copy/share/export.
+
+---
+
+## 7. Verification & Testing Plan
+- Run `compile_applet` to ensure successful compilation across all Kotlin files, Compose components, and KSP Room generators.
+- Run `gradle :app:testDebugUnitTest` to verify unit and Robolectric tests for persistence, calculations, and ViewModels.
+- Confirm build output APK is verified.
