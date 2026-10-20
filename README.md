@@ -1,4 +1,4 @@
-# CycleCare Monorepo
+# CycleCare
 
 CycleCare is an offline-first menstrual-health tracking and wellness platform featuring local cycle pattern analysis, clinical safety boundaries, and community support.
 
