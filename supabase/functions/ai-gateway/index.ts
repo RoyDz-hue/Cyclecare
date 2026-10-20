@@ -118,22 +118,29 @@ async function requestProvider(
   try {
     let response: Response;
     if (provider === "GEMINI") {
-      const model = "gemini-2.5-flash";
-      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        signal: externalSignal ?? controller.signal,
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 700 },
-        }),
-      });
-      if (!response.ok) return { status: response.status };
-      const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
-      const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: unknown }) =>
-        typeof part?.text === "string" ? part.text : "").join("");
-      return { text: typeof text === "string" && text.trim() ? text : undefined, status: response.status };
+      const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
+      const candidateModels = [preferredModel, "gemini-2.0-flash", "gemini-1.5-flash"].filter((m, i, arr) => arr.indexOf(m) === i);
+      let lastStatus = 500;
+      for (const model of candidateModels) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          signal: externalSignal ?? controller.signal,
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ role: "user", parts: [{ text: userMessage }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 700 },
+          }),
+        });
+        lastStatus = response.status;
+        if (response.ok) {
+          const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
+          const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: unknown }) =>
+            typeof part?.text === "string" ? part.text : "").join("");
+          return { text: typeof text === "string" && text.trim() ? text : undefined, status: response.status };
+        }
+      }
+      return { status: lastStatus };
     }
 
     const model = provider === "COHERE"
