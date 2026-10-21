@@ -77,6 +77,26 @@ object CurrencyLocaleManager {
         )
     }
 
+    /**
+     * Builds the store display list from any package source (server or bundled
+     * fallback). Kenyan devices see KES; every other region sees USD.
+     */
+    fun localizePackages(packages: List<CoinPurchasePackage>, context: Context? = null): List<LocalizedCoinPackage> {
+        val kenya = detectCountryCode(context) == "KE"
+        return packages.map { pkg ->
+            LocalizedCoinPackage(
+                id = pkg.id,
+                title = pkg.title,
+                coins = pkg.coins,
+                bonusCoins = pkg.bonusCoins,
+                priceDisplay = if (kenya && pkg.priceKes > 0L) "KES ${String.format("%,d", pkg.priceKes)}" else pkg.priceUsd,
+                isHeroPackage = pkg.tag != null,
+                badge = pkg.tag,
+                description = pkg.description
+            )
+        }
+    }
+
     /** Builds a shareable request without changing the caller's wallet. */
     fun buildShareableCoinRequestMessage(userEmail: String?, missingCoins: Long): String {
         val email = userEmail ?: "my registered email"

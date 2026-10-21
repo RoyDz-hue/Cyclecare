@@ -47,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,7 +87,13 @@ fun VaultEconomyScreen(
     communityGuidesService: CommunityGuidesService? = null
 ) {
     val context = LocalContext.current
-    val localizedPackages = remember { CurrencyLocaleManager.getLocalizedPackages(context) }
+    var storePackages by remember { mutableStateOf(com.cyclecare.app.data.economy.RemoteCoinPackages.active(context)) }
+    LaunchedEffect(Unit) {
+        if (com.cyclecare.app.data.economy.RemoteCoinPackages.refresh(context)) {
+            storePackages = com.cyclecare.app.data.economy.RemoteCoinPackages.active(context)
+        }
+    }
+    val localizedPackages = remember(storePackages) { CurrencyLocaleManager.localizePackages(storePackages, context) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) } // 0 = Artifacts, 1 = Frames & Themes, 2 = Coin Store
     var showTransferDialog by remember { mutableStateOf(false) }
@@ -749,7 +756,7 @@ fun VaultEconomyScreen(
 
                             Button(
                                 onClick = {
-                                    val canonicalPackage = com.cyclecare.app.data.economy.DefaultCoinPackages.PACKAGES
+                                    val canonicalPackage = (storePackages + com.cyclecare.app.data.economy.DefaultCoinPackages.PACKAGES)
                                         .firstOrNull { it.id == pkg.id }
                                     if (canonicalPackage != null) onPurchasePackage(canonicalPackage)
                                 },
