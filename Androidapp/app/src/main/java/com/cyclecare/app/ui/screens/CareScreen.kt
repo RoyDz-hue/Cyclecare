@@ -315,7 +315,7 @@ private fun Composer(
     Surface(shadowElevation = 4.dp, tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = queryText,
-            onQueryChange = onQueryChange,
+            onValueChange = onQueryChange,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).testTag("care_query_input"),
             placeholder = { Text("Message CycleCare") },
             minLines = 1,

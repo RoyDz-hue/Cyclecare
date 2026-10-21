@@ -851,7 +851,7 @@ class CycleCareViewModel(
                     contextSummary = contextSummary,
                     allowRemoteAi = consentReady && authPreferences.isAiSharingAllowed,
                     conversationHistory = if (consentReady) current.careChatHistory
-                        .filter { isRemoteCareResponse(it.response.source) }.takeLast(3).flatMap {
+                        .filter { com.cyclecare.app.domain.ai.isRemoteCareResponse(it.response.source) }.takeLast(3).flatMap {
                             listOf(com.cyclecare.app.domain.ai.CareMemoryMessage("user", it.userQuery.take(600)),
                                 com.cyclecare.app.domain.ai.CareMemoryMessage("assistant", (it.response.summary + " " + it.response.whatText).take(600)))
                         } else emptyList(),
