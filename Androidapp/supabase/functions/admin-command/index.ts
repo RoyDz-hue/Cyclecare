@@ -133,7 +133,8 @@ async function executeStep(userClient: any, tool: string, args: any): Promise<{ 
           if (out.error) results.push({ target, ok: false, error: out.error.message });
           else results.push({ target, ok: true, result: out.data });
         }
-        return { ok: results.every((r: any) => r.ok), result: results };
+        const allOk = results.every((r: any) => r.ok);
+        return { ok: allOk, result: results, error: allOk ? undefined : (results.find((r: any) => !r.ok)?.error ?? "step failed") };
       }
       case "send_notice": {
         const audience = typeof args?.audience === "string" ? args.audience.toUpperCase() : (targets.length ? "CUSTOM_LIST" : "ALL");
