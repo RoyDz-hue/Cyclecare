@@ -1224,30 +1224,44 @@ ON CONFLICT (user_id) DO NOTHING;`);
                       </button>
                     );
                   })}
-                  <button
-                    type="button"
-                    disabled
-                    aria-disabled="true"
-                    className="btn btn-outline"
-                    title={HYBRID_PROVIDER_OPTION.disabledReason}
-                    style={{
-                      padding: 16,
-                      textAlign: 'left',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'flex-start',
-                      gap: 8,
-                      border: '1px solid var(--border-subtle)',
-                      background: 'rgba(0,0,0,0.18)',
-                      opacity: 0.62,
-                      cursor: 'not-allowed'
-                    }}
-                  >
-                    <strong>{HYBRID_PROVIDER_OPTION.name} · DISABLED</strong>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {HYBRID_PROVIDER_OPTION.disabledReason}
-                    </span>
-                  </button>
+                  {(() => {
+                    const hybridActive = aiConfig.provider === HYBRID_PROVIDER_OPTION.id;
+                    const anyChatKey = AI_PROVIDER_CATALOG.some(({ id }) => providerStatus.ai?.[id]?.key_present === true);
+                    const hybridReady = providerStatus.ai?.HYBRID?.available === true;
+                    const hybridReason = providerStatus.ai?.HYBRID?.reason || HYBRID_PROVIDER_OPTION.disabledReason;
+                    return (
+                      <button
+                        key={HYBRID_PROVIDER_OPTION.id}
+                        type="button"
+                        onClick={() => saveRuntimeConfig({ aiProvider: HYBRID_PROVIDER_OPTION.id })}
+                        disabled={isSaving || hybridActive || !anyChatKey}
+                        className="btn btn-outline"
+                        title={hybridActive ? 'Hybrid Bridge is active' : hybridReason}
+                        style={{
+                          padding: 16,
+                          textAlign: 'left',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          gap: 8,
+                          border: hybridActive ? '2px solid #4EBA88' : '1px solid var(--border-subtle)',
+                          background: hybridActive ? 'rgba(78, 186, 136, 0.12)' : 'rgba(0,0,0,0.18)',
+                          opacity: anyChatKey || hybridActive ? 1 : 0.62,
+                          cursor: anyChatKey && !isSaving && !hybridActive ? 'pointer' : 'not-allowed'
+                        }}
+                      >
+                        <strong>{HYBRID_PROVIDER_OPTION.name}{hybridActive ? ' · ACTIVE' : ''}</strong>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                          {providerStatusLoaded
+                            ? (hybridReady ? 'Bridge live · balanced rotation + failover + system fallback' : hybridReason)
+                            : 'Provider status unverified'}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                          {HYBRID_PROVIDER_OPTION.purpose}
+                        </span>
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
 

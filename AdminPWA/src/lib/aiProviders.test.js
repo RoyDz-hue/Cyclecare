@@ -17,13 +17,17 @@ test('retired provider IDs are absent from the Admin PWA selector', () => {
   assert.equal(AI_PROVIDER_IDS.includes('HUGGINGFACE'), false);
 });
 
-test('provider switch validation fails closed for missing, invalid, Hybrid and image-only providers', () => {
+test('provider switch validation fails closed for missing, invalid and image-only providers', () => {
   for (const value of [undefined, '', 'NOT_A_PROVIDER']) {
     assert.equal(validateAiProviderSelection(value).ok, false);
   }
-  assert.equal(validateAiProviderSelection('HYBRID').code, 'HYBRID_UNSUPPORTED');
   assert.equal(validateAiProviderSelection('POLLINATIONS').code, 'IMAGE_ONLY_PROVIDER');
-  assert.equal(HYBRID_PROVIDER_OPTION.disabledReason.includes('consent-safe'), true);
+});
+
+test('Hybrid Bridge is selectable once any chat provider key is saved', () => {
+  assert.equal(validateAiProviderSelection('HYBRID', { configuredIds: new Set() }).code, 'HYBRID_UNCONFIGURED');
+  assert.deepEqual(validateAiProviderSelection('hybrid', { configuredIds: new Set(['GEMINI']) }), { ok: true, provider: 'HYBRID' });
+  assert.deepEqual(validateAiProviderSelection('HYBRID'), { ok: true, provider: 'HYBRID' });
 });
 
 test('provider switch validation requires a server-recorded credential', () => {

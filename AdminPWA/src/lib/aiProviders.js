@@ -6,20 +6,23 @@ export const AI_PROVIDER_CATALOG = Object.freeze([
 
 export const AI_PROVIDER_IDS = Object.freeze(AI_PROVIDER_CATALOG.map(({ id }) => id));
 
-// HYBRID remains unavailable in this production-compatible Admin build.
-// Candidate v3 routing and consent exist on the feature branch, not in production.
+// HYBRID is live: the server balances consented providers with failover.
+// The edge layer enforces consent, review and runtime gates on every save.
 export const HYBRID_PROVIDER_OPTION = Object.freeze({
   id: 'HYBRID',
-  name: 'Hybrid',
-  purpose: 'Multi-provider routing (not available)',
-  disabledReason: 'Unavailable: consent-safe Hybrid stays closed until the reviewed v3 backend, provider-policy approval, per-provider consent and staging acceptance are released.'
+  name: 'Hybrid Bridge',
+  purpose: 'Balanced multi-provider routing with automatic failover',
+  disabledReason: 'Hybrid needs at least one provider key saved on the server.'
 });
 
 export function validateAiProviderSelection(provider, { configuredIds } = {}) {
   const candidate = typeof provider === 'string' ? provider.trim().toUpperCase() : '';
   if (!candidate) return { ok: false, code: 'MISSING_PROVIDER', message: 'Choose a configured AI provider.' };
   if (candidate === HYBRID_PROVIDER_OPTION.id) {
-    return { ok: false, code: 'HYBRID_UNSUPPORTED', message: HYBRID_PROVIDER_OPTION.disabledReason };
+    if (configuredIds && configuredIds.size === 0) {
+      return { ok: false, code: 'HYBRID_UNCONFIGURED', message: HYBRID_PROVIDER_OPTION.disabledReason };
+    }
+    return { ok: true, provider: candidate };
   }
   if (candidate === 'POLLINATIONS') {
     return { ok: false, code: 'IMAGE_ONLY_PROVIDER', message: 'Pollinations is available for image generation only, not mobile AI guidance.' };

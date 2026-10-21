@@ -41,8 +41,7 @@ internal fun serverSelectedSource(selectedValue: String): String {
         "COHERE" -> "Cohere"
         "GEMINI" -> "Gemini"
         "OPENROUTER" -> "OpenRouter"
-        // Hybrid is not a supported client contract until consent-safe
-        // multi-provider semantics are approved; keep the generic label.
+        // Hybrid routing is server-owned and invisible: keep the generic label.
         else -> null
     }
     return providerLabel?.let { "$REMOTE_CARE_SOURCE · $it" } ?: REMOTE_CARE_SOURCE
