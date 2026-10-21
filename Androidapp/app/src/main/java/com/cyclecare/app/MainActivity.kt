@@ -86,11 +86,14 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Health data must never leak into screenshots, screen recordings, or
-        // the recent-apps thumbnail.
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-            android.view.WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // the recent-apps thumbnail. Release keeps FLAG_SECURE always on; debug
+        // and slim sharing builds allow captures so issues can be documented.
+        if (!com.cyclecare.app.BuildConfig.DEBUG) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
         enableEdgeToEdge()
         pendingAuthLink.value = intent?.data
 

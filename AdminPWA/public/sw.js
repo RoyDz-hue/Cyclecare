@@ -1,5 +1,5 @@
 // CycleCare Admin PWA: cache only the static app shell, never account or API data.
-const CACHE_NAME = 'cyclecare-admin-v2'
+const CACHE_NAME = 'cyclecare-admin-v3'
 const SHELL_ASSETS = [
   '/',
   '/index.html',
