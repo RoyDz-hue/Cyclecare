@@ -140,7 +140,7 @@ serve(async (req: Request) => {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: [{ role: "user", parts: [{ text: userMessage }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.5, maxOutputTokens: 600 },
+        generationConfig: { responseMimeType: "application/json", temperature: 0.5, maxOutputTokens: 2000 },
       }),
     });
     if (!response.ok) return jsonResponse({ success: false, error: "Question provider unavailable" }, 502);

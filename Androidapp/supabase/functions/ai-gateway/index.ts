@@ -129,7 +129,7 @@ async function requestProvider(
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemInstruction }] },
             contents: [{ role: "user", parts: [{ text: userMessage }] }],
-            generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 700 },
+            generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 3000 },
           }),
         });
         lastStatus = response.status;
