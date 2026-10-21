@@ -10,6 +10,7 @@ data class LocalizedCoinPackage(
     val coins: Long,
     val bonusCoins: Long,
     val priceDisplay: String,
+    val chargeDisplay: String? = null,
     val isHeroPackage: Boolean = false,
     val badge: String? = null,
     val description: String
@@ -82,14 +83,19 @@ object CurrencyLocaleManager {
      * fallback). Kenyan devices see KES; every other region sees USD.
      */
     fun localizePackages(packages: List<CoinPurchasePackage>, context: Context? = null): List<LocalizedCoinPackage> {
-        val kenya = detectCountryCode(context) == "KE"
+        val region = detectCountryCode(context)
+        val kenya = region == "KE"
+        val localPrices = context?.let { RemoteLocalPricing.cached(it, region) }
         return packages.map { pkg ->
+            val local = localPrices?.get(pkg.id)
             LocalizedCoinPackage(
                 id = pkg.id,
                 title = pkg.title,
                 coins = pkg.coins,
                 bonusCoins = pkg.bonusCoins,
-                priceDisplay = if (kenya && pkg.priceKes > 0L) "KES ${String.format("%,d", pkg.priceKes)}" else pkg.priceUsd,
+                priceDisplay = local?.displayText
+                    ?: if (kenya && pkg.priceKes > 0L) "KES ${String.format("%,d", pkg.priceKes)}" else pkg.priceUsd,
+                chargeDisplay = local?.chargeText,
                 isHeroPackage = pkg.tag != null,
                 badge = pkg.tag,
                 description = pkg.description

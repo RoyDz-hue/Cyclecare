@@ -187,7 +187,10 @@ fun UnifiedGamifiedCheckoutDialog(
                     PackageSummary(
                         pkg = pkg,
                         selectedOption = selectedOption,
-                        isEastAfricaRegion = isEastAfricaRegion
+                        isEastAfricaRegion = isEastAfricaRegion,
+                        chargeLine = com.cyclecare.app.data.economy.RemoteLocalPricing
+                            .cached(context, com.cyclecare.app.data.economy.CurrencyLocaleManager.detectCountryCode(context))
+                            ?.get(pkg.id)?.takeIf { it.approx }?.chargeText
                     )
 
                     when {
@@ -392,7 +395,8 @@ private fun CheckoutHeader(
 private fun PackageSummary(
     pkg: CoinPurchasePackage,
     selectedOption: PaymentOptionType,
-    isEastAfricaRegion: Boolean
+    isEastAfricaRegion: Boolean,
+    chargeLine: String? = null
 ) {
     val amount = if (selectedOption == PaymentOptionType.MPESA) {
         if (pkg.priceKes > 0L) "KES ${pkg.priceKes}" else "Price unavailable"
@@ -457,6 +461,13 @@ private fun PackageSummary(
                 if (selectedOption != PaymentOptionType.MPESA && isEastAfricaRegion && pkg.priceKes > 0L) {
                     Text(
                         "M-Pesa KES ${pkg.priceKes}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (chargeLine != null) {
+                    Text(
+                        chargeLine,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

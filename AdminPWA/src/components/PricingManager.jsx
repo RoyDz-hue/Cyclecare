@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Coins, CreditCard, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react';
 import { updateAppConfig, validateCoinPackages, validateMultipliers } from '../lib/adminControl.js';
 import { adminResultMessage } from '../lib/supabaseAdmin.js';
+import FxRatesCard from './FxRatesCard.jsx';
 
 const blankPackage = () => ({ id: '', title: '', tag: '', isHero: false, coins: 100, bonusCoins: 0, priceKes: 0, priceUsd: 0 });
 
@@ -165,6 +166,12 @@ export default function PricingManager({ controlData, supabaseConfig, onSessionC
       <button type="button" className="btn btn-outline btn-block" onClick={onRefresh}>
         <RefreshCw size={16} /> Reload from Supabase
       </button>
-    </div>
+          <FxRatesCard
+        supabaseConfig={supabaseConfig}
+        onSessionChange={onSessionChange}
+        showNotification={showNotification}
+        sampleUsdPrice={packages?.[0]?.priceUsd ?? 0.99}
+      />
+</div>
   );
 }

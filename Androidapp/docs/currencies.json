@@ -1,0 +1,12 @@
+{
+  "comment": "Currency registry seed. Supabase fx_rates is the live source; this file seeds it and is the offline reference. Only is_active currencies show local prices; admins enable/disable and override rates in the Admin PWA Pricing tab.",
+  "currencies": [
+    { "code": "USD", "name": "US Dollar", "symbol": "$", "decimals": 2, "countries": ["US"] },
+    { "code": "KES", "name": "Kenyan Shilling", "symbol": "KSh", "decimals": 0, "countries": ["KE"] },
+    { "code": "UGX", "name": "Ugandan Shilling", "symbol": "USh", "decimals": 0, "countries": ["UG"] },
+    { "code": "TZS", "name": "Tanzanian Shilling", "symbol": "TSh", "decimals": 0, "countries": ["TZ"] },
+    { "code": "NGN", "name": "Nigerian Naira", "symbol": "NGN", "decimals": 2, "countries": ["NG"] },
+    { "code": "EUR", "name": "Euro", "symbol": "EUR", "decimals": 2, "countries": ["DE", "FR", "IT", "ES", "NL", "BE", "AT", "PT", "FI", "IE", "GR"] },
+    { "code": "GBP", "name": "British Pound", "symbol": "GBP", "decimals": 2, "countries": ["GB"] }
+  ]
+}

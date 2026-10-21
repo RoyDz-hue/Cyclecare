@@ -88,12 +88,16 @@ fun VaultEconomyScreen(
 ) {
     val context = LocalContext.current
     var storePackages by remember { mutableStateOf(com.cyclecare.app.data.economy.RemoteCoinPackages.active(context)) }
+    var pricingTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         if (com.cyclecare.app.data.economy.RemoteCoinPackages.refresh(context)) {
             storePackages = com.cyclecare.app.data.economy.RemoteCoinPackages.active(context)
         }
+        if (com.cyclecare.app.data.economy.RemoteLocalPricing.refresh(context, CurrencyLocaleManager.detectCountryCode(context))) {
+            pricingTick += 1
+        }
     }
-    val localizedPackages = remember(storePackages) { CurrencyLocaleManager.localizePackages(storePackages, context) }
+    val localizedPackages = remember(storePackages, pricingTick) { CurrencyLocaleManager.localizePackages(storePackages, context) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) } // 0 = Artifacts, 1 = Frames & Themes, 2 = Coin Store
     var showTransferDialog by remember { mutableStateOf(false) }
