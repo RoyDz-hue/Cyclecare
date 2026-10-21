@@ -319,7 +319,7 @@ private fun Composer(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).testTag("care_query_input"),
             placeholder = { Text("Message CycleCare") },
             minLines = 1,
-            maxLines = 5,
+            maxLines = 6,
             supportingText = { Text("${queryText.length}/1200") },
             trailingIcon = {
                 IconButton(onClick = onSend, enabled = canSend, modifier = Modifier.testTag("care_submit_button")) {

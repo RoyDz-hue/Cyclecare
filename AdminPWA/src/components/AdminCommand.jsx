@@ -122,13 +122,22 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
         ))}
       </div>
 
-      <form style={{ display: 'flex', gap: 8, marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); runPrompt(prompt); }}>
-        <input
+      <form style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'flex-end' }} onSubmit={(e) => { e.preventDefault(); runPrompt(prompt); }}>
+        <textarea
+          ref={(el) => {
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+          }}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. Show the most inactive users, or gift the top member 500 coins"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runPrompt(prompt); }
+          }}
+          rows={2}
+          placeholder="e.g. Show the most inactive users, or gift the top member 500 coins (Enter sends, Shift+Enter for a new line)"
           aria-label="Admin command prompt"
-          style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(154,164,192,0.35)', background: 'rgba(10,14,30,0.55)', color: 'inherit', fontSize: 14 }}
+          style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: 16, border: '1px solid rgba(154,164,192,0.35)', background: 'rgba(10,14,30,0.55)', color: 'inherit', fontSize: 15, lineHeight: 1.45, resize: 'none', overflowY: 'auto', fontFamily: 'inherit' }}
           disabled={busy}
         />
         <button type="submit" className="btn btn-primary" disabled={busy || !prompt.trim()} aria-label="Run command">

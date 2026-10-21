@@ -283,10 +283,11 @@ fun GuidedChatsScreen(
                             OutlinedTextField(
                                 value = draftText,
                                 onValueChange = { if (it.length <= 500) draftText = it },
-                                placeholder = { Text("Share a reflection (max 500 chars)…", style = MaterialTheme.typography.bodySmall) },
+                                placeholder = { Text("Message the circle (max 500 chars)…", style = MaterialTheme.typography.bodySmall) },
                                 modifier = Modifier.weight(1f),
-                                maxLines = 3,
-                                shape = RoundedCornerShape(20.dp)
+                                minLines = 1,
+                                maxLines = 6,
+                                shape = RoundedCornerShape(24.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             IconButton(
@@ -422,10 +423,7 @@ private fun GuidedMessageRow(
                     }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                com.cyclecare.app.ui.components.ChatText(text = message.content)
             }
         }
     }
