@@ -83,7 +83,10 @@ export function adminResultMessage(message, fallback) {
 }
 
 function storage() {
-  return typeof window !== 'undefined' ? window.sessionStorage : null;
+  // localStorage (not sessionStorage): the installed PWA hands Google sign-in
+  // to the browser and back, and sessionStorage is dropped when the PWA view
+  // is recreated - which used to break the PKCE verifier and the session.
+  return typeof window !== 'undefined' ? window.localStorage : null;
 }
 
 export function getAdminSession() {
@@ -157,7 +160,7 @@ export async function finishGoogleOAuth(config, authCode) {
   if (!config?.url || !config?.anonKey) throw new Error('CycleCare Admin is temporarily unavailable. Please try again later.');
   const store = storage();
   const verifier = store?.getItem(OAUTH_VERIFIER_KEY);
-  if (!verifier) throw new Error('Google sign-in expired. Start again from the CycleCare Admin login page.');
+  if (!verifier) throw new Error('Google sign-in could not be completed in this window. If you approved sign-in in your browser, come back here and tap Continue with Google once more.');
 
   let response;
   try {

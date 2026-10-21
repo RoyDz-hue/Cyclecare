@@ -334,6 +334,15 @@ export default function App() {
     }
   };
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+
   if (!SUPABASE_CONFIG.url || !SUPABASE_CONFIG.anonKey) {
     return (
       <main className="auth-screen">
@@ -378,7 +387,6 @@ export default function App() {
   }
 
   const inMoreFlow = MORE_SCREENS.some((s) => s.id === activeTab);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const activePrimary = inMoreFlow ? 'more' : activeTab;
 
   const navButton = (item, layout) => {
@@ -396,13 +404,6 @@ export default function App() {
       </button>
     );
   };
-
-  useEffect(() => {
-    if (!drawerOpen) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [drawerOpen]);
 
   const drawerItem = (item) => {
     const isActive = activeTab === item.id || (item.id === 'more' && inMoreFlow);

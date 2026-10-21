@@ -17,6 +17,7 @@ function setup(t) {
   const events = [];
   globalThis.window = {
     sessionStorage: { getItem: k => store.get(k) || null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) },
+    localStorage: { getItem: k => store.get(k) || null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) },
     dispatchEvent: e => events.push(e.type)
   };
   clearAdminSession();
