@@ -32,27 +32,25 @@ data class CareResponse(
 
 data class CareMemoryMessage(val role: String, val content: String)
 
-internal const val REMOTE_CARE_SOURCE = "CycleCare AI"
+internal const val REMOTE_CARE_SOURCE = "CycleCare Expert"
 
-/** The server, not Android, chooses the cloud provider. */
-internal fun serverSelectedSource(selectedValue: String): String {
-    val selected = selectedValue.trim().uppercase().removePrefix("CYCLECARE AI · ")
-    val providerLabel = when (selected) {
-        "COHERE" -> "Cohere"
-        "GEMINI" -> "Gemini"
-        "OPENROUTER" -> "OpenRouter"
-        // Hybrid routing is server-owned and invisible: keep the generic label.
-        else -> null
-    }
-    return providerLabel?.let { "$REMOTE_CARE_SOURCE · $it" } ?: REMOTE_CARE_SOURCE
-}
+/** Pre-rebrand server label, still accepted so mixed-version fleets stay classified. */
+internal const val LEGACY_REMOTE_CARE_SOURCE = "CycleCare AI"
+
+/**
+ * The server, not Android, chooses the cloud provider - and provider or
+ * routing details never surface in the app. Every server-selected source
+ * normalizes to the single user-facing label.
+ */
+internal fun serverSelectedSource(selectedValue: String): String = REMOTE_CARE_SOURCE
 
 internal fun serverSelectedSource(data: JSONObject): String = serverSelectedSource(
     data.optString("provider", "").ifBlank { data.optString("source", "") }
 )
 
 internal fun isRemoteCareResponse(source: String): Boolean =
-    source == REMOTE_CARE_SOURCE || source.startsWith("$REMOTE_CARE_SOURCE · ")
+    (source == REMOTE_CARE_SOURCE || source.startsWith("$REMOTE_CARE_SOURCE · ")) ||
+        (source == LEGACY_REMOTE_CARE_SOURCE || source.startsWith("$LEGACY_REMOTE_CARE_SOURCE · "))
 
 internal data class CareRequestPrivacySnapshot(
     val owner: String,
@@ -143,7 +141,7 @@ object CareAiService {
                 val receipts = manifest?.providers?.mapNotNull { p -> authPreferences.processorReceipt(p.id)?.takeIf { AiProcessorConsentService(authPreferences).cloudReceiptIsCurrent(manifest, p.id) } }.orEmpty()
                 // Do not trust a cached toggle: every cloud request needs a fresh manifest and receipt.
                 if (manifest == null || receipts.isEmpty()) return@withContext CareResponse(
-                    summary = "Online explanation unavailable", whatText = "Online AI processing is unavailable until current processor consent is confirmed.",
+                    summary = "Online explanation unavailable", whatText = "Online expert answers are unavailable until your consent is confirmed.",
                     understandText = article?.understandText ?: "Local guidance remains available.", careText = article?.careText ?: "Try the local care guidance.",
                     watchText = article?.watchText ?: "Notice symptoms that are new, persistent or worsening.", escalateText = article?.escalateText ?: "Seek urgent medical help for severe, sudden or worsening symptoms.",
                     safetyAlert = if (safetyEval.level != SafetyLevel.LOW) safetyEval else null, source = "Local guidance · online explanation unavailable"

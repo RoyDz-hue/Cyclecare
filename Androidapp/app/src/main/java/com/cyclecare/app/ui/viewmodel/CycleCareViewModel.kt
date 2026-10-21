@@ -692,7 +692,7 @@ class CycleCareViewModel(
             val deleted = com.cyclecare.app.domain.ai.CarePrivacyService.deleteCloudHealthCopy(token)
             if (authPreferences.effectiveUserId != owner || authPreferences.sessionGeneration != session) return@launch
             _uiState.value = _uiState.value.copy(isDeletingCloudHealth = false,
-                cloudHealthDeletionMessage = if (deleted) "Cloud health records were deleted. Local records remain; sync is off. Account, payment, economy and audit records are retained. Provider-side AI records are not deleted by this action."
+                cloudHealthDeletionMessage = if (deleted) "Cloud health records were deleted. Local records remain; sync is off. Account, payment, economy and audit records are retained. Provider-side processing records are not deleted by this action."
                     else "Cloud deletion was not confirmed. Sync remains off. The secure deletion service may not be deployed or the connection failed; retry before assuming deletion succeeded.")
         }
     }
@@ -734,7 +734,7 @@ class CycleCareViewModel(
         // Enabling is explicit but never optimistic: require a fresh eligible manifest and server receipt.
         viewModelScope.launch {
             val token = authPreferences.accessToken
-            val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.cyclecare.app.domain.ai.ConsentResult.Failure("Sign in to enable online AI")
+            val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.cyclecare.app.domain.ai.ConsentResult.Failure("Sign in to enable your CycleCare Expert")
             val manifest = (manifestResult as? com.cyclecare.app.domain.ai.ConsentResult.Success)?.manifest
             val result = if (manifest != null) processorConsentService.setConsent(token!!, manifest, provider, true) else manifestResult
             if (owner != authPreferences.effectiveUserId) return@launch
@@ -850,7 +850,7 @@ class CycleCareViewModel(
                     contextSummary = contextSummary,
                     allowRemoteAi = consentReady && authPreferences.isAiSharingAllowed,
                     conversationHistory = if (consentReady) current.careChatHistory
-                        .filter { it.response.source == "CycleCare AI" }.takeLast(3).flatMap {
+                        .filter { isRemoteCareResponse(it.response.source) }.takeLast(3).flatMap {
                             listOf(com.cyclecare.app.domain.ai.CareMemoryMessage("user", it.userQuery.take(600)),
                                 com.cyclecare.app.domain.ai.CareMemoryMessage("assistant", (it.response.summary + " " + it.response.whatText).take(600)))
                         } else emptyList(),

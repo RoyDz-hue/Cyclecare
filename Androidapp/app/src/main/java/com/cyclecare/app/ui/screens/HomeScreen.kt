@@ -577,7 +577,7 @@ fun HomeScreen(
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag("premium_direct_ai_fab"),
             containerColor = MaterialTheme.colorScheme.primary
         ) {
-            Icon(Icons.Default.AutoAwesome, contentDescription = "Open personal AI chat", tint = MaterialTheme.colorScheme.onPrimary)
+            Icon(Icons.Default.AutoAwesome, contentDescription = "Chat with your CycleCare Expert", tint = MaterialTheme.colorScheme.onPrimary)
         }
     }
 
@@ -630,7 +630,7 @@ fun HomeScreen(
     if (showPremiumChatDialog) {
         AlertDialog(
             onDismissRequest = { showPremiumChatDialog = false },
-            title = { Text("Personal AI chat") },
+            title = { Text("CycleCare Expert") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Your question is sent with your saved cycle preferences and recent entries to tailor the guidance. This is educational support, not a diagnosis.", style = MaterialTheme.typography.bodySmall)

@@ -660,12 +660,12 @@ fun SettingsScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Text(text = "AI processing", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(text = "Expert answers", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Allow AI answers",
+                                    text = "Allow expert answers",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(

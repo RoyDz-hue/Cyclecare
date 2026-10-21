@@ -14,37 +14,35 @@ import org.robolectric.annotation.Config
 class CareAiSourceContractTest {
     @Test
     fun deployedCycleCareAiSourceIsRecognizedAndCuratedFallbackIsNot() {
-        assertTrue(isRemoteCareResponse("CycleCare AI"))
-        assertTrue(isRemoteCareResponse("CycleCare AI · Cohere"))
+        assertTrue(isRemoteCareResponse("CycleCare Expert"))
+        assertTrue(isRemoteCareResponse("CycleCare Expert · Cohere"))
         assertFalse(isRemoteCareResponse("Curated Clinical Knowledge"))
         assertFalse(isRemoteCareResponse("Edge AI Gateway"))
     }
 
     @Test
-    fun providerLabelComesOnlyFromServerMetadataAndHybridStaysGeneric() {
-        assertEquals("CycleCare AI · Gemini", serverSelectedSource("GEMINI"))
-        assertEquals("CycleCare AI · OpenRouter", serverSelectedSource("OPENROUTER"))
-        assertEquals("CycleCare AI", serverSelectedSource("HYBRID"))
-        assertEquals("CycleCare AI", serverSelectedSource("POLLINATIONS"))
-        assertEquals("CycleCare AI", serverSelectedSource("arbitrary-provider"))
+    fun serverMetadataNeverLeaksProviderOrRoutingDetails() {
+        for (value in listOf("GEMINI", "OPENROUTER", "COHERE", "HYBRID", "POLLINATIONS", "arbitrary-provider")) {
+            assertEquals("CycleCare Expert", serverSelectedSource(value))
+        }
     }
 
     @Test
-    fun actualGatewayRootSourceIsUsedRatherThanNestedAnswerData() {
-        for ((provider, label) in listOf("COHERE" to "Cohere", "GEMINI" to "Gemini", "OPENROUTER" to "OpenRouter")) {
+    fun actualGatewayRootSourceIsNormalizedRatherThanNestedAnswerData() {
+        for (provider in listOf("COHERE", "GEMINI", "OPENROUTER")) {
             val envelope = JSONObject().put("success", true)
-                .put("source", "CycleCare AI · $provider")
+                .put("source", "CycleCare Expert · $provider")
                 .put("data", JSONObject().put("summary", "Educational answer"))
-            assertEquals("CycleCare AI · $label", serverSelectedSource(envelope))
+            assertEquals("CycleCare Expert", serverSelectedSource(envelope))
         }
     }
 
     @Test
-    fun unsupportedServerMetadataCannotClaimHybridOrAnArbitraryProvider() {
-        for (source in listOf("CycleCare AI · HYBRID", "CycleCare AI · POLLINATIONS", "CycleCare AI · COHERE · injected")) {
-            assertEquals("CycleCare AI", serverSelectedSource(JSONObject().put("source", source)))
-        }
-        assertEquals("CycleCare AI", serverSelectedSource(JSONObject()))
-        assertEquals("CycleCare AI · Cohere", serverSelectedSource(JSONObject().put("provider", "COHERE")))
+    fun legacyPreRebrandServerLabelsStayClassifiedAndNormalize() {
+        assertTrue(isRemoteCareResponse("CycleCare AI"))
+        assertTrue(isRemoteCareResponse("CycleCare AI · Cohere"))
+        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject().put("source", "CycleCare AI · Cohere")))
+        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject().put("provider", "COHERE")))
+        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject()))
     }
 }
