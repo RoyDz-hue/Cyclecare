@@ -118,8 +118,8 @@ async function requestProvider(
   try {
     let response: Response;
     if (provider === "GEMINI") {
-      const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
-      const candidateModels = [preferredModel, "gemini-3.8-flash"].filter((m, i, arr) => arr.indexOf(m) === i);
+      const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
+      const candidateModels = [preferredModel, "gemini-3.6-flash"].filter((m, i, arr) => arr.indexOf(m) === i);
       let lastStatus = 500;
       for (const model of candidateModels) {
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {

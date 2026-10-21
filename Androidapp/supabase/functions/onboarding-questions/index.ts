@@ -132,7 +132,7 @@ serve(async (req: Request) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
-    const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(preferredModel)}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
