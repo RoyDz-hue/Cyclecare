@@ -37,3 +37,8 @@ verify_jwt = true
 # and independently verifies PayPal's signature plus stored order/capture evidence.
 [functions.paypal-webhook]
 verify_jwt = false
+
+# Onboarding runs before guests hold a session JWT. The handler requires the
+# publishable apikey instead and never touches user data.
+[functions.onboarding-questions]
+verify_jwt = false

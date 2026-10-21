@@ -35,10 +35,6 @@
                     android:pathPrefix="/callback" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".RemoteDebugActivity"
-            android:exported="false"
-            android:label="Remote debug" />
     </application>
 
 </manifest>

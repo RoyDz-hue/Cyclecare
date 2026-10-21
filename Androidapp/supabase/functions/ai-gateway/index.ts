@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { isAccountRestricted, isConfiguredSecret } from "../_shared/payments.ts";
 import { normalizeAiProvider, SUPPORTED_AI_PROVIDERS, validateAiRequest } from "../_shared/request-contract.js";
@@ -338,3 +338,4 @@ serve(async (req: Request) => {
     return jsonResponse({ success: false, fallback: true, error: "AI guidance is temporarily unavailable" }, 503);
   }
 });
+

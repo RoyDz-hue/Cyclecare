@@ -6,15 +6,15 @@ This repository is organized into two primary applications:
 
 ```
 Cyclecare/
-├── Androidapp/     # Native Android client (Jetpack Compose, Room v8, SQLCipher, Supabase backend)
-└── AdminPWA/       # Admin Progressive Web App (React, Vite, Tailwind CSS, moderation & telemetry)
+├── Androidapp/     # Native Android client (Jetpack Compose, Room 2.7, SQLCipher, Supabase backend)
+└── AdminPWA/       # Admin Progressive Web App (React, Vite, hand-written CSS, moderation & telemetry)
 ```
 
 ---
 
 ## 📱 Android Application (`Androidapp/`)
 
-Native Android client built with Kotlin, Jetpack Compose, Material Design 3, Room v8 encrypted with SQLCipher via Android Keystore, and offline-first intelligence engines.
+Native Android client built with Kotlin, Jetpack Compose, Material Design 3, Room 2.7 encrypted with SQLCipher via Android Keystore, and offline-first intelligence engines.
 
 ### Directory Overview
 - `app/` — Main Android application source code, UI screens, domain engines, and repositories.
@@ -65,3 +65,4 @@ npm run build
 - **No Diagnostic Claims:** CycleCare is not a medical device, contraceptive, or diagnostic tool.
 - **Local-First Privacy:** Health metrics are encrypted locally with SQLCipher using keys wrapped by the hardware-backed Android Keystore.
 - **Server Authority:** Financial ledger transactions, provider keys, and moderation permissions are enforced strictly by Supabase PostgreSQL RLS and authenticated Edge Functions. Client applications never hold service-role keys.
+

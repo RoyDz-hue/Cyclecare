@@ -8,7 +8,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 4173,
     strictPort: true,
-    allowedHosts: ['4173-i1bmche02b788oev4wqih-efa99509.us2.manus.computer']
+    // Local preview only; the retired toolchain preview host was removed.
   },
   build: {
     outDir: 'dist',

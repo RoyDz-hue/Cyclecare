@@ -8,7 +8,7 @@ This package contains the integrated 5-sprint remediation across Android, Supaba
 
 | Project | Implemented State |
 |---|---|
-| Android Client | Kotlin 2.x, Jetpack Compose, Room v8, 5-destination navigation (`TODAY`, `CYCLE`, `ASK`, `YOU`, `SPACE`), purged economy terminology (`Earn/Atelier`), offline-first engines |
+| Android Client | Kotlin 2.x, Jetpack Compose, Room 2.7, 5-destination navigation (`TODAY`, `CYCLE`, `ASK`, `YOU`, `SPACE`), purged economy terminology (`Earn/Atelier`), offline-first engines |
 | Supabase Backend | 18 migrations applied/defined, double-entry `coin_transactions` ledger, `daily_logs` v2 fields, `profiles` identity extensions, `chat_topics`/`chat_messages`, `safety_events`, `admin-chat-moderation` edge function |
 | Admin PWA | React + TypeScript (Vite bundle verified), Feature Flags (`v3_sync_enabled`), Clinical Safety Audit, Circles Moderation, Coin Ledger, Sync Health telemetry |
 
@@ -18,7 +18,7 @@ The repository is a cleaned, integrated source tree. Old Markdown reports are co
 
 CycleCare provides local menstrual-health tracking, uncertain calendar estimates and optional server-routed educational information. It is **not** diagnosis, contraception, pregnancy confirmation, emergency dispatch or a substitute for professional care.
 
-- **Android:** Kotlin/Compose, Room v8, owner-scoped SQLCipher databases, Android Keystore-backed key protection, WorkManager, and API 24 compatibility through desugaring. Private app backup/device transfer is disabled.
+- **Android:** Kotlin/Compose, Room 2.7, owner-scoped SQLCipher databases, Android Keystore-backed key protection, WorkManager, and API 24 compatibility through desugaring. Private app backup/device transfer is disabled.
 - **Backend:** Supabase Auth, PostgreSQL/RLS and Edge Functions. The server owns provider selection, authorization, authoritative consent, coin ledger recording, and payment settlement; Android is not a trusted settlement authority.
 - **Admin:** React/Vite PWA using authenticated, server role-checked REST/RPC endpoints. Provider, merchant and service-role credentials never belong in its browser bundle.
 
