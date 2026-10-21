@@ -13,6 +13,7 @@ import SyncHealthDashboard from './components/SyncHealthDashboard';
 import PricingManager from './components/PricingManager';
 import CommunityControl from './components/CommunityControl';
 import SignalsDashboard from './components/SignalsDashboard';
+import AdminCommand from './components/AdminCommand.jsx';
 import {
   adminJson, adminResultMessage, clearAdminSession, finishGoogleOAuth, getAdminSession,
   saveAdminSession, startGoogleOAuth, resolveSupabaseConfig, adminAuthErrorMessage
@@ -445,6 +446,15 @@ export default function App() {
               <p style={{ color: '#ff9eae', fontSize: 13 }}>{dataLoadError}</p>
               <button type="button" className="btn btn-outline" style={{ marginTop: 10 }} onClick={fetchSupabaseData}>Retry</button>
             </div>
+          )}
+
+          {activeTab === 'home' && (
+            <AdminCommand
+              supabaseConfig={SUPABASE_CONFIG}
+              onSessionChange={onAdminSessionChange}
+              showNotification={showNotification}
+              insights={controlData?.member_insights}
+            />
           )}
 
           {activeTab === 'home' && <SignalsDashboard controlData={controlData} dataLoadState={dataLoadState} />}
