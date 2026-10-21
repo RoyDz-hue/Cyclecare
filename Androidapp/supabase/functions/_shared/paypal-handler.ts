@@ -1,3 +1,4 @@
+import { paymentRoutingBlockResponse } from "./payment-routing.ts";
 import { COIN_PACKAGES } from "./payments.ts";
 import { boundedJson, boundedResponseJson, fetchDeadline } from "./payment-request.ts";
 import { moneyMinor, PayPalReadOnlyApi, reconcilePayPalPayment, type PaymentEvidence, type StoredPayPalPayment, type VerifiedPayPalEvent } from "./paypal-reconciliation.ts";
@@ -66,6 +67,13 @@ export function createPayPalHandler(kind: "create" | "capture" | "reconcile" | "
       const owner = kind === "webhook" ? null : await dependencies.authenticate(req);
       if (kind !== "webhook" && !owner) return reply({ error: "Sign in is required." }, 401);
       const body = await boundedJson<Record<string, any>>(req, kind === "webhook" ? 65_536 : 2048);
+      if (kind === "create") {
+        // Routing registry gate: PayPal wallet -> PAYPAL_STANDARD, ACDC card
+        // entry stays closed; regions/currency enforced server-side.
+        const blocked = await paymentRoutingBlockResponse(body.is_acdc_card === true ? "card" : "paypal",
+          typeof body.region === "string" ? body.region : null, "USD");
+        if (blocked) return blocked;
+      }
       if (kind === "create" && (typeof body.package_id !== "string" || !Object.hasOwn(COIN_PACKAGES, body.package_id))) return reply({ error: "Unknown coin package." }, 400);
       if (["capture", "reconcile"].includes(kind) && (typeof body.external_reference !== "string" || !body.external_reference || body.external_reference.length > 128)) return reply({ error: "Invalid transaction reference." }, 400);
       if (!dependencies.released()) return reply({ error: "Payments are disabled pending independent provider and settlement acceptance.", status: "unavailable" }, 503);
@@ -88,7 +96,7 @@ export function createPayPalHandler(kind: "create" | "capture" | "reconcile" | "
       }
       if (await dependencies.restricted(config, owner!)) return reply({ error: "This account cannot perform payment operations." }, 403);
       if (kind === "create") {
-        if (Object.keys(body).some(key => !["package_id", "checkout_request_id", "is_acdc_card"].includes(key)) || body.is_acdc_card || typeof body.checkout_request_id !== "string" || !UUID.test(body.checkout_request_id)) return reply({ error: "A valid stable checkout request ID is required; direct card entry is disabled." }, 400);
+        if (Object.keys(body).some(key => !["package_id", "checkout_request_id", "is_acdc_card", "region"].includes(key)) || body.is_acdc_card || typeof body.checkout_request_id !== "string" || !UUID.test(body.checkout_request_id)) return reply({ error: "A valid stable checkout request ID is required; direct card entry is disabled." }, 400);
         const pkg = typeof body.package_id === "string" && Object.hasOwn(COIN_PACKAGES, body.package_id) ? COIN_PACKAGES[body.package_id] : undefined;
         if (!pkg) return reply({ error: "Unknown coin package." }, 400);
         const external = `CC_${owner}_${body.checkout_request_id.toLowerCase()}`;

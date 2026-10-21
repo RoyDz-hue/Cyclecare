@@ -6,6 +6,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
 import { isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
+import { AGENT_GUIDES, GUIDE_BANNED_PROMO, recordAiRun, scanGuideMessage } from "../_shared/ai-core.ts";
 
 type Persona = {
   persona_id: string; display_name: string; persona_prompt: string;
@@ -16,7 +17,7 @@ type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
 const DAILY_LLM_BUDGET = 40;
 const MAX_MESSAGE_CHARS = 480;
 const SENSITIVE_HINTS = ["pregnan", "miscarr", "heavy bleed", "soaking", "faint", "severe", "scared", "terrified", "emergency", "infection", "assault"];
-const BANNED_PROMO = [/hurry/i, /last chance/i, /limited time only/i, /don'?t miss/i, /fixed my/i, /cured/i, /guarantee/i, /must buy/i, /everyone is buying/i];
+const BANNED_PROMO = GUIDE_BANNED_PROMO; // shared AI core copy
 
 function fnv1a(input: string): number {
   let hash = 0x811c9dc5;
@@ -157,8 +158,16 @@ serve(async (req: Request) => {
 
       const raw = await generate(admin, persona, system, user);
       const message = raw ? cleanMessage(raw) : null;
-      if (!message) continue;
-      if (BANNED_PROMO.some((rx) => rx.test(message))) { console.error("promo filter blocked", persona.persona_id); continue; }
+      if (!message) {
+        void recordAiRun(admin, { agent: AGENT_GUIDES, status: "failed", errorKind: "no_output", meta: { persona: persona.persona_id, topic: topic.title } });
+        continue;
+      }
+      const wisdom = scanGuideMessage(message);
+      if (!wisdom.ok) {
+        console.error("guide wisdom filter blocked", persona.persona_id, wisdom.reasons);
+        void recordAiRun(admin, { agent: AGENT_GUIDES, status: "filtered", errorKind: wisdom.reasons.join(","), meta: { persona: persona.persona_id, topic: topic.title } });
+        continue;
+      }
 
       const { error: insertError } = await admin.from("chat_messages").insert({
         topic_id: topic.id, persona_id: persona.persona_id, sender_alias: persona.display_name, content: message,
@@ -166,6 +175,7 @@ serve(async (req: Request) => {
       if (insertError) { console.error("insert failed", persona.persona_id, insertError.message); continue; }
       const promoUsed = promoEligible && /premium|theme|avatar|frame|badge|coin/i.test(message);
       if (promoUsed) await admin.from("persona_promo_log").insert({ persona_id: persona.persona_id, topic_id: topic.id });
+      void recordAiRun(admin, { agent: AGENT_GUIDES, status: "posted", meta: { persona: persona.persona_id, topic: topic.title, promo: promoUsed } });
 
       // Recursive learning: remember who was here and what they talked about.
       const memberIds = [...new Set(recentAsc.filter((m: any) => m.user_id).map((m: any) => m.user_id as string))].slice(0, 10);
