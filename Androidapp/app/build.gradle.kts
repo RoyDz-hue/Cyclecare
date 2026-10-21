@@ -30,6 +30,16 @@ android {
     }
   }
 
+  splits {
+    abi {
+      // Only active for -PslimApk sharing builds; normal builds stay universal.
+      isEnable = project.hasProperty("slimApk")
+      reset()
+      include("arm64-v8a")
+      isUniversalApk = false
+    }
+  }
+
   buildTypes {
     release {
       isCrunchPngs = false
@@ -51,6 +61,14 @@ android {
         "\"" + providers.gradleProperty("cyclecare.debugBridgeUrl").orElse("").get() + "\""
       )
       // Uses default Android auto-generated debug keystore
+    }
+    // Slim sharing build: minified debug-signed APK for direct install.
+    // Build with: ./gradlew assembleSlim -PslimApk  (arm64-v8a only, ~half the size)
+    create("slim") {
+      initWith(getByName("debug"))
+      isMinifyEnabled = true
+      isShrinkResources = true
+      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
   compileOptions {

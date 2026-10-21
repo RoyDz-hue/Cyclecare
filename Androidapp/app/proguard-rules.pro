@@ -43,3 +43,6 @@
 
 # Domain engines run reflectively in diagnostics/tests; keep names stable.
 -keepnames class com.cyclecare.app.domain.** { *; }
+
+# Tink references error_prone annotations that are compile-time only.
+-dontwarn com.google.errorprone.annotations.**
