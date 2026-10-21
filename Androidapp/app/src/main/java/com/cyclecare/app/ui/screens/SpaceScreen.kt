@@ -64,7 +64,8 @@ fun SpaceScreen(
                         repository = viewModel.guidedChatsRepo,
                         onNavigateBack = { /* Stay in Space */ },
                         onUpgradeTierClicked = { tier -> viewModel.upgradeEconomyTier(tier) },
-                        isAdmin = uiState.isAdmin
+                        isAdmin = uiState.isAdmin,
+                        communityGuidesService = viewModel.communityGuidesService
                     )
                 }
                 1 -> {
@@ -78,7 +79,8 @@ fun SpaceScreen(
                         onUpgradeTier = { tier -> viewModel.upgradeEconomyTier(tier) },
                         guidedChatsRepository = viewModel.guidedChatsRepo,
                         onNavigateBack = { selectedTab = 0 },
-                        isAdmin = uiState.isAdmin
+                        isAdmin = uiState.isAdmin,
+                        communityGuidesService = viewModel.communityGuidesService
                     )
                 }
             }

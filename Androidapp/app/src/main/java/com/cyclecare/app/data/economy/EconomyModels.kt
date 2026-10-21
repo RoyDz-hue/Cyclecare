@@ -37,6 +37,7 @@ data class EconomyProfile(
     val activeFrame: String? = null,
     val activeArtifact: String? = "cycle_coin",
     val activeBackground: String? = null,
+    val activeAvatarArt: String? = null,
     val activeTheme: String = "SOOTHING_ROSE",
     val lastMinedTimestamp: Long = 0L,
     val lastMinedDateString: String? = null,
@@ -55,7 +56,9 @@ enum class ItemCategory {
     ARTIFACT,
     FRAME,
     BACKGROUND,
-    THEME
+    THEME,
+    AVATAR_ART,
+    BADGE
 }
 
 data class EconomyItem(
@@ -139,6 +142,66 @@ object EconomyCatalog {
             drawableRes = R.drawable.frame_elegant,
             auraColorHex = 0xFFE0A728,
             harmonicPitchHz = 963f
+        ),
+        EconomyItem(
+            id = "avatar_aurora_3d",
+            name = "Aurora Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 600L,
+            description = "A warm portrait in a cosy reading nook for your profile and circles.",
+            lore = "For the quiet reader who recharges between pages.",
+            drawableRes = R.drawable.avatar_aurora_3d,
+            auraColorHex = 0xFF2A9D8F
+        ),
+        EconomyItem(
+            id = "avatar_luna_3d",
+            name = "Luna Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 600L,
+            description = "A soft portrait with long braids and bedroom plants.",
+            lore = "For the calm spirit who blooms in her own space.",
+            drawableRes = R.drawable.avatar_luna_3d,
+            auraColorHex = 0xFF9575CD
+        ),
+        EconomyItem(
+            id = "avatar_zuri_3d",
+            name = "Zuri Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 750L,
+            description = "A golden kitchen portrait, included with Premium.",
+            lore = "For the home chef whose warmth feeds everyone.",
+            drawableRes = R.drawable.avatar_zuri_3d,
+            auraColorHex = 0xFFD4A017
+        ),
+        EconomyItem(
+            id = "avatar_nala_3d",
+            name = "Nala Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 750L,
+            description = "A creative art-studio portrait with shoulder-length locs.",
+            lore = "For the maker who turns feeling into colour.",
+            drawableRes = R.drawable.avatar_nala_3d,
+            auraColorHex = 0xFFBF5B34
+        ),
+        EconomyItem(
+            id = "avatar_imani_3d",
+            name = "Imani Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 900L,
+            description = "A thoughtful home-library portrait with a silk-press bob.",
+            lore = "For the reader of rooms and of people.",
+            drawableRes = R.drawable.avatar_imani_3d,
+            auraColorHex = 0xFF6A3FA0
+        ),
+        EconomyItem(
+            id = "avatar_amara_3d",
+            name = "Amara Portrait",
+            category = ItemCategory.AVATAR_ART,
+            price = 900L,
+            description = "A warm cafe portrait with a defined twist-out, included with Premium.",
+            lore = "For the friend who makes every table feel like home.",
+            drawableRes = R.drawable.avatar_amara_3d,
+            auraColorHex = 0xFFC97B8A
         )
     )
 
@@ -223,5 +286,7 @@ data class GuidedChatChannel(
     val id: String,
     val title: String,
     val topicGuide: String,
-    val minTier: UserEconomyTier
+    val minTier: UserEconomyTier,
+    /** Set when this circle is backed by a server chat_topics row. */
+    val serverTopicId: String? = null
 )

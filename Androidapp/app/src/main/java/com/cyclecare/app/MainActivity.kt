@@ -226,7 +226,8 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                     onUpgradeTier = { tier -> viewModel.upgradeEconomyTier(tier) },
                     guidedChatsRepository = viewModel.guidedChatsRepo,
                     onNavigateBack = { viewModel.setVaultOpen(false) },
-                    isAdmin = uiState.isAdmin
+                    isAdmin = uiState.isAdmin,
+                    communityGuidesService = viewModel.communityGuidesService
                 )
             }
 

@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cyclecare.app.R
+import com.cyclecare.app.data.economy.CommunityGuidesService
 import com.cyclecare.app.data.economy.CurrencyLocaleManager
 import com.cyclecare.app.data.economy.EconomyCatalog
 import com.cyclecare.app.data.economy.EconomyItem
@@ -81,7 +82,8 @@ fun AtelierScreen(
     onUpgradeTier: (UserEconomyTier) -> Unit,
     guidedChatsRepository: GuidedChatsRepository,
     onNavigateBack: () -> Unit,
-    isAdmin: Boolean = false
+    isAdmin: Boolean = false,
+    communityGuidesService: CommunityGuidesService? = null
 ) {
     VaultEconomyScreen(
         profile = profile,
@@ -93,6 +95,7 @@ fun AtelierScreen(
         onUpgradeTier = onUpgradeTier,
         guidedChatsRepository = guidedChatsRepository,
         onNavigateBack = onNavigateBack,
-        isAdmin = isAdmin
+        isAdmin = isAdmin,
+        communityGuidesService = communityGuidesService
     )
 }

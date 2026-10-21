@@ -1,6 +1,8 @@
 package com.cyclecare.app.ui.screens
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -35,23 +38,30 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cyclecare.app.data.economy.CommunityGuidesService
+import com.cyclecare.app.data.economy.CosmeticAssets
 import com.cyclecare.app.data.economy.EconomyProfile
 import com.cyclecare.app.data.economy.GuidedChatMessage
 import com.cyclecare.app.data.economy.GuidedChatsRepository
 import com.cyclecare.app.data.economy.UserEconomyTier
+import kotlinx.coroutines.launch
 
 @Composable
 fun GuidedChatsScreen(
@@ -59,11 +69,20 @@ fun GuidedChatsScreen(
     repository: GuidedChatsRepository,
     onNavigateBack: () -> Unit,
     onUpgradeTierClicked: (UserEconomyTier) -> Unit,
-    isAdmin: Boolean = false
+    isAdmin: Boolean = false,
+    communityGuidesService: CommunityGuidesService? = null
 ) {
     var selectedChannelId by remember { mutableStateOf<String?>(null) }
+    var channelsVersion by remember { mutableStateOf(0) }
 
-    val channels = repository.availableChannels
+    // Load live server-backed circles once when a session is available; the
+    // built-in sample circles stay in place when the cloud cannot be reached.
+    LaunchedEffect(communityGuidesService) {
+        val service = communityGuidesService ?: return@LaunchedEffect
+        if (repository.refreshChannels(service)) channelsVersion++
+    }
+
+    val channels = remember(channelsVersion) { repository.availableChannels }
     val selectedChannel = channels.find { it.id == selectedChannelId }
 
     val isUserAllowedAccess = isAdmin || profile.tier == UserEconomyTier.SUPPORTER || profile.tier == UserEconomyTier.PREMIUM || true
@@ -173,11 +192,27 @@ fun GuidedChatsScreen(
             } else {
                 // Live Connected Topic Room
                 var draftText by remember { mutableStateOf("") }
+                var sendFailed by remember { mutableStateOf(false) }
+                val coroutineScope = rememberCoroutineScope()
                 val messages = remember(selectedChannel.id) {
                     mutableStateListOf<GuidedChatMessage>().apply {
                         addAll(repository.getMessages(selectedChannel.id))
                     }
                 }
+
+                // Load the live stream for server-backed circles and swap it in.
+                LaunchedEffect(selectedChannel.id) {
+                    val service = communityGuidesService ?: return@LaunchedEffect
+                    if (selectedChannel.serverTopicId == null) return@LaunchedEffect
+                    val live = repository.loadLiveMessages(service, selectedChannel)
+                    if (live.isNotEmpty()) {
+                        messages.clear()
+                        messages.addAll(live)
+                    }
+                }
+
+                var messagePendingFlag by remember { mutableStateOf<GuidedChatMessage?>(null) }
+                var flagOutcome by remember { mutableStateOf<String?>(null) }
 
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Topic Guide Header Card
@@ -205,37 +240,32 @@ fun GuidedChatsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(messages) { msg ->
-                            val isMe = msg.isSelf
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(
-                                        topStart = 16.dp,
-                                        topEnd = 16.dp,
-                                        bottomStart = if (isMe) 16.dp else 4.dp,
-                                        bottomEnd = if (isMe) 4.dp else 16.dp
-                                    ),
-                                    color = if (isMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.fillMaxWidth(0.85f)
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(
-                                            text = msg.senderAlias,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = msg.content,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
+                            GuidedMessageRow(
+                                message = msg,
+                                onLongPress = {
+                                    if (!msg.isSelf && msg.remoteId != null && !msg.isFlagged) {
+                                        messagePendingFlag = msg
                                     }
                                 }
-                            }
+                            )
                         }
+                    }
+
+                    flagOutcome?.let { outcome ->
+                        Text(
+                            text = outcome,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                        )
+                    }
+                    if (sendFailed) {
+                        Text(
+                            text = "Your reflection could not reach the circle just now. Please try again in a moment.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                        )
                     }
 
                     // Message Composer
@@ -263,10 +293,24 @@ fun GuidedChatsScreen(
                                 onClick = {
                                     val trimmed = draftText.trim()
                                     if (trimmed.isNotEmpty()) {
-                                        val result = repository.postMessage(selectedChannel.id, trimmed)
-                                        if (result.isSuccess) {
-                                            messages.add(result.getOrThrow())
-                                            draftText = ""
+                                        sendFailed = false
+                                        val service = communityGuidesService
+                                        if (selectedChannel.serverTopicId != null && service != null) {
+                                            coroutineScope.launch {
+                                                val posted = repository.postLiveMessage(service, selectedChannel, trimmed)
+                                                if (posted != null) {
+                                                    messages.add(posted)
+                                                    draftText = ""
+                                                } else {
+                                                    sendFailed = true
+                                                }
+                                            }
+                                        } else {
+                                            val result = repository.postMessage(selectedChannel.id, trimmed)
+                                            if (result.isSuccess) {
+                                                messages.add(result.getOrThrow())
+                                                draftText = ""
+                                            }
                                         }
                                     }
                                 },
@@ -281,8 +325,108 @@ fun GuidedChatsScreen(
                         }
                     }
                 }
+
+                // Report-for-review confirmation
+                messagePendingFlag?.let { pending ->
+                    AlertDialog(
+                        onDismissRequest = { messagePendingFlag = null },
+                        title = { Text("Report this message?") },
+                        text = { Text("A moderator will review this message. The author is not told who reported it.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val target = pending
+                                messagePendingFlag = null
+                                val service = communityGuidesService
+                                val remoteId = target.remoteId
+                                if (service != null && remoteId != null) {
+                                    coroutineScope.launch {
+                                        val ok = service.flagMessage(remoteId)
+                                        flagOutcome = if (ok) {
+                                            val idx = messages.indexOfFirst { it.id == target.id }
+                                            if (idx >= 0) messages[idx] = messages[idx].copy(isFlagged = true)
+                                            "Thank you. This message has been sent for review."
+                                        } else {
+                                            "The report could not be sent just now. Please try again in a moment."
+                                        }
+                                    }
+                                }
+                            }) { Text("Report") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { messagePendingFlag = null }) { Text("Cancel") }
+                        }
+                    )
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GuidedMessageRow(
+    message: GuidedChatMessage,
+    onLongPress: () -> Unit
+) {
+    val isMe = message.isSelf
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        val guideAvatar = CosmeticAssets.personaAvatarRes(message.personaId)
+        if (!isMe && message.isCommunityGuide && guideAvatar != null) {
+            Image(
+                painter = painterResource(guideAvatar),
+                contentDescription = "${message.senderAlias}, Community Guide",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Surface(
+            shape = RoundedCornerShape(
+                topStart = 16.dp,
+                topEnd = 16.dp,
+                bottomStart = if (isMe) 16.dp else 4.dp,
+                bottomEnd = if (isMe) 4.dp else 16.dp
+            ),
+            color = if (isMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .combinedClickable(onClick = {}, onLongClick = onLongPress)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = message.senderAlias,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                    )
+                    if (message.isCommunityGuide) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            Text(
+                                text = "Community Guide",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}

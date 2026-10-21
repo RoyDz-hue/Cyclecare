@@ -168,6 +168,7 @@ class CycleCareViewModel(
 
     val economyService = com.cyclecare.app.data.economy.SupabaseEconomyService(authPreferences)
     val guidedChatsRepo = com.cyclecare.app.data.economy.GuidedChatsRepository()
+    val communityGuidesService = com.cyclecare.app.data.economy.CommunityGuidesService(authPreferences)
     val paymentService = com.cyclecare.app.data.payment.MpesaPaymentService(authPreferences, economyService)
     val supabasePaymentService = com.cyclecare.app.data.payment.SupabasePaymentService(authPreferences)
     val notificationService = com.cyclecare.app.data.notification.SupabaseNotificationService(authPreferences)

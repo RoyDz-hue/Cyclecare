@@ -65,6 +65,7 @@ import com.cyclecare.app.data.economy.CurrencyLocaleManager
 import com.cyclecare.app.data.economy.EconomyCatalog
 import com.cyclecare.app.data.economy.EconomyItem
 import com.cyclecare.app.data.economy.EconomyProfile
+import com.cyclecare.app.data.economy.CommunityGuidesService
 import com.cyclecare.app.data.economy.GuidedChatsRepository
 import com.cyclecare.app.data.economy.ItemCategory
 import com.cyclecare.app.data.economy.UserEconomyTier
@@ -81,7 +82,8 @@ fun VaultEconomyScreen(
     onUpgradeTier: (UserEconomyTier) -> Unit,
     guidedChatsRepository: GuidedChatsRepository,
     onNavigateBack: () -> Unit,
-    isAdmin: Boolean = false
+    isAdmin: Boolean = false,
+    communityGuidesService: CommunityGuidesService? = null
 ) {
     val context = LocalContext.current
     val localizedPackages = remember { CurrencyLocaleManager.getLocalizedPackages(context) }
@@ -104,7 +106,8 @@ fun VaultEconomyScreen(
             onUpgradeTierClicked = { tier ->
                 onUpgradeTier(tier)
             },
-            isAdmin = isAdmin
+            isAdmin = isAdmin,
+            communityGuidesService = communityGuidesService
         )
         return
     }
@@ -596,9 +599,9 @@ fun VaultEconomyScreen(
                     )
                 }
 
-                items(EconomyCatalog.ALL_ITEMS.filter { it.category == ItemCategory.FRAME || it.category == ItemCategory.THEME }) { item ->
+                items(EconomyCatalog.ALL_ITEMS.filter { it.category == ItemCategory.FRAME || it.category == ItemCategory.THEME || it.category == ItemCategory.AVATAR_ART }) { item ->
                     val isUnlocked = profile.unlockedItemIds.contains(item.id)
-                    val isActive = profile.activeFrame == item.id
+                    val isActive = profile.activeFrame == item.id || profile.activeAvatarArt == item.id
 
                     Card(
                         shape = RoundedCornerShape(20.dp),

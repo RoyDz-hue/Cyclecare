@@ -8,6 +8,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.cyclecare.app.data.economy.CommunityPulsePinger
 import com.cyclecare.app.data.local.CycleCareDatabase
 import com.cyclecare.app.data.local.OwnerDataGate
 import com.cyclecare.app.security.AuthPreferences
@@ -30,6 +31,14 @@ class SupabaseSyncWorker(
             val syncService = SupabaseSyncService(database, authPreferences)
 
             val result = syncService.syncAll()
+
+            // One community-pulse ping per daily sync. The server enforces the
+            // kill switch, lease, cooldowns and budgets; failure never fails sync.
+            try {
+                val token = SupabaseSessionManager.validAccessToken(authPreferences)
+                CommunityPulsePinger.ping(token)
+            } catch (_: Exception) { }
+
             when {
                 result.isSuccess -> Result.success()
                 result.shouldRetry -> Result.retry()

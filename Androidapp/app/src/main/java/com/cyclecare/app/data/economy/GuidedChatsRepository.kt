@@ -8,17 +8,25 @@ data class GuidedChatMessage(
     val senderAlias: String,
     val content: String,
     val timestampMs: Long = System.currentTimeMillis(),
-    val isSelf: Boolean = false
-)
+    val isSelf: Boolean = false,
+    /** Set when a Community Guide (persona) authored this message. */
+    val personaId: String? = null,
+    /** Server row id, present for messages loaded from or written to the cloud circle. */
+    val remoteId: String? = null,
+    val isFlagged: Boolean = false
+) {
+    val isCommunityGuide: Boolean get() = personaId != null
+}
 
 /**
  * Spec §16: Guided Community Circles messaging repository.
- * Provides topic channels, community message streams, and outgoing message dispatch
- * with character constraints and moderation guards.
+ * Server-backed circles (chat_topics/chat_messages) are used when a session is
+ * available; the built-in sample circles remain as a calm offline fallback.
  */
 class GuidedChatsRepository {
 
-    val availableChannels: List<GuidedChatChannel> = listOf(
+    /** Offline fallback circles, shown when cloud topics cannot be loaded. */
+    private val fallbackChannels: List<GuidedChatChannel> = listOf(
         GuidedChatChannel(
             id = "circle_luteal_rest",
             title = "Luteal Phase Softness & Reflection",
@@ -38,6 +46,53 @@ class GuidedChatsRepository {
             minTier = UserEconomyTier.FREE
         )
     )
+
+    @Volatile
+    private var liveChannels: List<GuidedChatChannel>? = null
+
+    /** Channels to display: live server circles when loaded, otherwise the fallback set. */
+    val availableChannels: List<GuidedChatChannel>
+        get() = liveChannels ?: fallbackChannels
+
+    /** Refreshes the circle directory from the server. Returns true when live topics are in use. */
+    suspend fun refreshChannels(service: CommunityGuidesService): Boolean {
+        val topics = try { service.fetchTopics() } catch (_: Exception) { emptyList() }
+        if (topics.isEmpty()) return false
+        liveChannels = topics.map { topic ->
+            GuidedChatChannel(
+                id = "server_${topic.id}",
+                title = topic.title,
+                topicGuide = topic.description.ifBlank { "A gentle space to share and support each other." },
+                minTier = UserEconomyTier.FREE,
+                serverTopicId = topic.id
+            )
+        }
+        return true
+    }
+
+    /** Joins a live circle and loads its full message stream. Empty list on failure. */
+    suspend fun loadLiveMessages(service: CommunityGuidesService, channel: GuidedChatChannel): List<GuidedChatMessage> {
+        val topicId = channel.serverTopicId ?: return emptyList()
+        return try {
+            service.ensureMembership(topicId)
+            service.fetchMessages(topicId)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Posts to a live circle. Null on failure so the caller can fall back gracefully. */
+    suspend fun postLiveMessage(service: CommunityGuidesService, channel: GuidedChatChannel, content: String): GuidedChatMessage? {
+        val topicId = channel.serverTopicId ?: return null
+        val trimmed = content.trim()
+        if (trimmed.isEmpty() || trimmed.length > 500) return null
+        return try {
+            service.ensureMembership(topicId)
+            service.postMessage(topicId, trimmed)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private val inMemoryMessages = mutableMapOf<String, MutableList<GuidedChatMessage>>(
         "circle_luteal_rest" to mutableListOf(
