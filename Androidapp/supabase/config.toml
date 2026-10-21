@@ -42,3 +42,6 @@ verify_jwt = false
 # publishable apikey instead and never touches user data.
 [functions.onboarding-questions]
 verify_jwt = false
+
+[functions.admin-chat-moderation]
+verify_jwt = true
