@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart3, ChevronLeft, ChevronRight, Cloud, Coins, CreditCard, Gem, Lock, LogOut,
-  Radio, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Users
+  Menu, Radio, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Users, X
 } from 'lucide-react';
 import UserManagement from './components/UserManagement';
 import InHouseMessaging from './components/InHouseMessaging';
@@ -378,6 +378,7 @@ export default function App() {
   }
 
   const inMoreFlow = MORE_SCREENS.some((s) => s.id === activeTab);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const activePrimary = inMoreFlow ? 'more' : activeTab;
 
   const navButton = (item, layout) => {
@@ -391,6 +392,29 @@ export default function App() {
         onClick={() => setActiveTab(item.id)}
       >
         <item.icon size={layout === 'bottom' ? 22 : 18} />
+        <span>{item.label}</span>
+      </button>
+    );
+  };
+
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+
+  const drawerItem = (item) => {
+    const isActive = activeTab === item.id || (item.id === 'more' && inMoreFlow);
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`side-tab ${isActive ? 'active' : ''}`}
+        aria-current={isActive ? 'page' : undefined}
+        onClick={() => { setActiveTab(item.id); setDrawerOpen(false); }}
+      >
+        <item.icon size={18} />
         <span>{item.label}</span>
       </button>
     );
@@ -421,6 +445,9 @@ export default function App() {
       <main className="main-content">
         <header className="top-bar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <button type="button" className="icon-btn drawer-toggle" aria-label="Open menu" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
+              <Menu size={20} />
+            </button>
             {inMoreFlow && (
               <button type="button" className="icon-btn" aria-label="Back" onClick={() => setActiveTab('more')}>
                 <ChevronLeft size={20} />
@@ -588,9 +615,30 @@ export default function App() {
         </div>
       </main>
 
-      <nav className="bottom-nav" aria-label="Primary">
-        {PRIMARY_TABS.map((item) => navButton(item, 'bottom'))}
-      </nav>
+      {drawerOpen && (
+        <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} role="presentation">
+          <aside className="drawer" aria-label="Menu" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px 8px' }}>
+              <div>
+                <h1 className="font-editorial gold-gradient-text" style={{ fontSize: 20 }}>CycleCare Admin</h1>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>{adminEmail}</p>
+              </div>
+              <button type="button" className="icon-btn" aria-label="Close menu" onClick={() => setDrawerOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <nav className="side-nav" aria-label="All screens">
+              {PRIMARY_TABS.map(drawerItem)}
+              {MORE_SCREENS.map(drawerItem)}
+            </nav>
+            <div style={{ padding: 14 }}>
+              <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}>
+                <LogOut size={15} /> Sign out
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }
