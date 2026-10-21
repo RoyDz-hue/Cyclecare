@@ -16,10 +16,11 @@ test('AI provider selection is a strict single-provider allowlist', () => {
   assert.match(aiProviderStatus('HYBRID', true).reason, /Unsupported provider/);
 });
 
-test('admin provider status documents Hybrid as disabled without a multi-provider contract', () => {
+test('admin provider status reports Hybrid readiness from live runtime config', () => {
   const source = readFileSync(new URL('../admin-provider-status/index.ts', import.meta.url), 'utf8');
   assert.match(source, /HYBRID/);
-  assert.match(source, /consent-safe multi-provider contract/);
+  assert.match(source, /hybridReadiness/);
+  assert.match(source, /hybrid_enabled/);
   assert.match(source, /validated: false/);
 });
 

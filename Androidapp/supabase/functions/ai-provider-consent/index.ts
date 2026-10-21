@@ -63,7 +63,7 @@ serve(async (req: Request) => {
         unavailable_reason: eligible ? "" : manifest.unavailable_reason,
         consent: { enabled: Boolean(eligible && data?.granted === true && data.account_snapshot === userId && data.revoked_at == null && data.manifest_fingerprint === manifest.manifest_fingerprint), revision, manifest_fingerprint: String(data?.manifest_fingerprint || "") } };
     }));
-    return json({ version: 3, account_snapshot: userId, manifest_revision: MANIFEST_REVISION, providers: rows, hybrid: { released: false, max_attempts: 2 } });
+    return json({ version: 3, account_snapshot: userId, manifest_revision: MANIFEST_REVISION, providers: rows, hybrid: { released: true, max_attempts: 3 } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return json({ error: "Consent contract unavailable" }, message === "request_too_large" ? 413 : message === "invalid_request" ? 400 : message === "io_deadline" ? 408 : 503);

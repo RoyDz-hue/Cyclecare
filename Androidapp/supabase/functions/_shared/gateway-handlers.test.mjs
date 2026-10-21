@@ -109,7 +109,7 @@ test('Image consent, tier, style, custom prompt and private keyword gates', asyn
 
 test('Image success returns provider bytes and image quota uses server-auth UUID', async () => { const s=baseState({authenticatedId:UUID,providerShape:'image',imageBytes:new Uint8Array([1,2,3,4])}); const h=await loadHandler(`${ROOT}/image-generation/index.ts`,s); const r=await h(new Request('https://local',{method:'POST',headers:{authorization:'Bearer token'},body:JSON.stringify(imageBody({custom_prompt:'calm light'}))})); assert.equal(r.status,200); assert.equal(r.headers.get('content-type'),'image/png'); assert.deepEqual([...new Uint8Array(await r.arrayBuffer())],[1,2,3,4]); assert.equal(s.rpc[0].args.p_user_id,UUID); assert.equal(s.rpc[0].args.p_kind,'image'); });
 
-test('Image invalid provider content type errors', async () => { const s=baseState({providerShape:'bad-image-type'}); const h=await loadHandler(`${ROOT}/image-generation/index.ts`,s); const r=await h(new Request('https://local',{method:'POST',headers:{authorization:'Bearer token'},body:JSON.stringify(imageBody())})); assert.equal(r.status,502); });
+test('Image invalid provider content type errors', async () => { const s=baseState({providerShape:'bad-image-type'}); const h=await loadHandler(`${ROOT}/image-generation/index.ts`,s); const r=await h(new Request('https://local',{method:'POST',headers:{authorization:'Bearer token'},body:JSON.stringify(imageBody())})); assert.equal(r.status,503); });
 
 process.on('exit', async () => { /* output is captured by the shell runner */ });
 

@@ -25,7 +25,7 @@ export function validateAiRequest(body) {
   if (Object.keys(body).some((key) => !allowed.has(key))) return { ok: false, error: "unknown_field" };
   if (body.schema_version === 2) return { ok: false, error: "structure_update_required" };
   if (body.schema_version !== 3) return { ok: false, error: "schema_version_3_required" };
-  if (!Array.isArray(body.processor_receipts) || body.processor_receipts.length < 1 || body.processor_receipts.length > 2) return { ok: false, error: "processor_receipts_required" };
+  if (!Array.isArray(body.processor_receipts) || body.processor_receipts.length < 1 || body.processor_receipts.length > 3) return { ok: false, error: "processor_receipts_required" };
   for (const receipt of body.processor_receipts) {
     if (!receipt || typeof receipt !== "object" || typeof receipt.provider_id !== "string" || !Number.isInteger(receipt.revision) || receipt.revision < 1 || typeof receipt.manifest_fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(receipt.manifest_fingerprint)) return { ok: false, error: "processor_receipt_invalid" };
   }

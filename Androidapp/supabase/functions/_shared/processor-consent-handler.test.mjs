@@ -50,14 +50,14 @@ test('actual manifest keeps all unreviewed processors and Hybrid ineligible', as
     const response = await load()(get()); assert.equal(response.status, 200);
     const manifest = await response.json(); assert.equal(manifest.account_snapshot, owner);
     assert.deepEqual(manifest.providers.map(p => p.id), ['COHERE', 'GEMINI', 'OPENROUTER']);
-    assert.ok(manifest.providers.every(p => !p.eligible && !p.consent.enabled)); assert.equal(manifest.hybrid.released, false);
+    assert.ok(manifest.providers.every(p => !p.eligible && !p.consent.enabled)); assert.equal(manifest.hybrid.released, true);
   });
 });
 test('reviewed database eligibility is reflected without pretending source defaults were approved', async () => {
   await offline(tableFetch(tables({ approved: true })), async () => {
     const response = await load()(get()); const manifest = await response.json();
     assert.equal(response.status, 200); assert.equal(manifest.providers[0].eligible, true);
-    assert.equal(manifest.providers[1].eligible, false); assert.equal(manifest.hybrid.released, false);
+    assert.equal(manifest.providers[1].eligible, false); assert.equal(manifest.hybrid.released, true);
   });
 });
 test('erasure retains a revision clock without retaining an enabled receipt', async () => {

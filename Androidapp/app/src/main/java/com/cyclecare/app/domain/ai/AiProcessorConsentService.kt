@@ -167,6 +167,6 @@ class AiProcessorConsentService(
                 text(p, "unavailable_reason"), boolean(consent, "enabled"), consentRevision)
         }
         val hybrid = root.getJSONObject("hybrid")
-        return AiProcessorManifest(VERSION, owner, revision, providers, boolean(hybrid, "released"), number(hybrid, "max_attempts").also { require(it in 0..2) })
+        return AiProcessorManifest(VERSION, owner, revision, providers, boolean(hybrid, "released"), number(hybrid, "max_attempts").also { require(it in 0..3) })
     }
 }

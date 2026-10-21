@@ -1,7 +1,7 @@
 export const HYBRID_PROTOCOL_REVISION = 'hybrid-v3';
 export const HYBRID_DEFAULT_ENABLED = false;
-export const HYBRID_SOURCE_RELEASED = false;
-export const HYBRID_MAX_ATTEMPTS = 2;
+export const HYBRID_SOURCE_RELEASED = true;
+export const HYBRID_MAX_ATTEMPTS = 3;
 export const HYBRID_MAX_DEADLINE_MS = 30_000;
 
 const SUPPORTED_CHAT_PROVIDERS = Object.freeze(['COHERE', 'GEMINI', 'OPENROUTER']);

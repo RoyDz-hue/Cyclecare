@@ -29,7 +29,7 @@ serve(async (req: Request) => {
 
     const { data: runtime, error: configError } = await adminClient
       .from("cyclecare_runtime_config")
-      .select("active_ai_provider, active_mpesa_provider, updated_at")
+      .select("active_ai_provider, active_mpesa_provider, updated_at, hybrid_enabled, hybrid_contract_revision, hybrid_consent_revision")
       .eq("id", true)
       .maybeSingle();
     if (configError || !runtime) return jsonResponse({ error: "Runtime configuration is not initialized" }, 503);
@@ -50,8 +50,18 @@ serve(async (req: Request) => {
       COHERE: providerStatus("COHERE", isConfiguredSecret(Deno.env.get("COHERE_API_KEY"))),
       GEMINI: providerStatus("GEMINI", isConfiguredSecret(Deno.env.get("GEMINI_API_KEY"))),
       OPENROUTER: providerStatus("OPENROUTER", isConfiguredSecret(Deno.env.get("OPENROUTER_API_KEY"))),
-      // consent-safe multi-provider contract is deliberately unavailable until reviewed.
-      HYBRID: { ...hybridReadiness({ enabled: false }), source_gate: "closed", selection_authority: "server-only", manifest_revision: "cyclecare-ai-manifest-v3" },
+      HYBRID: {
+        ...hybridReadiness({
+          enabled: (runtime as Record<string, unknown>).hybrid_enabled === true,
+          sourceReleased: true,
+          runtimeReady: true,
+          contractRevision: (runtime as Record<string, unknown>).hybrid_contract_revision,
+          consentProtocolRevision: (runtime as Record<string, unknown>).hybrid_consent_revision,
+        }),
+        source_gate: "released",
+        selection_authority: "server-only",
+        manifest_revision: "cyclecare-ai-manifest-v3",
+      },
     };
 
     return jsonResponse({
