@@ -39,7 +39,7 @@ Local mode is not an authenticated cloud identity. Owner, login-session and cons
 | **Admin Control Center** | Feature Flags (`v3_sync_enabled`), Clinical Safety Audit, Circles Moderation, Coin Ledger, Sync Health dashboard | Implemented in `AdminPWA/src/components/`, Vite build verified |
 | **Health sync and health erasure** | Durable Room outbox/retries, revisions/cursors/tombstones, conflict records and Settings decisions; v3-only validation; unified cloud/local health erasure | **Closed** pending authenticated staging and two-device acceptance |
 | **Provider-specific AI consent** | Reviewed manifest disclosure, owner/session-bound revision receipts, pending withdrawal/CAS, stale-response protection and Admin-enforced single-provider selection | Candidate integration needs provider eligibility and staging review |
-| **Sequential Hybrid** | Sequential, bounded attempts with quota, restriction checks and both processors' matching current receipts/manifests | **Closed** in source/runtime/Admin; flags alone cannot release it |
+| **Hybrid Bridge** | Balanced rotation across consented providers (Gemini/Cohere/OpenRouter), failover chain, then system fallback; consent receipts + policy readiness gate every provider | **Released** 2026-10-21 (owner-directed); server-only selection, invisible to clients |
 | **PayPal settlement/accounting** | Durable checkout identities, independent order/capture verification, verified webhook evidence, replay-safe credits and refund/reversal/debt accounting | **Checkout closed** pending hosted sandbox and merchant-policy acceptance |
 
 ## Intelligence & Safety Architecture
