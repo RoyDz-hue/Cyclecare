@@ -70,3 +70,12 @@ export function buildLocalSuggestions(insights) {
   chips.push({ label: 'Premium vs free', prompt: 'Compare premium vs free members and show the tier split' });
   return chips.slice(0, 6);
 }
+
+export async function preloadCommandThread(config) {
+  const id = adminIdFromConfig(config);
+  if (id === 'unknown') return;
+  const res = await commandHistoryList(config);
+  if (Array.isArray(res?.messages)) {
+    try { localStorage.setItem(`admin-command-thread-${id}`, JSON.stringify(res.messages)); } catch { /* best-effort */ }
+  }
+}

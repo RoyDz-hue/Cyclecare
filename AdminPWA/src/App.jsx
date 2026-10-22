@@ -14,6 +14,7 @@ import PricingManager from './components/PricingManager';
 import CommunityControl from './components/CommunityControl';
 import SignalsDashboard from './components/SignalsDashboard';
 import AdminCommand from './components/AdminCommand.jsx';
+import { preloadCommandThread } from './lib/adminCommand.js';
 import {
   adminJson, adminResultMessage, clearAdminSession, finishGoogleOAuth, getAdminSession,
   saveAdminSession, startGoogleOAuth, resolveSupabaseConfig, adminAuthErrorMessage
@@ -70,6 +71,7 @@ export default function App() {
   const [providerStatusLoaded, setProviderStatusLoaded] = useState(false);
   const [notification, setNotification] = useState(null);
   const [adminAccessToken, setAdminAccessToken] = useState(() => getAdminSession()?.access_token || '');
+  useEffect(() => { if (adminAccessToken) preloadCommandThread(SUPABASE_CONFIG).catch(() => {}); }, [adminAccessToken]);
   const [adminEmail, setAdminEmail] = useState(() => getAdminSession()?.user?.email || '');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');

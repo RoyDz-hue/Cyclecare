@@ -37,7 +37,7 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
     <div className="glass-card" style={{ marginTop: 4, borderColor: risk === 'risky' ? 'rgba(255, 158, 174, 0.45)' : 'rgba(126, 226, 168, 0.3)' }}>
       <h4 style={{ margin: 0, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
         {risk === 'risky' && <ShieldAlert size={16} color="#ff9eae" />}
-        Review this plan before anything changes
+        {message.meta?.requires_approval === false ? 'Read-only check' : 'Review this plan before anything changes'}
       </h4>
       {plan.steps.map((s, i) => (
         <p key={i} style={{ margin: '8px 0 0', fontSize: 13, color: '#c4cbe4' }}>
@@ -110,7 +110,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   const scrollDown = () => { requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }); };
 
   // Preload: paint from cache (already done via initial state), then sync the
-  // server thread silently and keep it fresh with realtime or a 20s poll.
+  // server thread silently and keep it fresh with realtime or a minute-based silent sync.
   useEffect(() => {
     let cancelled = false;
     let poll = null;
@@ -120,7 +120,11 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       try {
         const res = await commandHistoryList(supabaseConfig, onSessionChange);
         if (cancelled || !Array.isArray(res?.messages)) return;
-        persist(res.messages);
+        setMessages((cur) => {
+          const next = [...res.messages, ...cur.filter((m) => m.pending && !res.messages.some((row) => row.role === m.role && row.content === m.content))];
+          try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
+          return next;
+        });
         scrollDown();
       } catch { /* keep the cached thread */ }
     };
