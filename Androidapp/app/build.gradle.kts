@@ -21,6 +21,12 @@ android {
   }
 
   signingConfigs {
+    create("fixedDebug") {
+      storeFile = file(System.getenv("CYCLECARE_DEBUG_KEYSTORE") ?: "${rootDir}/.private/cyclecare-debug.jks")
+      storePassword = System.getenv("CYCLECARE_DEBUG_STORE_PASSWORD")
+      keyAlias = "cyclecare-debug"
+      keyPassword = System.getenv("CYCLECARE_DEBUG_KEY_PASSWORD")
+    }
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
@@ -66,6 +72,7 @@ android {
     // Build with: ./gradlew assembleSlim -PslimApk  (arm64-v8a only, ~half the size)
     create("slim") {
       initWith(getByName("debug"))
+      signingConfig = signingConfigs.getByName("fixedDebug")
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

@@ -170,16 +170,16 @@ function summarizePlan(plan: any): string {
   return (plan.steps || []).map((s: any) => s?.label || s?.tool).filter(Boolean).join(" -> ");
 }
 
-async function executeStep(userClient: any, tool: string, args: any): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+async function executeStep(userClient: any, tool: string, args: any, includeGuides = false): Promise<{ ok: boolean; result?: unknown; error?: string }> {
   const rpc = (name: string, params: Record<string, unknown>) => userClient.rpc(name, params);
   const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
   try {
     switch (tool) {
       case "get_user_insights": {
-        const { data, error } = await rpc("admin_member_insights", {});
+        const { data, error } = await rpc("admin_member_insights_scoped", {p_include_guides:includeGuides});
         if (error) return { ok: false, error: error.message };
         const focus = typeof args?.focus === "string" ? args.focus : "all";
-        return { ok: true, result: focus === "all" ? data : { [focus]: data?.[focus] ?? null } };
+        return { ok: true, result: focus === "all" ? data : { [focus]: data?.[focus] ?? null, guides_excluded: data?.guides_excluded !== false } };
       }
       case "get_flagged_messages": case "get_safety_signals": case "get_pricing": case "get_audit_log": {
         const { data, error } = await rpc("admin_get_control_data", {});
@@ -339,7 +339,8 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
     const kind = await toolKind(admin, String(steps[i]?.tool ?? ""));
     (kind === "READ" ? reads : writes).push({ index: i, step: steps[i] });
   }
-  const readResults = await Promise.all(reads.map(({ step }) => executeStep(userClient, String(step.tool), step.args ?? {})));
+  const includeGuides = /\binclude\s+(?:community\s+)?guides\b/i.test(run.prompt);
+  const readResults = await Promise.all(reads.map(({ step }) => executeStep(userClient, String(step.tool), step.args ?? {}, includeGuides)));
   for (let i = 0; i < reads.length; i++) {
     if (readResults[i].ok && ["get_user_insights", "get_safety_signals"].includes(String(reads[i].step.tool))) {
       readResults[i].result = await attachMemberNames(admin, readResults[i].result);

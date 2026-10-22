@@ -16,7 +16,7 @@ export function formatCommandStep(step) {
     }
     case 'get_user_insights': {
       if (!r || typeof r !== 'object') return 'Member insights are unavailable right now.';
-      const sections = [];
+      const sections = [r.guides_excluded === false ? 'Community Guides are included in these results.' : 'Community Guides are excluded from member rankings.'];
       if (r.richest) {
         const rows = r.richest;
         if (!rows.length) sections.push('There are no coin balances to compare yet.');
