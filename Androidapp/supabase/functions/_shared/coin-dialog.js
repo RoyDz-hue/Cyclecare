@@ -16,3 +16,16 @@ export function applyCoinReply(state,text) {
  if(s.awaiting==='recipient'&&!isConfirmation(text)&&!wantsSuggestedReason(text))s.query=text.trim();
  return s;
 }
+
+export function selectCandidate(candidates,text) {
+ const rows=Array.isArray(candidates)?candidates:[];
+ const t=text.trim().toLowerCase().replace(/[.!?]$/,'');
+ const ordinal={first:1,second:2,third:3,fourth:4,fifth:5};
+ const m=t.match(/^(?:number\s+)?(\d+)$/);
+ const o=t.match(/^(?:the\s+)?(first|second|third|fourth|fifth)(?:\s+one)?$/);
+ const index=m?Number(m[1]):o?ordinal[o[1]]:null;
+ if(index!==null)return rows[index-1]||null;
+ if(t.length<2)return null;
+ const matches=rows.filter(r=>String(r.display_name||'').toLowerCase().includes(t)||String(r.email||'').toLowerCase().includes(t));
+ return matches.length===1?matches[0]:null;
+}

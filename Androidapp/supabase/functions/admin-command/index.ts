@@ -1,4 +1,4 @@
-import { parseCoinRequest, applyCoinReply, isConfirmation } from "../_shared/coin-dialog.js";
+import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate } from "../_shared/coin-dialog.js";
 import { formatCommandOutcome } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -121,13 +121,21 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
    await save();await persistMessage(admin,adminId,"assistant","chat",message);return {success:true,type:"clarify",message};};
  if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Approve and run to make the change, Reject to discard it, or say cancel. No extra change has been made.");
  if(!Number.isInteger(st.delta)||st.delta===0||Math.abs(st.delta)>10000)return reply("Choose a non-zero whole number up to 10,000 coins. No change has been made.");
+ if(!st.recipient && !fresh && active?.awaiting==="recipient") {
+   const picked=selectCandidate(active.candidates,text);
+   if(picked) {st.recipient=picked;st.query=picked.email;}
+   else if(active.candidates?.length) {
+     st.candidates=active.candidates;
+     return reply("That choice isn't unique. Reply with a listed number, one exact email, or say cancel. No change was made.");
+   }
+ }
  if(!st.recipient){
    if(isConfirmation(text)&&st.candidates?.length!==1)return reply("Please choose a specific account by email from the list, or say cancel. No change has been made.");
    const {data,error}=await userClient.rpc("admin_find_recipients",{p_query:st.query});
    if(error||!Array.isArray(data))return reply("I couldn't check the member list. Try their exact email, or say cancel. No change has been made.");
    const candidates=[...new Map(data.map((p:any)=>[p.user_id,p])).values()] as any[];
    st.candidates=candidates;
-   if(candidates.length!==1){st.awaiting="recipient";return reply(candidates.length?`Which member did you mean? No change has been made.\n${candidates.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nReply with their email, or say cancel.`:`No member matches "${st.query}". Try their full name, exact email, or say cancel. No change has been made.`);}
+   if(candidates.length!==1){st.awaiting="recipient";return reply(candidates.length?`Which member did you mean? No change has been made.\n${candidates.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nReply with a number, their email, or say cancel.`:`No member matches "${st.query}". Try their full name, exact email, or say cancel. No change has been made.`);}
    st.recipient=candidates[0];
  }
  if(!st.reason){st.awaiting="reason";return reply(`The account is ${st.recipient.display_name} (${st.recipient.email}); the amount is ${Math.abs(st.delta)} coins to ${st.delta<0?"deduct":"grant"}. What reason should I record? You can say "Admin adjustment", give your own reason, or ask me to choose.`);}
