@@ -65,7 +65,7 @@ class LocalPrivacyBoundaryTest {
             val client = OkHttpClient.Builder().addInterceptor { requests.incrementAndGet(); throw AssertionError("Backend readiness must fail closed") }.build()
             val result = SupabaseSyncService(db, prefs, client).syncAll()
             assertFalse(result.isSuccess)
-            assertTrue(result.message.contains("pending"))
+            assertTrue(result.message.contains("paused"))
             assertEquals(0, requests.get())
         } finally { db.close() }
     }
@@ -79,7 +79,7 @@ class LocalPrivacyBoundaryTest {
             val requests = AtomicInteger(0)
             val client = OkHttpClient.Builder().addInterceptor { requests.incrementAndGet(); throw AssertionError("Wiped namespace must not sync") }.build()
             val result = SupabaseSyncService(db, prefs, client).syncAll()
-            assertTrue(result.message.contains("wiped"))
+            assertTrue(result.message.contains("erased") && result.message.contains("paused"))
             assertTrue(OwnerDataGate.isWiped(context, prefs.userId))
             assertEquals(0, requests.get())
         } finally { db.close() }

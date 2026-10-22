@@ -105,7 +105,7 @@ class CareViewModelConsentTest {
         assertFalse(prefs.isCloudSyncAllowed)
         assertTrue(prefs.hasPendingHealthSyncRevoke)
         withTimeout(5000) { while (vm.uiState.value.isDeletingCloudHealth) delay(20) }
-        assertTrue(vm.uiState.value.cloudHealthDeletionMessage!!.contains("not confirmed"))
+        assertTrue(vm.uiState.value.cloudHealthDeletionMessage!!.contains("couldn't be confirmed"))
         assertEquals(log, repository.getLogForDate(log.dateString))
         assertTrue(prefs.hasPendingHealthSyncRevoke)
     }
