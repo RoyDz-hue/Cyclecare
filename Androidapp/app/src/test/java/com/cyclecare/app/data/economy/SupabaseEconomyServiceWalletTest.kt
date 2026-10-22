@@ -40,9 +40,17 @@ class SupabaseEconomyServiceWalletTest {
     private fun enqueueWallet(economy: JSONObject = wallet(), profile: JSONObject = JSONObject().put("user_id", owner).put("status", "ACTIVE")) {
         server.enqueue(MockResponse().setBody("{\"success\":true}"))
         server.enqueue(MockResponse().setBody(JSONArray().put(economy).toString()))
-        server.enqueue(MockResponse().setBody(JSONArray().put(profile).toString()))
+        server.enqueue(MockResponse().setBody(profile.toString()))
     }
 
+    @Test fun remotePresenceRejectsUnknownOwnerAndErrors() = runBlocking {
+        server.enqueue(MockResponse().setBody(JSONObject().put("user_id",owner).put("exists",true).toString()))
+        assertEquals(true,service().hasRemoteProfile())
+        server.enqueue(MockResponse().setBody(JSONObject().put("user_id","someone-else").put("exists",false).toString()))
+        assertNull(service().hasRemoteProfile())
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertNull(service().hasRemoteProfile())
+    }
     @Test fun normalWalletRequiresBothOwnerRowsAndExactBalance() = runBlocking {
         enqueueWallet()
         val result = service().fetchVerifiedProfile(owner)

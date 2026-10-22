@@ -102,7 +102,8 @@ data class CycleUiState(
     val careImageError: String? = null,
     val isAppLocked: Boolean = false,
     val showOnboarding: Boolean = true,
-    val isCheckingCloudProfile: Boolean = false,
+    val isCheckingCloudProfile: Boolean = true,
+    val cloudProfileCheckFailed: Boolean = false,
     val isSomethingDifferentSheetOpen: Boolean = false,
     val currentInterpretation: ParsedLogInterpretation? = null,
     val monthlyTimeline: List<com.cyclecare.app.data.model.MonthlyTimelineEntry> = emptyList(),
@@ -263,6 +264,9 @@ class CycleCareViewModel(
         if (activeUiOwner == owner && activeUiSession == session) return
         activeUiOwner = owner
         activeUiSession = session
+        walletRealtime.stop()
+        accountRefreshJob?.cancel()
+        walletRefreshJob?.cancel()
         repository.activateCurrentOwner()
         _logsMap.value = emptyMap()
         resetPrivateConversation()
@@ -305,8 +309,7 @@ class CycleCareViewModel(
             val profile = repository.getOnboardingProfile()
             val hasCompletedInitialAuth = authPreferences.hasCompletedInitialAuth
             val needsCloudProfileCheck = hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode &&
-                (profile == null || !settings.isOnboardingCompleted) &&
-                com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)
+                (profile == null || !settings.isOnboardingCompleted)
             val isPinSet = authPreferences.isPinEnabled && !authPreferences.pin.isNullOrBlank()
             val isLocked = hasCompletedInitialAuth && (isPinSet || authPreferences.isFingerprintEnabled)
             val showOnboarding = hasCompletedInitialAuth && !needsCloudProfileCheck &&
@@ -357,6 +360,7 @@ class CycleCareViewModel(
 
             updateCalculations(settings, LocalDate.now(), LocalDate.now())
 
+            if (hasCompletedInitialAuth) autoSyncSilently()
             val initOwner = authPreferences.effectiveUserId
             val verifiedEconomy = if (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
                 economyService.fetchVerifiedProfile(initOwner) else null
@@ -1207,37 +1211,70 @@ class CycleCareViewModel(
         }
     }
 
+    private val walletRealtime by lazy { com.cyclecare.app.data.economy.WalletRealtimeObserver(authPreferences, viewModelScope) { refreshWalletNow() } }
+    private var accountRefreshJob: kotlinx.coroutines.Job? = null
+    private var walletRefreshJob: kotlinx.coroutines.Job? = null
+
+    fun refreshWalletNow() {
+        if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) return
+        if (walletRefreshJob?.isActive == true) return
+        val owner = authPreferences.effectiveUserId
+        val session = authPreferences.sessionGeneration
+        walletRefreshJob = viewModelScope.launch {
+            val result = economyService.fetchVerifiedProfile(owner)
+            if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
+            if (result is com.cyclecare.app.data.economy.EconomyResult.Success) {
+                val econ = result.data
+                _uiState.value = _uiState.value.copy(economyProfile=econ, isBanned=econ.isBanned,
+                    isSuspended=econ.isSuspended, accountNoticeMessage=econ.suspensionReason)
+            }
+        }
+    }
+
+    fun onForeground() {
+        walletRealtime.start()
+        refreshWalletNow()
+        if (_uiState.value.hasCompletedInitialAuth) autoSyncSilently()
+    }
+
+    fun onBackground() { walletRealtime.stop() }
+
     fun autoSyncSilently() {
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) {
             _uiState.value = _uiState.value.copy(isCheckingCloudProfile = false,
                 showOnboarding = !_uiState.value.settings.isOnboardingCompleted)
             return
         }
+        refreshWalletNow()
+        if (accountRefreshJob?.isActive == true) return
         val owner = authPreferences.effectiveUserId
-        viewModelScope.launch {
+        val session = authPreferences.sessionGeneration
+        accountRefreshJob = viewModelScope.launch {
+            val checking = _uiState.value.isCheckingCloudProfile || _uiState.value.cloudProfileCheckFailed
+            if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=true, cloudProfileCheckFailed=false,showOnboarding=false)
+            val localRead = runCatching { repository.getSettings() to repository.getOnboardingProfile() }
+            val localSettings = localRead.getOrNull()?.first ?: CycleSettings()
+            val localProfile = localRead.getOrNull()?.second
+            val damaged = localRead.isFailure || runCatching { repository.pendingSyncConflicts().isNotEmpty() }.getOrDefault(true)
+            val localValid = localProfile?.isCompleted == true && localSettings.isOnboardingCompleted
+            val remote = if (checking && (localProfile == null || !localSettings.isOnboardingCompleted))
+                kotlinx.coroutines.withTimeoutOrNull(20_000) { economyService.hasRemoteProfile() } else true
+            if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
+            val destination = com.cyclecare.app.domain.sync.AccountStartPolicy.decide(localValid,damaged,remote)
+            if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=false,
+                cloudProfileCheckFailed=destination==com.cyclecare.app.domain.sync.AccountStartDestination.RETRY,
+                showOnboarding=destination==com.cyclecare.app.domain.sync.AccountStartDestination.ONBOARDING,
+                settings=localSettings,onboardingProfile=localProfile)
             val result = syncUseCase.executeSync()
-            if (owner != authPreferences.effectiveUserId) return@launch
+            if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             val restoredSettings = repository.getSettings()
             val restoredProfile = repository.getOnboardingProfile()
-            val current = _uiState.value
-            val showOnboarding = if (current.isCheckingCloudProfile) {
-                restoredProfile == null || !restoredSettings.isOnboardingCompleted
-            } else current.showOnboarding
             val isAdmin = runCatching { authService.isCycleCareAdmin() }.getOrDefault(false)
-            if (owner != authPreferences.effectiveUserId) return@launch
-            _uiState.value = _uiState.value.copy(
-                lastSyncTimestamp = result.timestamp,
-                lastSyncMessage = result.message,
-                lastSyncSuccess = result.isSuccess,
-                settings = restoredSettings,
-                onboardingProfile = restoredProfile,
-                showOnboarding = showOnboarding,
-                isCheckingCloudProfile = false,
-                isAdmin = isAdmin,
-                sessionNeedsReauthentication = if (result.isSuccess) false else
-                    (result.requiresAuthentication || _uiState.value.sessionNeedsReauthentication)
-            )
-            updateCalculations(restoredSettings, current.currentDate, current.selectedDate)
+            if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
+            _uiState.value = _uiState.value.copy(lastSyncTimestamp=result.timestamp,lastSyncMessage=result.message,
+                lastSyncSuccess=result.isSuccess,settings=restoredSettings,onboardingProfile=restoredProfile,isAdmin=isAdmin,
+                sessionNeedsReauthentication=if(result.isSuccess) false else result.requiresAuthentication || _uiState.value.sessionNeedsReauthentication)
+            updateCalculations(restoredSettings,_uiState.value.currentDate,_uiState.value.selectedDate)
         }
     }
 
@@ -1313,6 +1350,9 @@ class CycleCareViewModel(
         resetIdentityUiIfNeeded()
         _uiState.value = _uiState.value.copy(
             showAuthSheet = false,
+            showOnboarding = false,
+            isCheckingCloudProfile = true,
+            cloudProfileCheckFailed = false,
             isAppLocked = false,
             sessionNeedsReauthentication = false,
             authMode = authPreferences.accountMode,
@@ -1320,6 +1360,7 @@ class CycleCareViewModel(
             deviceId = authPreferences.deviceId,
             showQuickUnlockDialog = !authPreferences.isQuickUnlockAsked
         )
+        walletRealtime.start()
         autoSyncSilently()
     }
 
@@ -1355,6 +1396,7 @@ class CycleCareViewModel(
             showOnboarding = false,
             isCheckingCloudProfile = true
         )
+        walletRealtime.start()
         autoSyncSilently()
     }
 
@@ -1382,6 +1424,7 @@ class CycleCareViewModel(
                         lastSyncMessage = result.message,
                         lastSyncSuccess = true
                     )
+                    walletRealtime.start()
                     autoSyncSilently()
                 }
                 is com.cyclecare.app.data.supabase.AuthResult.VerificationRequired -> _uiState.value = _uiState.value.copy(
@@ -1553,9 +1596,11 @@ class CycleCareViewModel(
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) return
         viewModelScope.launch {
             val userIdentifier = authPreferences.effectiveUserId
+            val session = authPreferences.sessionGeneration
             val list = notificationService.fetchNotifications(userIdentifier)
 
             val verified = economyService.fetchVerifiedProfile(userIdentifier)
+            if (userIdentifier != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             var giftItem: com.cyclecare.app.data.economy.EconomyItem? = null
 
             if (verified is com.cyclecare.app.data.economy.EconomyResult.Success) {

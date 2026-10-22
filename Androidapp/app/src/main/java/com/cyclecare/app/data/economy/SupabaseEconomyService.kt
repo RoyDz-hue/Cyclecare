@@ -63,6 +63,21 @@ class SupabaseEconomyService(
     /**
      * Edge verification: sync and fetch verified economy state from Supabase.
      */
+    /** Minimal account presence only. Never restores health fields or grants backup consent. */
+    suspend fun hasRemoteProfile(): Boolean? = withContext(Dispatchers.IO) {
+        val initial = snapshot() ?: return@withContext null
+        try {
+            val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext null
+            val request = Request.Builder().url("$restUrl/rpc/my_account_start_state")
+                .header("apikey", anonKey).header("Authorization", "Bearer $token").post("{}".toRequestBody(jsonMediaType)).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful || !stillOwns(initial)) return@withContext null
+                val state = JSONObject(boundedBody(response) ?: return@withContext null)
+                if (state.optString("user_id") != initial.owner || !state.has("exists")) null else state.getBoolean("exists")
+            }
+        } catch (_: Exception) { null }
+    }
+
     suspend fun fetchVerifiedProfile(userId: String): EconomyResult<EconomyProfile> = withContext(Dispatchers.IO) {
         val initial = snapshot()
             ?: return@withContext EconomyResult.Error("A secure CycleCare session is required to load your cloud wallet.")
@@ -113,17 +128,15 @@ class SupabaseEconomyService(
             val spent = verifiedCounter("lifetime_spent")
 
             if (!stillOwns(initial)) throw Rejected("Session changed before account read")
-            val profReq = Request.Builder().url("$restUrl/profiles?user_id=eq.${java.net.URLEncoder.encode(effectiveId, "UTF-8")}&select=user_id,status,suspension_reason,suspended_until")
-                .header("apikey", anonKey).header("Authorization", "Bearer $token").get().build()
+            val profReq = Request.Builder().url("$restUrl/rpc/my_account_start_state")
+                .header("apikey", anonKey).header("Authorization", "Bearer $token").post("{}".toRequestBody(jsonMediaType)).build()
             val profBody = client.newCall(profReq).execute().use { response ->
                 val raw = boundedBody(response) ?: throw Rejected("Account status response was too large")
                 if (!stillOwns(initial)) throw Rejected("Session changed while checking account")
                 if (!response.isSuccessful) throw Rejected("Your account status couldn't be checked")
                 raw
             }
-            val profiles = runCatching { JSONArray(profBody) }.getOrElse { throw Rejected("Account status response was malformed") }
-            if (profiles.length() != 1) throw Rejected("Account status could not be verified")
-            val pObj = profiles.optJSONObject(0) ?: throw Rejected("Account status response was malformed")
+            val pObj = runCatching { JSONObject(profBody) }.getOrElse { throw Rejected("Account status response was malformed") }
             if (pObj.optString("user_id").trim() != initial.owner) throw Rejected("Account status owner mismatch")
             val profileStatus = pObj.optString("status").trim().uppercase()
             if (profileStatus !in VALID_ACCOUNT_STATUSES) throw Rejected("Account status could not be verified")

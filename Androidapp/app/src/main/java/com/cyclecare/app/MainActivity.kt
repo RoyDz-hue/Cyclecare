@@ -35,6 +35,11 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -136,6 +141,16 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, uiState.localDataOwnerKey) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onForeground()
+            if (event == Lifecycle.Event.ON_PAUSE) viewModel.onBackground()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); viewModel.onBackground() }
+    }
+
     CycleCareTheme {
         when {
             // First Launch Auth Flow (Account Creation / Sign In / Guest) BEFORE Onboarding
@@ -155,6 +170,16 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         CircularProgressIndicator()
                         androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(14.dp))
                         Text("Checking for your saved profile…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+
+            uiState.cloudProfileCheckFailed -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Your saved account could not be checked yet.")
+                        Text("Reconnect and try again. Your account has not been reset.")
+                        TextButton(onClick = { viewModel.autoSyncSilently() }) { Text("Try again") }
                     }
                 }
             }
