@@ -1,3 +1,4 @@
+import { formatCommandOutcome } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
 // (DB policy gate: tools, kinds, limits) -> admin approval for WRITE/RISKY ->
@@ -193,19 +194,7 @@ async function persistMessage(admin: any, adminId: string, role: string, kind: s
 }
 
 function resultSummaryText(outcome: { status: string; steps: unknown[] }): string {
-  const steps = (outcome.steps ?? []) as any[];
-  if (outcome.status === "done") {
-    const unverified = steps.filter((st) => st?.verified === false).length;
-    const labels = steps.map((st) => st?.label || st?.tool).filter(Boolean).join("; ");
-    return unverified > 0
-      ? `Done, but ${unverified} step(s) could not be confirmed afterwards: ${labels}`
-      : `Done: ${labels}`;
-  }
-  if (outcome.status === "failed") {
-    const failedStep = steps.find((st) => st?.ok !== true);
-    return `Some steps did not go through${failedStep?.error ? `: ${failedStep.error}` : "."}`;
-  }
-  return `Run ${outcome.status}.`;
+  return formatCommandOutcome(outcome);
 }
 
 // Post-execution read-back for writes: confirms the change actually landed.
@@ -245,6 +234,18 @@ async function verifyWrite(admin: any, tool: string, args: any): Promise<boolean
   } catch { return null; }
 }
 
+async function attachMemberNames(admin: any, result: any): Promise<any> {
+  const rows = Array.isArray(result) ? result : Object.values(result ?? {}).flatMap((v: any) => Array.isArray(v) ? v : []);
+  const ids = [...new Set(rows.map((r: any) => r?.user_id).filter(Boolean))];
+  if (!ids.length) return result;
+  const { data: profiles } = await admin.from("profiles").select("user_id,display_name").in("user_id", ids);
+  const { data: personas } = await admin.from("personas").select("persona_id,display_name").in("persona_id", ids.filter((id: any) => String(id).startsWith("persona:")).map((id: any) => String(id).slice(8)));
+  const names = new Map((profiles ?? []).map((p: any) => [p.user_id, p.display_name]));
+  for (const p of personas ?? []) names.set(`persona:${p.persona_id}`, p.display_name);
+  for (const row of rows) if (row?.user_id && names.get(row.user_id)) row.display_name = names.get(row.user_id);
+  return result;
+}
+
 const KIND_CACHE: Record<string, string> = {};
 async function toolKind(admin: any, tool: string): Promise<string> {
   if (KIND_CACHE[tool]) return KIND_CACHE[tool];
@@ -270,6 +271,11 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
     (kind === "READ" ? reads : writes).push({ index: i, step: steps[i] });
   }
   const readResults = await Promise.all(reads.map(({ step }) => executeStep(userClient, String(step.tool), step.args ?? {})));
+  for (let i = 0; i < reads.length; i++) {
+    if (readResults[i].ok && ["get_user_insights", "get_safety_signals"].includes(String(reads[i].step.tool))) {
+      readResults[i].result = await attachMemberNames(admin, readResults[i].result);
+    }
+  }
   const indexed: Record<number, unknown> = {};
   reads.forEach(({ index, step }, i) => { indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "READ", ...readResults[i] }; });
   for (const { index, step } of writes) {

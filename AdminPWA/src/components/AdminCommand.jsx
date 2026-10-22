@@ -3,32 +3,12 @@ import { Sparkles, Send, CheckCircle2, XCircle, Clock3, ShieldAlert, ChevronDown
 import {
   commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, planRiskLevel, adminIdFromConfig,
 } from '../lib/adminCommand.js';
+import { formatCommandOutcome } from '../lib/commandResults.js';
 import { adminResultMessage, getAdminSession } from '../lib/supabaseAdmin.js';
 
 // Admin Command chat: a ChatGPT/WhatsApp-style thread. Messages persist per
 // admin (backend table + local cache), paint instantly from the local cache,
 // then sync silently and stream in over realtime when available.
-function StepCard({ step, index }) {
-  const [open, setOpen] = useState(false);
-  const ok = step?.ok;
-  return (
-    <div className="glass-card" style={{ padding: '12px 14px', marginTop: 8 }}>
-      <button type="button" onClick={() => setOpen(!open)}
-        style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 8, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
-        {ok === true ? <CheckCircle2 size={16} color="#7ee2a8" /> : ok === false ? <XCircle size={16} color="#ff9eae" /> : <Clock3 size={14} color="#9aa4c0" />}
-        <span style={{ flex: 1, fontSize: 13 }}>{index + 1}. {step?.label || describeStep(step)}</span>
-        {step?.verified === true && <BadgeCheck size={14} color="#7ee2a8" title="Confirmed afterwards" />}
-        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-      </button>
-      {open && (
-        <pre style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#c4cbe4', maxHeight: 220, overflow: 'auto' }}>
-          {JSON.stringify(step?.result ?? step?.error ?? step, null, 2)}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 function PlanMessage({ message, busy, onApprove, onReject }) {
   const plan = { steps: message?.meta?.steps || [] };
   const risk = planRiskLevel(plan.steps);
@@ -78,8 +58,7 @@ function Bubble({ message, busy, onApprove, onReject }) {
           {message.meta?.status === 'done' ? <CheckCircle2 size={14} color="#7ee2a8" /> : <XCircle size={14} color="#ff9eae" />}
         </span>
       )}
-      {message.content}
-      {message.kind === 'result' && (message.meta?.steps || []).map((step, index) => <StepCard key={index} step={step} index={index} />)}
+      {message.kind === 'result' && message.meta?.steps?.length ? formatCommandOutcome({status: message.meta.status, steps: message.meta.steps}) : message.content}
       <div style={{ fontSize: 10, opacity: 0.55, marginTop: 4, textAlign: 'right' }}>
         {message.pending ? 'Sending...' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
@@ -308,12 +287,5 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
 }
 
 function resultText(res) {
-  const steps = res?.steps || [];
-  if (res?.status === 'done' || res?.success) {
-    const unverified = steps.filter((st) => st?.verified === false).length;
-    const labels = steps.map((st) => st?.label || st?.tool).filter(Boolean).join('; ');
-    return unverified > 0 ? `Done, but ${unverified} step(s) could not be confirmed afterwards: ${labels}` : `Done: ${labels}`;
-  }
-  const failedStep = steps.find((st) => st?.ok !== true);
-  return `Some steps did not go through${failedStep?.error ? `: ${failedStep.error}` : '.'}`;
+  return formatCommandOutcome(res);
 }
