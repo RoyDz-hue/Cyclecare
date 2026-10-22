@@ -9,6 +9,11 @@ export function formatCommandStep(step) {
   if (step?.ok !== true) return `${step?.label || 'This step'} could not be completed. No success is confirmed for this step.`;
   const r = step.result;
   switch (step.tool) {
+    case 'adjust_coins': {
+      if (step.verified !== true) return 'The coin change was accepted but not confirmed. Do not repeat it yet; review the balance and transaction history first.';
+      const balances = step.balances || [];
+      return 'Coin change confirmed.' + (balances.length ? '\n' + balances.map(x => `• Updated balance: ${number(x.balance)} coins.`).join('\n') : ' The updated balance was checked.');
+    }
     case 'get_user_insights': {
       if (!r || typeof r !== 'object') return 'Member insights are unavailable right now.';
       const sections = [];

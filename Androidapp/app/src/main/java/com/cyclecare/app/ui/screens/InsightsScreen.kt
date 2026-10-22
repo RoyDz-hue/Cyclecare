@@ -155,7 +155,7 @@ fun InsightsScreen(
                         BaselineStatTile(
                             icon = Icons.Default.AutoAwesome,
                             label = "Data Points",
-                            value = "${baseline.totalLoggedDays} logs",
+                            value = "${baseline.totalLoggedDays} ${if (baseline.totalLoggedDays == 1) "log" else "logs"}",
                             color = Color(0xFFC89D54)
                         )
                     }

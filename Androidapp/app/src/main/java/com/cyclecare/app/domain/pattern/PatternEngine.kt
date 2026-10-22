@@ -102,7 +102,9 @@ object PatternEngine {
         val configuredStart = settings.lastPeriodStartDate
             .takeIf(String::isNotBlank)
             ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        if (configuredStart != null && starts.none { it == configuredStart }) starts += configuredStart
+        // A configured start is a setup estimate, not a second observed episode.
+        // Never turn one saved bleeding log into a measured cycle interval.
+        if (configuredStart != null && starts.isEmpty()) starts += configuredStart
         return starts.distinct().sorted()
     }
 

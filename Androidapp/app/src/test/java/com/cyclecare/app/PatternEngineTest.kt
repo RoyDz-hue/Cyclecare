@@ -76,6 +76,17 @@ class PatternEngineTest {
     }
 
     @Test
+    fun oneBleedingLogDoesNotBecomeAnIntervalFromSetupDate() {
+        val result = PatternEngine.computeBaseline(
+            CycleSettings(averageCycleLength = 26, lastPeriodStartDate = "2026-10-10"),
+            listOf(bleed("2026-10-14"))
+        )
+        assertEquals(0, result.observedCycleIntervals)
+        assertEquals(26.0, result.averageCycleLength, 0.001)
+        assertEquals(1, result.totalLoggedDays)
+    }
+
+    @Test
     fun calculatePhaseForDateMapsCorrectlyAcrossCycle() {
         val settings = CycleSettings(
             averageCycleLength = 28,
