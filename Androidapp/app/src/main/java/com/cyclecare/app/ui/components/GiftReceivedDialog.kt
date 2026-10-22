@@ -223,7 +223,7 @@ fun GiftReceivedDialog(
                         }
 
                         Text(
-                            text = "Tap or drag to hear its ${item.harmonicPitchHz.toInt()} Hz crystal chime",
+                            text = "Tap or drag to hear its chime",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary
                         )

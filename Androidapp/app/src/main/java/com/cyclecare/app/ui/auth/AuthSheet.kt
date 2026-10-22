@@ -340,31 +340,6 @@ fun AuthSheet(
             }
         }
 
-        if (selectedTab == 0) {
-            TextButton(
-                onClick = {
-                    if (email.isBlank() || !email.contains("@")) {
-                        errorMessage = "Enter your email address first."
-                    } else {
-                        isLoading = true
-                        errorMessage = null
-                        coroutineScope.launch {
-                            when (val result = authService.sendMagicLink(email)) {
-                                is AuthResult.VerificationRequired -> successMessage = result.message
-                                is AuthResult.Success -> successMessage = result.message
-                                is AuthResult.Error -> errorMessage = result.errorMessage
-                            }
-                            isLoading = false
-                        }
-                    }
-                },
-                enabled = !isLoading,
-                modifier = Modifier.testTag("auth_magic_link_button")
-            ) {
-                Text("Email me a secure sign-in link")
-            }
-        }
-
         Spacer(modifier = Modifier.height(20.dp))
 
         // Divider

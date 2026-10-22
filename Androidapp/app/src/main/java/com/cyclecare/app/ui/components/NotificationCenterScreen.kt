@@ -1,6 +1,5 @@
 package com.cyclecare.app.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,8 +44,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.cyclecare.app.data.notification.UserNotification
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -60,28 +57,17 @@ fun NotificationCenterScreen(
     onMarkAllAsRead: () -> Unit,
     onRefresh: () -> Unit
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    // Dedicated full-screen notification center (not a modal pop-up).
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+            .systemBarsPadding()
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF21191A).copy(alpha = 0.52f))
-                .systemBarsPadding()
-                .clickable { onDismiss() },
-            contentAlignment = Alignment.Center
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface
         ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .fillMaxHeight(0.82f)
-                    .clickable(enabled = false) {},
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shadowElevation = 16.dp
-            ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -230,7 +216,6 @@ fun NotificationCenterScreen(
                 }
             }
         }
-    }
 }
 
 @Composable
