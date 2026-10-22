@@ -1,4 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
+import { supabaseSecretKey, sha256Hex } from "../_shared/payments.ts";
+import { readOnboardingBody } from "../_shared/onboarding-guard.js";
 import { corsHeaders } from "../_shared/cors.ts";
 
 /**
@@ -6,7 +9,7 @@ import { corsHeaders } from "../_shared/cors.ts";
  * onboarding steps 4-6. Input is the user's step-3 goals plus their answers so
  * far; output is a small set of adaptive questions with chip options.
  *
- * Privacy posture: no database reads or writes, no health records - only the
+ * Privacy posture: daily hashed network budget counters, no stored answers or health records - only the
  * onboarding metadata the client sends. Output is strictly validated; any
  * provider failure returns a structured error and the client falls back to its
  * local adaptive bank.
@@ -80,7 +83,7 @@ serve(async (req: Request) => {
   // Onboarding runs before guests hold a session JWT, so the gateway-level JWT
   // check is disabled in config.toml; require the app's publishable key instead.
   const expectedKey = publishableKey();
-  if (expectedKey && req.headers.get("apikey")?.trim() !== expectedKey) {
+  if (!expectedKey || req.headers.get("apikey")?.trim() !== expectedKey) {
     return jsonResponse({ success: false, error: "Unauthorized" }, 401);
   }
   const contentLength = Number(req.headers.get("content-length") || 0);
@@ -91,7 +94,7 @@ serve(async (req: Request) => {
 
   let input: Record<string, unknown>;
   try {
-    input = await req.json();
+    input = await readOnboardingBody(req);
   } catch {
     return jsonResponse({ success: false, error: "Invalid JSON request body" }, 400);
   }
@@ -100,6 +103,22 @@ serve(async (req: Request) => {
   if (!Number.isInteger(step) || step < 4 || step > 6) {
     return jsonResponse({ success: false, error: "step must be 4, 5 or 6" }, 400);
   }
+  // Budget failure returns a quiet local-bank response. No generated questions
+  // means existing clients retain the adaptive local questions already rendered.
+  const fallback = () => jsonResponse({ success:false, fallback:true, questions:[] });
+  const serviceKey = supabaseSecretKey();
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (!serviceKey || !supabaseUrl) return fallback();
+  // Gateway-supplied network hint is advisory; the global atomic cap remains
+  // authoritative even if a caller forges or rotates a forwarded address.
+  const network = (req.headers.get("x-forwarded-for") || "unknown").slice(0,256);
+  const day = new Date().toISOString().slice(0,10);
+  const scopeHash = await sha256Hex(serviceKey + ":" + day + ":" + network);
+  try {
+    const budgetClient=createClient(supabaseUrl,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});
+    const {data:allowed,error}=await budgetClient.rpc("claim_onboarding_generation",{p_scope_hash:scopeHash});
+    if(error || allowed!==true)return fallback();
+  } catch {return fallback();}
   const goals = Array.isArray(input.goals) ? input.goals.map((g) => cleanText(g, 80)).filter(Boolean).slice(0, 8) : [];
   const priorRaw = input.prior_answers && typeof input.prior_answers === "object" && !Array.isArray(input.prior_answers)
     ? input.prior_answers as Record<string, unknown>

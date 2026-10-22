@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readOnboardingBody} from './onboarding-guard.js';
+const req=(s)=>new Request('https://test.invalid',{method:'POST',body:s});
+test('small onboarding object accepted',async()=>assert.deepEqual(await readOnboardingBody(req('{"step":4}')),{step:4}));
+test('streamed size bound ignores false length',async()=>await assert.rejects(readOnboardingBody(req('x'.repeat(8193))),/body-too-large/));
+test('array and malformed input refused',async()=>{await assert.rejects(readOnboardingBody(req('[]')),/invalid-body/);await assert.rejects(readOnboardingBody(req('bad')));});
+test('stalled stream times out',async()=>await assert.rejects(readOnboardingBody(new Request('https://test.invalid',{method:'POST',body:new ReadableStream({start(){}}),duplex:'half'}),8192,5),/body-timeout/));
+import {readFile} from 'node:fs/promises';import {stripTypeScriptTypes} from 'node:module';
+const source=await readFile(new URL('../onboarding-questions/index.ts',import.meta.url),'utf8');
+async function handlerWith({configured=true,allowed=false}={}){let handler,calls=0;const js=stripTypeScriptTypes(source.split('\n').filter(x=>!x.startsWith('import ')).join('\n'));new Function('serve','Deno','corsHeaders','readOnboardingBody','supabaseSecretKey','sha256Hex','createClient','fetch',js)(h=>handler=h,{env:{get:n=>({SUPABASE_ANON_KEY:configured?'public-test':undefined,GEMINI_API_KEY:'fake-test-key',SUPABASE_URL:'https://test.invalid'})[n]}},{},readOnboardingBody,()=> 'fake-service',async()=> 'a'.repeat(64),()=>({rpc:async()=>({data:allowed,error:null})}),async()=>{calls++;throw new Error('Provider must never be called');});return {call:handler,calls:()=>calls};}
+test('quota denial returns quiet local-bank fallback without provider call',async()=>{const h=await handlerWith();const r=await h.call(new Request('https://test.invalid',{method:'POST',headers:{apikey:'public-test'},body:'{"step":4}'}));assert.equal(r.status,200);assert.deepEqual(await r.json(),{success:false,fallback:true,questions:[]});assert.equal(h.calls(),0);});
+test('missing configured key fails closed',async()=>{const h=await handlerWith({configured:false});const r=await h.call(req('{"step":4}'));assert.equal(r.status,401);assert.equal(h.calls(),0);});
