@@ -113,12 +113,14 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
    return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
  }
  if(fresh&&active?.run_id) await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});
+ if(!fresh&&active?.cancelled&&(isConfirmation(text)||/reason|decide|choose/i.test(text)))return {success:true,type:"chat",message:"The previous coin request was cancelled. Start a new request with an amount and recipient; no change has been made."};
  if(!fresh&&!active)return null;
- if(/^(cancel|stop|forget it)$/i.test(text.trim())) {if(active?.run_id)await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);return {success:true,type:"chat",message:"Cancelled. No change was made."};}
+ if(/^(cancel|stop|forget it)$/i.test(text.trim())) {if(active?.run_id)await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:{cancelled:true},updated_at:new Date().toISOString()});return {success:true,type:"chat",message:"Cancelled. No change was made."};}
  if(!fresh&&active?.awaiting==="reason"&&/\b(?:coins?|from|to)\b/i.test(text)&&/\d/.test(text)) {
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
    return {success:true,type:"clarify",message:"That looks like a changed amount or recipient, not a reason. I cleared the earlier request. Please state the new coin action in full; no change was made."};
  }
+ if(active?.cancelled&&!fresh)return null;
  let st=fresh?{...fresh,recipient:null,awaiting:"recipient"}:applyCoinReply(active,text);
  const save=async()=>{const {error}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:st,updated_at:new Date().toISOString()});if(error)throw new Error("Pending request could not be saved");};
  const reply=async(message:string)=>{
@@ -142,7 +144,10 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
    if(isConfirmation(text)&&st.candidates?.length!==1)return reply("Please choose a specific account by email from the list, or say cancel. No change has been made.");
    const {data,error}=await userClient.rpc("admin_find_recipients",{p_query:st.query});
    if(error||!Array.isArray(data))return reply("I couldn't check the member list. Try their exact email, or say cancel. No change has been made.");
-   const candidates=[...new Map(data.map((p:any)=>[p.user_id,p])).values()] as any[];
+   let candidates=[...new Map(data.map((p:any)=>[p.user_id,p])).values()] as any[];
+   const q=st.query.toLowerCase();
+   const strong=candidates.filter((p:any)=>String(p.display_name).toLowerCase().includes(q)||String(p.email).toLowerCase().includes(q));
+   if(strong.length)candidates=strong;
    st.candidates=candidates;
    if(candidates.length!==1){st.awaiting="recipient";return reply(candidates.length?`Which member did you mean? No change has been made.\n${candidates.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nReply with a number, their email, or say cancel.`:`No member matches "${st.query}". Try their full name, exact email, or say cancel. No change has been made.`);}
    st.recipient=candidates[0];

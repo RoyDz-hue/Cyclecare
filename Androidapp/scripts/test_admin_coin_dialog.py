@@ -12,7 +12,7 @@ try:
  uid=users[0]['user']['id'];sql(f"insert into cyclecare_admin_roles(user_id) values('{uid}')")
  def cmd(text):return post(base+'/functions/v1/admin-command',{'action':'message','prompt':text},{'Authorization':'Bearer '+users[0]['access_token']})
  cmd('Deduct 1000 coins from SelectionKevin Alpha')
- r=cmd('Debit amount of 651 coins from SelectionKevin Beta ledger');assert '651' in r['message'] and 'Beta' in r['message'];r=cmd('Test adj');assert r['plan']['steps'][0]['args']['delta']==-651 and r['plan']['steps'][0]['args']['targets']==[users[1]['user']['id']];print('Fresh debit replaced -1000/Alpha with -651/Beta; approval held')
+ r=cmd('Debit amount of 651 coins from '+users[1]['user']['email']+' ledger');print('REPLACEMENT',r);assert '651' in r['message'] and 'Beta' in r['message'];r=cmd('Test adj');assert r['plan']['steps'][0]['args']['delta']==-651 and r['plan']['steps'][0]['args']['targets']==[users[1]['user']['id']];print('Fresh debit replaced -1000/Alpha with -651/Beta; approval held')
  cmd('cancel');r=cmd('you decide');assert not r.get('run_id');print('Cancel cleared pending request')
  ids=','.join("'"+u['user']['id']+"'" for u in users);count=sql(f"select count(*) as n from coin_transactions where user_id in ({ids})")[0]['n'];assert count==0;print('No coin transactions:',count)
 finally:
