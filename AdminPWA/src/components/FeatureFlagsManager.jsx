@@ -68,7 +68,7 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
       </div>
 
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
+        <table className="rtable" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
               <th style={{ padding: '14px 18px', fontWeight: 600 }}>Flag Key</th>
@@ -90,7 +90,7 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
                 const isSpecialGate = flag.key === 'v3_sync_enabled';
                 return (
                   <tr key={flag.key} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '16px 18px', fontFamily: 'monospace', fontWeight: 600, color: '#FFF' }}>
+                    <td data-label="Flag" style={{ padding: '16px 18px', fontFamily: 'monospace', fontWeight: 600, color: '#FFF' }}>
                       {flag.key}
                       {isSpecialGate && (
                         <span className="badge badge-gold" style={{ marginLeft: 8, fontSize: 10 }}>
@@ -98,17 +98,17 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
+                    <td data-label="Description" style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
                       {flag.key === 'v3_sync_enabled'
                         ? 'Enables client-side conflict-safe V3 sync of private health data.'
                         : 'Runtime configuration flag.'}
                     </td>
-                    <td style={{ padding: '16px 18px' }}>
+                    <td data-label="Status" style={{ padding: '16px 18px' }}>
                       <span className={`badge ${isEnabled ? 'badge-gold' : 'badge-rose'}`}>
                         {isEnabled ? 'ENABLED' : 'DISABLED'}
                       </span>
                     </td>
-                    <td style={{ padding: '16px 18px', textAlign: 'right' }}>
+                    <td data-label="" style={{ padding: '16px 18px', textAlign: 'right' }}>
                       <button
                         onClick={() => toggleFlag(flag.key, flag.value)}
                         disabled={updatingKey === flag.key}

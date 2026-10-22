@@ -62,7 +62,7 @@ export default function SafetyAuditViewer({ supabaseConfig, onNotification }) {
       </div>
 
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
+        <table className="rtable" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
               <th style={{ padding: '14px 18px', fontWeight: 600 }}>Severity Level</th>
@@ -84,22 +84,22 @@ export default function SafetyAuditViewer({ supabaseConfig, onNotification }) {
                 const isUrgent = evt.level?.toUpperCase() === 'URGENT';
                 return (
                   <tr key={evt.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '16px 18px' }}>
+                    <td data-label="Severity" style={{ padding: '16px 18px' }}>
                       <span className={`badge ${isUrgent ? 'badge-rose' : 'badge-gold'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <AlertTriangle size={12} />
                         {evt.level}
                       </span>
                     </td>
-                    <td style={{ padding: '16px 18px', fontFamily: 'monospace', color: '#FFF' }}>
+                    <td data-label="Trigger" style={{ padding: '16px 18px', fontFamily: 'monospace', color: '#FFF' }}>
                       {evt.trigger_key}
                     </td>
-                    <td style={{ padding: '16px 18px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
+                    <td data-label="Member" style={{ padding: '16px 18px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
                       {evt.user_id ? evt.user_id.slice(0, 16) + '…' : 'Anonymous'}
                     </td>
-                    <td style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
+                    <td data-label="Time" style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
                       {new Date(evt.created_at).toLocaleString()}
                     </td>
-                    <td style={{ padding: '16px 18px' }}>
+                    <td data-label="Status" style={{ padding: '16px 18px' }}>
                       {evt.resolved_at ? (
                         <span style={{ color: '#4EBA88', display: 'flex', alignItems: 'center', gap: 4 }}>
                           <CheckCircle2 size={13} /> Resolved

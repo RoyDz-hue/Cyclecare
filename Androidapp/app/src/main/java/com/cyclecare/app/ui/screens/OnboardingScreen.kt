@@ -626,7 +626,7 @@ private fun Step2PrivacyFirst(
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
                         Text(
-                            text = "Allow cloud backup and sync",
+                            text = "Back up my records online",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.clickable { onCloudSyncAllowedChange(!isCloudSyncAllowed) }

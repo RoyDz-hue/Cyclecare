@@ -48,8 +48,8 @@ fun AccountRestrictionScreen(
 ) {
     val accentColor = if (isBanned) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
     val containerAccent = if (isBanned) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
-    val title = if (isBanned) "Account Access Revoked" else "Account Temporarily Suspended"
-    val subtitle = if (isBanned) "Administrative Policy Enforcement" else "Temporary Sanctuary Hold"
+    val title = if (isBanned) "Account closed" else "Account Temporarily Suspended"
+    val subtitle = if (isBanned) "A note from the CycleCare team" else "A short pause"
 
     Box(
         modifier = Modifier
@@ -126,9 +126,9 @@ fun AccountRestrictionScreen(
                     Column {
                         Text(
                             text = if (isBanned)
-                                "This CycleCare account has been permanently restricted by administration due to a violation of community integrity or usage guidelines."
+                                "This CycleCare account has been permanently closed after breaking our community or usage guidelines."
                             else
-                                "Your access is temporarily suspended. You will regain access once the administrative review duration has concluded.",
+                                "Your access is paused for now. You'll be able to sign back in once the review period ends.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 20.sp
@@ -137,7 +137,7 @@ fun AccountRestrictionScreen(
                         if (!reason.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Notice details: \"$reason\"",
+                                text = "Why: \"$reason\"",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = accentColor
                             )
@@ -146,7 +146,7 @@ fun AccountRestrictionScreen(
                         if (!suspendedUntil.isNullOrBlank() && !isBanned) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Hold until: $suspendedUntil",
+                                text = "Paused until: $suspendedUntil",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

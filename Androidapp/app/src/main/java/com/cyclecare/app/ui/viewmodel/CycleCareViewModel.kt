@@ -111,7 +111,7 @@ data class CycleUiState(
     val onboardingProfile: OnboardingProfile? = null,
     val isSyncing: Boolean = false,
     val lastSyncTimestamp: Long = 0L,
-    val lastSyncMessage: String = "Never synced",
+    val lastSyncMessage: String = "Not backed up yet",
     val lastSyncSuccess: Boolean = false,
     val sessionNeedsReauthentication: Boolean = false,
     val authMode: String = "ANONYMOUS",
@@ -211,7 +211,7 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(
                 syncConflicts = result.getOrDefault(emptyList()),
                 isLoadingSyncConflicts = false,
-                syncConflictMessage = result.exceptionOrNull()?.let { "Could not load local conflict review." }
+                syncConflictMessage = result.exceptionOrNull()?.let { "The review couldn't be loaded. Please try again." }
             )
         }
     }
@@ -234,9 +234,9 @@ class CycleCareViewModel(
                 syncConflicts = remaining ?: _uiState.value.syncConflicts,
                 isResolvingSyncConflict = false,
                 syncConflictMessage = when {
-                    operation.isFailure -> "Conflict was not changed: ${operation.exceptionOrNull()?.message ?: "review is unavailable"}."
-                    stillUnresolved -> "This conflict changed while it was being reviewed. Refresh before choosing again."
-                    else -> "Conflict resolved. Review is complete; no automatic merge was performed."
+                    operation.isFailure -> "That choice couldn't be saved. Please check again and retry."
+                    stillUnresolved -> "This record changed while you were reviewing it. Please check again before choosing."
+                    else -> "Done — your choice was saved. Nothing was merged automatically."
                 }
             )
         }
@@ -670,7 +670,7 @@ class CycleCareViewModel(
     fun deleteCloudHealthCopy() {
         if (_uiState.value.isDeletingCloudHealth) return
         if (authPreferences.isLocalOnlyMode || authPreferences.userId.isNullOrBlank()) {
-            _uiState.value = _uiState.value.copy(cloudHealthDeletionMessage = "No cloud account is connected. Local records have not been deleted.")
+            _uiState.value = _uiState.value.copy(cloudHealthDeletionMessage = "No online account is connected, so only this device's records were erased.")
             return
         }
         val owner = authPreferences.effectiveUserId
@@ -680,21 +680,21 @@ class CycleCareViewModel(
         // upload health data while deletion is in flight (or after a failed
         // request). The pending revoke is completed by the normal sync path.
         if (authPreferences.pauseHealthSyncFor(owner, session) == null) {
-            _uiState.value = _uiState.value.copy(cloudHealthDeletionMessage = "The privacy decision could not be saved or your account changed. No deletion was sent. Retry before assuming deletion succeeded.")
+            _uiState.value = _uiState.value.copy(cloudHealthDeletionMessage = "Your choice couldn't be saved, so nothing was erased online. Please try again.")
             return
         }
         authPreferences.isAiSharingAllowed = false
         resetPrivateConversation()
         _uiState.value = _uiState.value.copy(isDeletingCloudHealth = true, isCloudSyncAllowed = false,
-            isAiSharingAllowed = false, cloudHealthDeletionMessage = "Deleting the cloud health copy…")
+            isAiSharingAllowed = false, cloudHealthDeletionMessage = "Erasing your online copy…")
         viewModelScope.launch {
             val token = com.cyclecare.app.data.supabase.SupabaseSessionManager.validAccessToken(authPreferences)
             if (authPreferences.effectiveUserId != owner || authPreferences.sessionGeneration != session) return@launch
             val deleted = com.cyclecare.app.domain.ai.CarePrivacyService.deleteCloudHealthCopy(token)
             if (authPreferences.effectiveUserId != owner || authPreferences.sessionGeneration != session) return@launch
             _uiState.value = _uiState.value.copy(isDeletingCloudHealth = false,
-                cloudHealthDeletionMessage = if (deleted) "Cloud health records were deleted. Local records remain; sync is off. Account, payment, economy and audit records are retained. Provider-side processing records are not deleted by this action."
-                    else "Cloud deletion was not confirmed. Sync remains off. The secure deletion service may not be deployed or the connection failed; retry before assuming deletion succeeded.")
+                cloudHealthDeletionMessage = if (deleted) "Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept."
+                    else "The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.")
         }
     }
 
@@ -973,20 +973,20 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = false,
                 isPaymentSuccess = false,
-                paymentStatusMessage = "Network required. Please connect to the internet to process M-Pesa payments."
+                paymentStatusMessage = "You're offline. Connect to the internet to pay with M-Pesa."
             )
             return
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = true,
-                paymentStatusMessage = "Dispatching M-Pesa STK Push to $phoneNumber..."
+                paymentStatusMessage = "Sending a payment prompt to $phoneNumber…"
             )
             val result = supabasePaymentService.initiateMpesaStkPush(phoneNumber, amountKes, pkg, _uiState.value.economyProfile)
             val extRef = result.externalReference ?: ""
             if (result.isSuccess && extRef.isNotBlank()) {
                 _uiState.value = _uiState.value.copy(
-                    paymentStatusMessage = "M-Pesa STK prompt sent. Enter your PIN on your phone to complete..."
+                    paymentStatusMessage = "Payment prompt sent. Enter your M-Pesa PIN on your phone to finish…"
                 )
                 pollAndCompletePayment(extRef, timeoutSeconds = 60L)
             } else {
@@ -1005,14 +1005,14 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = false,
                 isPaymentSuccess = false,
-                paymentStatusMessage = "Network required. Please connect to the internet to process Card payments."
+                paymentStatusMessage = "You're offline. Connect to the internet to pay by card."
             )
             return
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = true,
-                paymentStatusMessage = "Verifying Card payment with PayPal ACDC..."
+                paymentStatusMessage = "Checking your card payment…"
             )
             val result = paymentUseCase.processCard(cardNumber, expiry, cvv, pkg, _uiState.value.economyProfile)
             val extRef = result.externalReference ?: ""
@@ -1034,14 +1034,14 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = false,
                 isPaymentSuccess = false,
-                paymentStatusMessage = "Network required. Please connect to the internet to process PayPal payments."
+                paymentStatusMessage = "You're offline. Connect to the internet to pay with PayPal."
             )
             return
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = true,
-                paymentStatusMessage = "Verifying PayPal order..."
+                paymentStatusMessage = "Checking your PayPal payment…"
             )
             val result = paymentUseCase.processPaypal(pkg, _uiState.value.economyProfile)
             val extRef = result.externalReference ?: ""
@@ -1063,14 +1063,14 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = false,
                 isPaymentSuccess = false,
-                paymentStatusMessage = "Network required. Please connect to the internet to process Crypto payments."
+                paymentStatusMessage = "You're offline. Connect to the internet to pay with crypto."
             )
             return
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isPaymentProcessing = true,
-                paymentStatusMessage = "Waiting for OKX $currency deposit confirmation..."
+                paymentStatusMessage = "Waiting for your $currency deposit to confirm…"
             )
             val result = paymentUseCase.processCrypto(currency, pkg, _uiState.value.economyProfile)
             val extRef = result.externalReference ?: ""
@@ -1099,7 +1099,7 @@ class CycleCareViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isMpesaProcessing = true,
-                mpesaStatusMessage = "M-Pesa STK prompt sent to $phoneNumber. Confirm with PIN..."
+                mpesaStatusMessage = "Payment prompt sent to $phoneNumber. Confirm with your M-Pesa PIN…"
             )
             val result = paymentUseCase.initiateMpesa(
                 phoneNumber = phoneNumber,
@@ -1158,21 +1158,21 @@ class CycleCareViewModel(
                         economyProfile = pollResult.profile,
                         isMpesaProcessing = false,
                         isMpesaSuccess = true,
-                        mpesaStatusMessage = "M-Pesa payment verified! Coins added to your vault."
+                        mpesaStatusMessage = "Payment confirmed! Coins added to your vault."
                     )
                 }
                 is PaymentPollResult.Failed -> {
                     _uiState.value = _uiState.value.copy(
                         isMpesaProcessing = false,
                         isMpesaSuccess = false,
-                        mpesaStatusMessage = "M-Pesa status: ${pollResult.status.uppercase()}. Transaction was not completed."
+                        mpesaStatusMessage = "The payment wasn't completed. No money was taken and no coins were added."
                     )
                 }
                 is PaymentPollResult.Timeout -> {
                     _uiState.value = _uiState.value.copy(
                         isMpesaProcessing = false,
                         isMpesaSuccess = false,
-                        mpesaStatusMessage = "M-Pesa verification timed out. If money was deducted, balance will update automatically."
+                        mpesaStatusMessage = "We couldn't confirm the payment in time. If money left your M-Pesa, your coins will appear automatically."
                     )
                 }
             }
@@ -1336,7 +1336,7 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
                 settings = settings, onboardingProfile = profile, showOnboarding = !settings.isOnboardingCompleted,
                 isCheckingCloudProfile = false, isAppLocked = authPreferences.isPinEnabled || authPreferences.isFingerprintEnabled,
-                isCloudSyncAllowed = false, isAiSharingAllowed = false, lastSyncMessage = "Local only · no cloud account created")
+                isCloudSyncAllowed = false, isAiSharingAllowed = false, lastSyncMessage = "On this device only · no online account")
         }
     }
 
@@ -1444,7 +1444,7 @@ class CycleCareViewModel(
     fun transferCoins(recipientEmail: String, amount: Long) {
         if (!com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)) {
             _uiState.value = _uiState.value.copy(
-                economyToastMessage = "Peer coin transfers require an active network connection."
+                economyToastMessage = "Sending coins needs an internet connection. Please reconnect and try again."
             )
             return
         }
@@ -1858,10 +1858,10 @@ class CycleCareViewModel(
             cloudJob?.join()
 
             val message = when {
-                !hasCloudAccount -> "This device's records were erased. No cloud account is connected."
-                !cloudArmed -> "This device's records were erased. Cloud deletion was not sent because the privacy decision could not be saved; sync is off, retry from a signed-in account."
-                cloudDeleted == true -> "Your records were erased from this device and the synced cloud copy was deleted."
-                else -> "This device's records were erased, but cloud deletion was not confirmed. Sync remains off; retry before assuming the cloud copy is gone."
+                !hasCloudAccount -> "This device's records were erased. No online account is connected."
+                !cloudArmed -> "This device's records were erased. The online erase wasn't sent because your choice couldn't be saved — please try again while signed in."
+                cloudDeleted == true -> "Your records were erased from this device and your online copy was erased too."
+                else -> "This device's records were erased, but the online erase couldn't be confirmed. Please try again before assuming your online copy is gone."
             }
 
             val resetSettings = repository.getSettings()

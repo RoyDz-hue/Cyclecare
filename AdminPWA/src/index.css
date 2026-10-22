@@ -311,6 +311,26 @@ body {
   }
 }
 
+/* Wide data tables become stacked, labelled cards on phones */
+@media (max-width: 700px) {
+  .rtable thead { display: none; }
+  .rtable, .rtable tbody, .rtable tr, .rtable td { display: block; width: 100%; }
+  .rtable tr { border-bottom: 1px solid var(--border-subtle); padding: 10px 0; }
+  .rtable td { padding: 5px 16px !important; text-align: left !important; }
+  .rtable td > div { flex-wrap: wrap; }
+  .rtable td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+  }
+  .rtable td:not([data-label])::before, .rtable td[data-label=""]::before { content: none; }
+}
+
 /* Users table becomes stacked cards on phones */
 @media (max-width: 700px) {
   .users-table thead { display: none; }

@@ -63,7 +63,7 @@ fun CoinTransferDialog(
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     )
                     Text(
-                        text = "Share utility coins with another registered sister",
+                        text = "Share coins with another registered sister",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -128,7 +128,7 @@ fun WelcomeAuthScreen(
         if (!authService.isSecureStorageAvailable) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Secure credential storage is unavailable. Sign-in and app lock are paused until device security is restored.",
+                text = "Your device's security features aren't responding, so sign-in and app lock are paused for now. Restarting your device usually fixes this.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center,
@@ -373,7 +373,7 @@ fun WelcomeAuthScreen(
                     val authorizationUrl = authService.createGoogleSignInUrl()
                     context.startActivity(Intent(Intent.ACTION_VIEW, authorizationUrl.toUri()))
                 } catch (error: Exception) {
-                    errorMessage = error.message ?: "Could not start Google sign-in."
+                    errorMessage = "Google sign-in couldn't start. Please try again."
                 }
             },
             enabled = !isLoading,

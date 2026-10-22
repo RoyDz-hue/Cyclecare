@@ -110,7 +110,7 @@ fun UnifiedGamifiedCheckoutDialog(
             onDismissRequest = onDismiss,
             modifier = Modifier.testTag("checkout_unavailable"),
             title = { Text("Checkout unavailable") },
-            text = { Text("Payments are closed while settlement and hosted-sandbox acceptance are incomplete. Do not send a payment. No payment details are needed.") },
+            text = { Text("Payments aren't open just yet. Nothing will be charged, and no payment details are needed.") },
             confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") } }
         )
         return

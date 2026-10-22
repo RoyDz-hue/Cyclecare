@@ -100,7 +100,7 @@ class SupabaseSyncService(
             } catch (_: Exception) {
                 blockedRecords += e.recordId
                 if (!current(owner, session, local, server)) break
-                dao.retry(owner, e.operationId, System.currentTimeMillis() + (1_000L shl e.attempts.coerceIn(0, 6)), "Sync retry or manual conflict review required")
+                dao.retry(owner, e.operationId, System.currentTimeMillis() + (1_000L shl e.attempts.coerceIn(0, 6)), "Backup needs another try")
             }
         }
         applied
@@ -108,33 +108,33 @@ class SupabaseSyncService(
 
     suspend fun syncAll(): SyncResult = withContext(Dispatchers.IO) {
         if (!authPreferences.isCloudSyncAllowed && !authPreferences.hasPendingHealthSyncRevoke)
-            return@withContext SyncResult(true, "Cloud sync is disabled; no health request was made.")
-        val owner = authPreferences.userId ?: return@withContext SyncResult(false, "An authenticated account is required.")
-        if (OwnerDataGate.isWiped(authPreferences.context, owner) && !authPreferences.hasPendingHealthSyncRevoke) return@withContext SyncResult(true, "Local data was wiped; cloud sync remains paused.")
+            return@withContext SyncResult(true, "Online backup is off, so nothing was sent.")
+        val owner = authPreferences.userId ?: return@withContext SyncResult(false, "Please sign in to back up your records.")
+        if (OwnerDataGate.isWiped(authPreferences.context, owner) && !authPreferences.hasPendingHealthSyncRevoke) return@withContext SyncResult(true, "This device's records were erased; online backup stays paused.")
         // A pending withdrawal sends only a consent decision, never a health payload.
         if (!authPreferences.hasPendingHealthSyncRevoke && (!authPreferences.isCloudSyncAllowed || !conflictSafeProtocolReleased()))
-            return@withContext SyncResult(false, "Cloud health sync is paused pending V3 release acceptance.")
+            return@withContext SyncResult(false, "Online backup is paused for now. Your records stay safe on this device.")
         val token = when (val state = SupabaseSessionManager.resolveAccessToken(authPreferences)) {
             is AccessTokenResolution.Valid -> state.token
-            is AccessTokenResolution.Missing, is AccessTokenResolution.ReauthenticationRequired -> return@withContext SyncResult(false, "Sign in to complete consent revocation or sync.", requiresAuthentication = true)
-            AccessTokenResolution.TemporarilyUnavailable -> return@withContext SyncResult(false, "Secure session unavailable; local data remains private.", shouldRetry = true)
+            is AccessTokenResolution.Missing, is AccessTokenResolution.ReauthenticationRequired -> return@withContext SyncResult(false, "Please sign in again to finish.", requiresAuthentication = true)
+            AccessTokenResolution.TemporarilyUnavailable -> return@withContext SyncResult(false, "Your secure session isn't available right now. Your records stay private on this device.", shouldRetry = true)
         }
         val transport = OkHttpHealthSyncV3Transport(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client)
         try {
             if (authPreferences.hasPendingHealthSyncRevoke) {
                 requestV3Consent(false, transport, token)
-                return@withContext SyncResult(true, "Cloud sync consent withdrawal confirmed.")
+                return@withContext SyncResult(true, "Your choice was saved. Online backup is off.")
             }
             val local = authPreferences.healthConsentGeneration; val session = authPreferences.sessionGeneration
-            val server = authPreferences.serverHealthConsentGeneration ?: return@withContext SyncResult(false, "Explicit V3 consent is required.")
+            val server = authPreferences.serverHealthConsentGeneration ?: return@withContext SyncResult(false, "Please allow online backup in Settings first.")
             val pulled = pull(owner, local, server, session, transport, token); val uploaded = executeV3Outbox(transport, token)
-            if (!current(owner, session, local, server)) return@withContext SyncResult(false, "Sync stopped because the account or consent changed.")
+            if (!current(owner, session, local, server)) return@withContext SyncResult(false, "Backup stopped because the account or your choices changed.")
             val timestamp = System.currentTimeMillis(); val conflicts = databaseProvider.current().healthSyncDao().conflicts(owner).size
             authPreferences.lastSyncTimestamp = timestamp; authPreferences.lastSyncSuccess = conflicts == 0
-            val message = if (conflicts > 0) "$conflicts sync conflict(s) need your review; no automatic overwrite was performed." else "V3 sync completed ($uploaded uploaded, $pulled received)."
+            val message = if (conflicts > 0) "$conflicts saved record(s) need your choice in Settings; nothing was overwritten." else "Backup complete ($uploaded sent, $pulled received)."
             authPreferences.lastSyncMessage = message
             SyncResult(conflicts == 0, message, syncedLogsCount = uploaded + pulled, timestamp = timestamp)
-        } catch (_: Exception) { SyncResult(false, "Sync or consent withdrawal could not finish. Local changes remain saved; retry is required.", shouldRetry = true) }
+        } catch (_: Exception) { SyncResult(false, "Backup couldn't finish. Your changes stay saved on this device; please try again.", shouldRetry = true) }
     }
     suspend fun pullRemoteUpdates(userId: String): Int = withContext(Dispatchers.IO) {
         if (!conflictSafeProtocolReleased() || !authPreferences.isCloudSyncAllowed) return@withContext 0

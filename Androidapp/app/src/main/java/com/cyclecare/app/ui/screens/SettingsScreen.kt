@@ -280,9 +280,9 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth().testTag("sync_conflict_status_card")
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Text("Cloud sync review", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text("Backup check", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Text(
-                            if (uiState.lastSyncSuccess) "No unresolved sync error is reported." else "Sync is paused or needs attention. CycleCare never silently overwrites a conflicting health record.",
+                            if (uiState.lastSyncSuccess) "Everything looks good." else "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -291,7 +291,7 @@ fun SettingsScreen(
                         if (!uiState.lastSyncSuccess) {
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(onClick = viewModel::triggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
-                                Text("Review / retry")
+                                Text("Check again")
                             }
                         }
                     }
@@ -308,9 +308,9 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth().testTag("sync_conflict_review_card")
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Text("Review local sync conflicts", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text("Records that need your choice", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Text(
-                            "Cloud health sync remains disabled pending release. These locally retained conflicts can still be reviewed offline. There is no automatic merge.",
+                            "Online backup is off for now. These saved records disagree with their backed-up copies, and you can review them here on this device. Nothing is merged or overwritten automatically.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -323,10 +323,10 @@ fun SettingsScreen(
                             onClick = viewModel::loadSyncConflicts,
                             enabled = !uiState.isLoadingSyncConflicts && !uiState.isResolvingSyncConflict,
                             modifier = Modifier.testTag("refresh_sync_conflicts_button")
-                        ) { Text(if (uiState.isLoadingSyncConflicts) "Refreshing…" else "Refresh conflicts") }
+                        ) { Text(if (uiState.isLoadingSyncConflicts) "Checking…" else "Check again") }
                         if (uiState.syncConflicts.isEmpty() && !uiState.isLoadingSyncConflicts) {
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("No unresolved local conflicts.", style = MaterialTheme.typography.bodySmall)
+                            Text("Nothing needs your choice right now.", style = MaterialTheme.typography.bodySmall)
                         }
                         uiState.syncConflicts.forEach { conflict ->
                             SyncConflictReviewRow(
@@ -771,7 +771,7 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showUnifiedEraseDialog = false },
             title = { Text("Erase your data?") },
-            text = { Text("This permanently deletes your cycle records, symptoms, notes and personal patterns from this device AND any synced cloud copy, in parallel. Account identity, payment and audit records are retained. This cannot be undone.") },
+            text = { Text("This permanently deletes your cycle records, symptoms, notes and personal patterns from this device AND your online copy, at the same time. Your account, purchases and coins are kept. This cannot be undone.") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -793,20 +793,20 @@ fun SettingsScreen(
     val conflict = selectedConflict
     val keepLocal = selectedResolution
     if (conflict != null && keepLocal != null) {
-        val localPreview = conflict.localPayloadJson?.let(::boundedConflictPreview) ?: "(local payload unavailable)"
-        val remotePreview = if (conflict.remoteTombstone) "(server deletion — this deletion is final)"
-        else conflict.remotePayloadJson?.let(::boundedConflictPreview) ?: "(server payload unavailable)"
+        val localPreview = conflict.localPayloadJson?.let(::boundedConflictPreview) ?: "(nothing saved on this device)"
+        val remotePreview = if (conflict.remoteTombstone) "(the backed-up copy was erased — that can't be undone)"
+        else conflict.remotePayloadJson?.let(::boundedConflictPreview) ?: "(no backed-up copy available)"
         AlertDialog(
             onDismissRequest = { if (!uiState.isResolvingSyncConflict) { selectedConflict = null; selectedResolution = null } },
-            title = { Text(if (keepLocal) "Keep this local version?" else "Use this server version?") },
+            title = { Text(if (keepLocal) "Keep this device\u2019s version?" else "Use the backed-up version?") },
             text = {
                 Column {
-                    Text("Review the bounded previews before resolving. This action does not merge values.")
+                    Text("Review both versions before choosing. Nothing is merged automatically.")
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Local revision ${conflict.localRevision}", fontWeight = FontWeight.Bold)
+                    Text("On this device", fontWeight = FontWeight.Bold)
                     Text(localPreview, style = MaterialTheme.typography.bodySmall)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Server revision ${conflict.remoteRevision}", fontWeight = FontWeight.Bold)
+                    Text("Backed-up copy", fontWeight = FontWeight.Bold)
                     Text(remotePreview, style = MaterialTheme.typography.bodySmall)
                 }
             },
@@ -817,7 +817,7 @@ fun SettingsScreen(
                         selectedConflict = null; selectedResolution = null
                     },
                     enabled = !uiState.isResolvingSyncConflict
-                ) { Text(if (keepLocal) "Keep mine" else "Use server version") }
+                ) { Text(if (keepLocal) "Keep mine" else "Use backed-up copy") }
             },
             dismissButton = { TextButton(onClick = { selectedConflict = null; selectedResolution = null }, enabled = !uiState.isResolvingSyncConflict) { Text("Cancel") } }
         )
@@ -866,9 +866,22 @@ private fun SettingStepperRow(
 
 }
 
+private val conflictPreviewSkipKeys = setOf("owner", "owner_id", "user_id", "revision", "server_revision", "hash", "payload_hash", "updated_at", "created_at", "device_id")
+
+/** Rounds a saved health entry into plain-language lines; never raw JSON. */
 private fun boundedConflictPreview(payload: String): String = runCatching {
-    org.json.JSONObject(payload).toString(2).take(2000)
-}.getOrElse { "(malformed payload; unavailable for safe preview)" }
+    val json = org.json.JSONObject(payload)
+    val lines = mutableListOf<String>()
+    val keys = json.keys()
+    while (keys.hasNext() && lines.size < 12) {
+        val key = keys.next()
+        if (key in conflictPreviewSkipKeys) continue
+        val label = key.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        val value = json.opt(key)?.toString()?.replace('_', ' ')?.lowercase()?.take(120).orEmpty()
+        if (value.isNotBlank() && value != "null") lines += "$label: $value"
+    }
+    lines.joinToString("\n").ifBlank { "(no readable details)" }.take(1000)
+}.getOrElse { "(details can\u2019t be shown safely)" }
 
 @Composable
 private fun SyncConflictReviewRow(
@@ -884,16 +897,15 @@ private fun SyncConflictReviewRow(
     }.getOrDefault(false))
     Card(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("Record ${conflict.recordId}", fontWeight = FontWeight.Bold)
-            Text("Created ${java.time.Instant.ofEpochMilli(conflict.createdAt)}", style = MaterialTheme.typography.bodySmall)
-            Text("Local revision ${conflict.localRevision} • Server revision ${conflict.remoteRevision}", style = MaterialTheme.typography.bodySmall)
-            if (conflict.remoteTombstone) Text("The server version is a deletion; deletions are final.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            if (localMissing) Text("Keep mine unavailable: local payload is missing.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            if (conflict.localKind.equals("REMOTE", ignoreCase = true)) Text("Keep mine unavailable for a server-originated local record.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            if (!remoteValid) Text("Use server version unavailable: server revision or metadata is malformed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Text(if (conflict.recordId == "settings") "Cycle settings" else if (conflict.recordId == "profile") "Your profile" else "Saved day · ${conflict.recordId}", fontWeight = FontWeight.Bold)
+            Text("Saved ${java.time.Instant.ofEpochMilli(conflict.createdAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate()}", style = MaterialTheme.typography.bodySmall)
+            if (conflict.remoteTombstone) Text("The backed-up copy was erased, and that can't be undone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (localMissing) Text("Keep mine isn't available: the copy on this device is missing.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (conflict.localKind.equals("REMOTE", ignoreCase = true)) Text("Keep mine isn't available: this entry only exists in the backup.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (!remoteValid) Text("The backed-up copy can't be used: it looks incomplete.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 OutlinedButton(onClick = { onChoose(true) }, enabled = !busy && !keepDisabled, modifier = Modifier.testTag("keep_local_${conflict.recordId}")) { Text("Keep mine") }
-                Button(onClick = { onChoose(false) }, enabled = !busy && remoteValid, modifier = Modifier.testTag("use_server_${conflict.recordId}")) { Text("Use server version") }
+                Button(onClick = { onChoose(false) }, enabled = !busy && remoteValid, modifier = Modifier.testTag("use_server_${conflict.recordId}")) { Text("Use backed-up copy") }
             }
         }
     }

@@ -136,7 +136,7 @@ fun HomeScreen(
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Your secure cloud session needs attention. Your health entries remain on this device until you sign in again.",
+                            text = "Your sign-in needs attention. Your health entries stay safely on this device until you sign in again.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

@@ -94,7 +94,7 @@ fun MpesaStkPushDialog(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "M-Pesa STK Push",
+                                text = "M-Pesa payment prompt",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
@@ -205,7 +205,7 @@ fun MpesaStkPushDialog(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "We will send an STK prompt to your phone. Simply enter your M-Pesa PIN to confirm.",
+                        text = "We'll send a payment prompt to your phone. Simply enter your M-Pesa PIN to confirm.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -227,7 +227,7 @@ fun MpesaStkPushDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A651))
                     ) {
                         Text(
-                            text = "Send STK Push (KES ${pkg.priceKes})",
+                            text = "Send payment prompt · KES ${pkg.priceKes}",
                             fontWeight = FontWeight.Bold
                         )
                     }

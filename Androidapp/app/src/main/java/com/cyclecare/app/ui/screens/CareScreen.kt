@@ -186,7 +186,7 @@ fun CareScreen(
                     Text("Create a quiet illustration", style = MaterialTheme.typography.titleLarge)
                     Column(modifier = Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Decorative art, not a health insight. Generating sends only this prompt and style to the image service—not your chat or health records.", style = MaterialTheme.typography.bodySmall)
+                    Text("Decorative art, not a health insight. Only this prompt and style are sent — never your chat or health records.", style = MaterialTheme.typography.bodySmall)
                     CareImageStyle.entries.chunked(2).forEach { pair ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             pair.forEach { style ->
@@ -254,13 +254,12 @@ private fun AiConsentCard(
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Enable expert answers", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
             Text(
-                "CycleCare can answer with secure cloud processing. Your question and relevant cycle context are sent only when you chat. Consent is tied to this account and can be revoked anytime in Settings.",
+                "CycleCare can answer with expert guidance online. Your question and relevant cycle context are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Text(SAFETY_LIMITATION_NOTICE, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = onNotNow, modifier = Modifier.testTag("care_ai_consent_dismiss")) { Text("Not now") }
-                Button(onClick = onAllow, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow cloud processing") }
+                Button(onClick = onAllow, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow expert answers") }
             }
         }
     }

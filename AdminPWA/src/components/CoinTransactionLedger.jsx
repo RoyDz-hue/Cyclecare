@@ -63,7 +63,7 @@ export default function CoinTransactionLedger({ supabaseConfig, onNotification }
       </div>
 
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
+        <table className="rtable" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
               <th style={{ padding: '14px 18px', fontWeight: 600 }}>Action</th>
@@ -85,22 +85,22 @@ export default function CoinTransactionLedger({ supabaseConfig, onNotification }
                 const isEarn = t.delta > 0;
                 return (
                   <tr key={t.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '16px 18px', fontWeight: 600, color: '#FFF' }}>
+                    <td data-label="Action" style={{ padding: '16px 18px', fontWeight: 600, color: '#FFF' }}>
                       {t.action}
                     </td>
-                    <td style={{ padding: '16px 18px', fontWeight: 700, color: isEarn ? '#4EBA88' : '#F48FB1' }}>
+                    <td data-label="Change" style={{ padding: '16px 18px', fontWeight: 700, color: isEarn ? '#4EBA88' : '#F48FB1' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         {isEarn ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />}
                         {isEarn ? `+${t.delta}` : `${t.delta}`}
                       </span>
                     </td>
-                    <td style={{ padding: '16px 18px', color: '#E5C378', fontWeight: 600 }}>
+                    <td data-label="Balance after" style={{ padding: '16px 18px', color: '#E5C378', fontWeight: 600 }}>
                       {t.balance_after}
                     </td>
-                    <td style={{ padding: '16px 18px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
+                    <td data-label="Member" style={{ padding: '16px 18px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
                       {t.user_id ? t.user_id.slice(0, 16) + '…' : 'Local'}
                     </td>
-                    <td style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
+                    <td data-label="Time" style={{ padding: '16px 18px', color: 'var(--text-secondary)' }}>
                       {new Date(t.created_at).toLocaleString()}
                     </td>
                   </tr>

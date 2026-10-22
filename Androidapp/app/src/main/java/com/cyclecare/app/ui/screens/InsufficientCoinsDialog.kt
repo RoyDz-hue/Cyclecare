@@ -228,7 +228,7 @@ fun InsufficientCoinsDialog(
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "Log your symptoms, flow, or notes tomorrow to mine more free coins.",
+                                text = "Log your symptoms, flow, or notes tomorrow to earn more free coins.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
