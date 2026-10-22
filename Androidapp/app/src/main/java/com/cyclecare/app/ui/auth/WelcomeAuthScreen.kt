@@ -121,6 +121,7 @@ fun WelcomeAuthScreen(
         Text(
             text = "Welcome to CycleCare",
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onBackground,
             textAlign = TextAlign.Center
         )
 

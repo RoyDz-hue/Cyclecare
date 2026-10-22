@@ -98,6 +98,20 @@ class AuthErrorSanitizationTest {
     }
 
     @Test
+    fun secretsPluginTemplatePlaceholdersFallBackToProductionDefaults() {
+        // When no real .env.android exists, the secrets plugin injects the
+        // committed .env.android.example template values; they must behave as
+        // "absent" so the production defaults apply.
+        val resolved = SupabaseConfig.resolveClientSettings(
+            "https://YOUR_PROJECT_REF.supabase.co",
+            "REPLACE_WITH_PUBLIC_ANON_OR_PUBLISHABLE_KEY"
+        )
+        assertEquals(SupabaseConfig.DEFAULT_URL, resolved.url)
+        assertEquals(SupabaseConfig.DEFAULT_PUBLISHABLE_KEY, resolved.apiKey)
+        assertTrue(resolved.isConfigured)
+    }
+
+    @Test
     fun invalidApiErrorsUseActivitySpecificFriendlyMessages() {
         val signup = AuthErrorMessages.forResponse("""{"message":"Invalid API key"}""", AuthOperation.SIGN_UP)
         val signin = AuthErrorMessages.forResponse("""{"message":"Invalid API key"}""", AuthOperation.SIGN_IN)

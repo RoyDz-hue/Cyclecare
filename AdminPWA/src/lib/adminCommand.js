@@ -10,6 +10,19 @@ export const commandDecide = (config, runId, approve, execute, onSessionChange) 
 export const commandExecute = (config, runId, onSessionChange) => call(config, { action: 'execute', run_id: runId }, onSessionChange);
 export const commandSuggestions = (config, onSessionChange) => call(config, { action: 'suggest' }, onSessionChange);
 export const commandHistory = (config, onSessionChange) => call(config, { action: 'list' }, onSessionChange);
+export const commandMessage = (config, prompt, onSessionChange) => call(config, { action: 'message', prompt }, onSessionChange);
+export const commandHistoryList = (config, onSessionChange) => call(config, { action: 'history' }, onSessionChange);
+
+// The admin's user id comes from their own session JWT; it keys the local
+// per-admin thread cache. Never trusted for authorization - the backend
+// re-derives identity on every call.
+export function adminIdFromConfig(config) {
+  try {
+    const token = String(config?.accessToken || '');
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return String(payload?.sub || 'unknown');
+  } catch { return 'unknown'; }
+}
 
 // Pure helpers (unit tested).
 export const RISKY_TOOLS = new Set(['set_coin_packages', 'adjust_coins', 'set_user_status', 'set_user_tier', 'set_guides_enabled', 'moderate_message']);

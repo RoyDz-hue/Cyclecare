@@ -31,8 +31,14 @@ object SupabaseConfig {
      * an explicit request and is disabled rather than silently redirected to prod.
      */
     internal fun resolveClientSettings(url: String?, apiKey: String?): ClientSettings {
-        val candidateUrl = url?.trim()?.removeSuffix("/").orEmpty()
-        val candidateKey = apiKey?.trim().orEmpty()
+        val rawUrl = url?.trim()?.removeSuffix("/").orEmpty()
+        val rawKey = apiKey?.trim().orEmpty()
+        // The secrets Gradle plugin injects the committed .env.android.example
+        // template values when no real .env.android exists. Treat those as
+        // absent so the production defaults apply instead of disabling the
+        // client (which previously produced a relative Google OAuth URL).
+        val candidateUrl = if (isTemplatePlaceholder(rawUrl)) "" else rawUrl
+        val candidateKey = if (isTemplatePlaceholder(rawKey)) "" else rawKey
         if (candidateUrl.isBlank() && candidateKey.isBlank()) {
             return ClientSettings(DEFAULT_URL, DEFAULT_PUBLISHABLE_KEY)
         }
@@ -50,6 +56,13 @@ object SupabaseConfig {
     }
 
     private fun disabled() = ClientSettings("", "")
+
+    private fun isTemplatePlaceholder(value: String): Boolean {
+        val v = value.trim().lowercase()
+        return v.contains("your_project_ref") || v.contains("your-project-ref") ||
+            v.startsWith("replace_with") || v.startsWith("replace-with") ||
+            v.contains("placeholder") || v.contains("_here")
+    }
 
     private fun parseEndpoint(value: String): String? {
         val local = setOf("http://localhost:54321", "http://127.0.0.1:54321", "http://10.0.2.2:54321")

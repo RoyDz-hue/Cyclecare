@@ -365,11 +365,16 @@ serve(async (req: Request) => {
               return jsonResponse({ success: true, source: "CycleCare Expert", data: { summary: answer.summary, whatText: answer.what, understandText: answer.understand, careText: answer.care, watchText: answer.watch, escalateText: answer.escalate } });
             }
             if (answer && !wisdom.ok) void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "filtered", errorKind: wisdom.reasons.join(",") });
+            if (!answer) void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: "invalid_schema" });
             console.error("hybrid provider returned invalid output", candidate);
           } else {
+            const status = typeof result.status === "number" ? result.status : 0;
+            const kind = status === 429 ? "http_429" : status >= 500 ? "http_5xx" : status >= 400 ? "http_4xx" : "network";
+            void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: kind });
             console.error("hybrid provider attempt failed", candidate, result.status ?? "network");
           }
         } catch {
+          void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: "network" });
           console.error("hybrid provider attempt error", candidate);
         } finally {
           clearTimeout(timer);

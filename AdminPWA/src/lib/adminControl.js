@@ -3,7 +3,7 @@
 // and keep obviously-invalid writes (negative prices, bad ids) off the wire.
 import { adminJson } from './supabaseAdmin.js';
 
-export const EDITABLE_CONFIG_KEYS = ['coin_packages', 'economy_multipliers', 'payment_gateway', 'ai_config'];
+export const EDITABLE_CONFIG_KEYS = ['coin_packages', 'economy_multipliers', 'payment_gateway'];
 
 export function validateCoinPackages(packages) {
   if (!Array.isArray(packages) || packages.length < 1 || packages.length > 20) {
