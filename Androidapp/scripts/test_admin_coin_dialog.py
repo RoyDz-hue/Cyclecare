@@ -13,6 +13,9 @@ try:
  def cmd(text):return post(base+'/functions/v1/admin-command',{'action':'message','prompt':text},{'Authorization':'Bearer '+users[0]['access_token']})
  cmd('Deduct 1000 coins from SelectionKevin Alpha')
  r=cmd('Debit amount of 651 coins from '+users[1]['user']['email']+' ledger');print('REPLACEMENT',r);assert '651' in r['message'] and 'Beta' in r['message'];r=cmd('Test adj');assert r['plan']['steps'][0]['args']['delta']==-651 and r['plan']['steps'][0]['args']['targets']==[users[1]['user']['id']];print('Fresh debit replaced -1000/Alpha with -651/Beta; approval held')
+ old=r['run_id'];cmd('Debit some coins from someone');status=sql(f"select status from admin_command_runs where id='{old}'")[0]['status'];assert status=='rejected';print('Unparseable replacement retired old approval card')
+ cmd('Debit 651 coins from '+users[1]['user']['email']);r=cmd('Test adj');old=r['run_id'];sql(f"update admin_command_runs set created_at=now()-interval '31 minutes', status='approved' where id='{old}'")
+ expired=post(base+'/functions/v1/admin-command',{'action':'execute','run_id':old},{'Authorization':'Bearer '+users[0]['access_token']});assert expired['status']=='expired';print('Expired approved card rejected without execution')
  cmd('cancel');r=cmd('you decide');assert not r.get('run_id');print('Cancel cleared pending request')
  ids=','.join("'"+u['user']['id']+"'" for u in users);count=sql(f"select count(*) as n from coin_transactions where user_id in ({ids})")[0]['n'];assert count==0;print('No coin transactions:',count)
 finally:

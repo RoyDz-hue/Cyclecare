@@ -107,16 +107,21 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
  const fresh=parseCoinRequest(text);
  const {data:previous,error:stateError}=await admin.from("admin_coin_dialog_state").select("state,updated_at").eq("admin_user_id",adminId).maybeSingle();
  if(stateError) return {success:false,type:"chat",message:"I couldn't check the pending request. No change was made."};
+ const retire=async(runId:string|undefined)=>{if(!runId)return;const {error}=await admin.from("admin_command_runs").update({status:"rejected"}).eq("id",runId).eq("admin_user_id",adminId).eq("status","proposed");if(error)throw new Error("Previous plan could not be retired safely");};
  const active=previous && Date.now()-Date.parse(previous.updated_at)<30*60_000 ? previous.state : null;
+ if(previous&&!active){await retire(previous.state?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);}
+
  if(startsCoinCommand(text)&&!fresh){
+   await retire(previous?.state?.run_id);
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
    return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
  }
- if(fresh&&active?.run_id) await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});
+ if(fresh) await retire(previous?.state?.run_id);
  if(!fresh&&active?.cancelled&&(isConfirmation(text)||/reason|decide|choose/i.test(text)))return {success:true,type:"chat",message:"The previous coin request was cancelled. Start a new request with an amount and recipient; no change has been made."};
  if(!fresh&&!active)return null;
- if(/^(cancel|stop|forget it)$/i.test(text.trim())) {if(active?.run_id)await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:{cancelled:true},updated_at:new Date().toISOString()});return {success:true,type:"chat",message:"Cancelled. No change was made."};}
+ if(/^(cancel|stop|forget it)$/i.test(text.trim())) {await retire(active?.run_id);await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:{cancelled:true},updated_at:new Date().toISOString()});return {success:true,type:"chat",message:"Cancelled. No change was made."};}
  if(!fresh&&active?.awaiting==="reason"&&/\b(?:coins?|from|to)\b/i.test(text)&&/\d/.test(text)) {
+   await retire(active?.run_id);
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
    return {success:true,type:"clarify",message:"That looks like a changed amount or recipient, not a reason. I cleared the earlier request. Please state the new coin action in full; no change was made."};
  }
@@ -387,6 +392,10 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
   const { data: run } = await admin.from("admin_command_runs").select("*").eq("id", runId).maybeSingle();
   if (!run || run.admin_user_id !== adminId) return { status: "not_found", steps: [] };
   if (run.status !== "approved") return { status: run.status, steps: run.step_results ?? [] };
+  if (!Number.isFinite(Date.parse(run.created_at)) || Date.now()-Date.parse(run.created_at)>30*60_000) {
+    await admin.from("admin_command_runs").update({status:"rejected",error:"This plan expired. Ask again."}).eq("id",runId).eq("status","approved");
+    return {status:"expired",steps:[]};
+  }
   const { data: claimed, error: claimError } = await admin.from("admin_command_runs")
     .update({ status: "executing" }).eq("id", runId).eq("status", "approved").select("id").maybeSingle();
   if (claimError || !claimed) return { status: "already_started", steps: [] };
@@ -433,13 +442,14 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
   }
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);
   const failed = (results as any[]).some((r) => r?.ok !== true);
+  const unconfirmed = (results as any[]).some((r) => r?.kind === "WRITE" && r?.ok === true && r?.verified !== true);
   await admin.from("admin_command_runs").update({
-    status: failed ? "failed" : "done", step_results: results,
-    error: failed ? "One or more steps failed" : null, completed_at: new Date().toISOString() }).eq("id", runId);
+    status: failed || unconfirmed ? "failed" : "done", step_results: results,
+    error: failed ? "One or more steps failed" : unconfirmed ? "Accepted but not confirmed. Do not repeat; review the current state." : null, completed_at: new Date().toISOString() }).eq("id", runId);
   await admin.from("admin_audit_logs").insert({
-    admin_user_id: adminId, admin_action: failed ? "ADMIN_COMMAND_FAILED" : "ADMIN_COMMAND_EXECUTED",
+    admin_user_id: adminId, admin_action: failed || unconfirmed ? "ADMIN_COMMAND_FAILED" : "ADMIN_COMMAND_EXECUTED",
     target_user_id: "admin_command", details: { run_id: runId, prompt: run.prompt, steps: (results as any[]).map((r) => ({ tool: r.tool, ok: r.ok })) }, performed_by: adminId });
-  return { status: failed ? "failed" : "done", steps: results };
+  return { status: failed ? "failed" : unconfirmed ? "unconfirmed" : "done", steps: results };
 }
 
 function buildSuggestions(insights: any): { label: string; prompt: string }[] {
