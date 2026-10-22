@@ -1,3 +1,4 @@
+import { parseCoinRequest, applyCoinReply, isConfirmation } from "../_shared/coin-dialog.js";
 import { formatCommandOutcome } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -102,7 +103,49 @@ async function planWithProviders(admin: any, userId: string, system: string, use
   return null;
 }
 
+async function coinDialog(admin:any,userClient:any,adminId:string,text:string):Promise<any|null> {
+ const fresh=parseCoinRequest(text);
+ const {data:previous,error:stateError}=await admin.from("admin_coin_dialog_state").select("state,updated_at").eq("admin_user_id",adminId).maybeSingle();
+ if(stateError) return {success:false,type:"chat",message:"I couldn't check the pending request. No change was made."};
+ const active=previous && Date.now()-Date.parse(previous.updated_at)<30*60_000 ? previous.state : null;
+ if(!fresh&&!active)return null;
+ if(/^(cancel|stop|forget it)$/i.test(text.trim())) {await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);return {success:true,type:"chat",message:"Cancelled. No change was made."};}
+ let st=fresh?{...fresh,recipient:null,awaiting:"recipient"}:applyCoinReply(active,text);
+ const save=async()=>{const {error}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:st,updated_at:new Date().toISOString()});if(error)throw new Error("Pending request could not be saved");};
+ const reply=async(message:string)=>{
+   if(message===st.lastQuestion){
+     st.repeatCount=(st.repeatCount??0)+1;
+     message=st.awaiting==="reason" ? (st.repeatCount%2 ? 'Recipient and amount are already confirmed. Choose a reason: "Admin adjustment", your own short explanation, or say cancel.' : 'I still need only the reason, not the account. Say "you decide" to use Admin adjustment, or cancel.') : st.run_id ? (st.repeatCount%2 ? 'No new plan is needed. The existing approval card is ready; use its buttons or say cancel.' : 'The saved plan is unchanged. Review the card above before choosing Approve and run or Reject.') : 'I need an exact email to choose safely. Reply with one email from the candidates, or cancel.';
+   }
+   st.lastQuestion=message;
+   await save();await persistMessage(admin,adminId,"assistant","chat",message);return {success:true,type:"clarify",message};};
+ if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Approve and run to make the change, Reject to discard it, or say cancel. No extra change has been made.");
+ if(!Number.isInteger(st.delta)||st.delta===0||Math.abs(st.delta)>10000)return reply("Choose a non-zero whole number up to 10,000 coins. No change has been made.");
+ if(!st.recipient){
+   if(isConfirmation(text)&&st.candidates?.length!==1)return reply("Please choose a specific account by email from the list, or say cancel. No change has been made.");
+   const {data,error}=await userClient.rpc("admin_find_recipients",{p_query:st.query});
+   if(error||!Array.isArray(data))return reply("I couldn't check the member list. Try their exact email, or say cancel. No change has been made.");
+   const candidates=[...new Map(data.map((p:any)=>[p.user_id,p])).values()] as any[];
+   st.candidates=candidates;
+   if(candidates.length!==1){st.awaiting="recipient";return reply(candidates.length?`Which member did you mean? No change has been made.\n${candidates.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nReply with their email, or say cancel.`:`No member matches "${st.query}". Try their full name, exact email, or say cancel. No change has been made.`);}
+   st.recipient=candidates[0];
+ }
+ if(!st.reason){st.awaiting="reason";return reply(`The account is ${st.recipient.display_name} (${st.recipient.email}); the amount is ${Math.abs(st.delta)} coins to ${st.delta<0?"deduct":"grant"}. What reason should I record? You can say "Admin adjustment", give your own reason, or ask me to choose.`);}
+ // Resolve account again through exact email before proposal. Never trust stored identifiers.
+ const {data:bound,error}=await userClient.rpc("admin_resolve_recipient",{p_email:st.recipient.email});
+ if(error||bound?.user_id!==st.recipient.user_id)return reply("The account changed or couldn't be confirmed. Please cancel and start again. No change was made.");
+ const steps=[{tool:"adjust_coins",label:`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}. Reason: ${st.reason}`,args:{targets:[bound.user_id],delta:st.delta,reason:st.reason}}];
+ const prompt=`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}. Reason: ${st.reason}`;
+ const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:prompt,p_plan:{steps}});
+ if(proposeError)return reply("I couldn't prepare the change safely. Nothing was changed; please cancel and try again.");
+ st.run_id=proposed.run_id;st.awaiting="approval";await save();
+ await persistMessage(admin,adminId,"assistant","plan",steps[0].label,st.run_id,{steps,requires_approval:true});
+ return {success:true,type:"plan",run_id:st.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
+}
+
 function namedRecipient(text: string): string | null {
+  const coin=parseCoinRequest(text);
+  if(coin)return coin.query;
   const match = text.match(/\b(?:give|grant|gift|award|credit|deduct(?:\s+from)?|ban|suspend)\s+(.+?)(?=\s+\d|\s+(?:some|coins|a gift|an artifact)\b|[.!?]|$)/i);
   const name = match?.[1]?.trim();
   if (!name || name.includes("@") || /^(?:the |them$|those |all |me$|myself$)/i.test(name) || name.length>100) return null;
@@ -422,6 +465,7 @@ serve(async (req: Request) => {
   if (action === "decide") {
     const { data, error } = await userClient.rpc("admin_command_decide", { p_run_id: String(body?.run_id ?? ""), p_approve: body?.approve === true });
     if (error) return jsonResponse({ error: error.message }, 400);
+    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",userId).filter("state->>run_id","eq",String(body.run_id));
     const { data: planMessages } = await admin.from("admin_command_messages").select("id,meta")
       .eq("admin_user_id", userId).eq("run_id", String(body.run_id)).eq("kind", "plan");
     for (const message of planMessages ?? []) await admin.from("admin_command_messages")
@@ -456,6 +500,10 @@ serve(async (req: Request) => {
       .eq("admin_user_id", userId).eq("role", "user").gte("created_at", since);
     if ((count ?? 0) >= 30) return jsonResponse({ error: "Too many messages in a short time. Give it a few minutes and try again." }, 429);
     await persistMessage(admin, userId, "user", "chat", chatPrompt);
+    try {
+      const dialog=await coinDialog(admin,userClient,userId,chatPrompt);
+      if(dialog)return jsonResponse(dialog);
+    } catch {return jsonResponse({error:"I couldn't save the pending request. No change was made."},503);}
     const nameCheck = await checkNamedRecipient(userClient, chatPrompt);
     if (nameCheck.clarification) {
       await persistMessage(admin,userId,"assistant","chat",nameCheck.clarification);
