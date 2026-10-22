@@ -102,6 +102,22 @@ async function planWithProviders(admin: any, userId: string, system: string, use
   return null;
 }
 
+function namedRecipient(text: string): string | null {
+  const match = text.match(/\b(?:give|grant|gift|award|credit|deduct(?:\s+from)?|ban|suspend)\s+(.+?)(?=\s+\d|\s+(?:some|coins|a gift|an artifact)\b|[.!?]|$)/i);
+  const name = match?.[1]?.trim();
+  if (!name || name.includes("@") || /^(?:the |them$|those |all |me$|myself$)/i.test(name) || name.length>100) return null;
+  return name;
+}
+async function checkNamedRecipient(userClient: any, text: string): Promise<{ query?:string; candidates:any[]; clarification?:string }> {
+  const query = namedRecipient(text);
+  if (!query) return {candidates:[]};
+  const { data, error } = await userClient.rpc("admin_find_recipients",{p_query:query});
+  if (error || !Array.isArray(data)) return {query,candidates:[],clarification:"I couldn't check the member list. No change has been made."};
+  if (!data.length) return {query,candidates:[],clarification:`I couldn't find a member matching "${query}". Please give their full name or email. No change has been made.`};
+  if (data.length>1) return {query,candidates:data,clarification:`Which member did you mean? No change has been made.\n${data.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nPlease reply with their email.`};
+  return {query,candidates:data};
+}
+
 async function recipientContext(userClient: any, text: string): Promise<string> {
   const emails = [...new Set(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])].slice(-5);
   const found = [];
@@ -115,13 +131,29 @@ async function recipientContext(userClient: any, text: string): Promise<string> 
 // Resolve explicit email references through trusted account records, not the model.
 async function bindRecipients(userClient: any, steps: any[], context: string, rewrite: boolean): Promise<string[]> {
   const resolvedEmails: string[] = [];
+  const latest = context.split("\n").filter(Boolean)[0] ?? "";
+  const named = await checkNamedRecipient(userClient, latest);
+  if (named.clarification) throw new Error(named.clarification);
   const emails = [...new Set((context.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((x) => x.toLowerCase()))];
   for (const step of steps) {
     if (!Array.isArray(step.args?.targets) || !step.args.targets.length || step.tool === "moderate_message") continue;
     const ownEmails = [...new Set((String(step.label ?? "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((x) => x.toLowerCase()))];
     if (ownEmails.some((email) => !emails.includes(email))) throw new Error("The proposed email was not supplied in this conversation. Please name the recipient again.");
-    const references = ownEmails.length ? ownEmails : emails;
-    if (!references.length) continue;
+    const latestEmails = latest.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
+    const references = latestEmails.length ? latestEmails.map(x=>x.toLowerCase()) : ownEmails.length ? ownEmails : emails;
+    if (!references.length) {
+      if (named.candidates.length === 1) {
+        const person = named.candidates[0];
+        if (!rewrite && step.args.targets[0] !== person.user_id) throw new Error("The recipient could not be confirmed. Prepare a new plan.");
+        if (step.args.targets.length !== 1) throw new Error("Please select one confirmed recipient at a time.");
+        step.args.targets = [person.user_id];
+        if (rewrite) {step.label += ` (confirmed account: ${person.display_name}, ${person.email})`;resolvedEmails.push(person.email);}
+        continue;
+      }
+      const explicitIds = context.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+      if (!step.args.targets.every((id:string)=>explicitIds.includes(id))) throw new Error("Please give the recipient's full name or email so I can confirm the right account before preparing a change.");
+      continue;
+    }
     if (references.length !== 1 || step.args.targets.length !== 1) throw new Error("Please prepare one email-addressed member action at a time.");
     const { data, error } = await userClient.rpc("admin_resolve_recipient", { p_email: references[0] });
     if (error || !data?.user_id) throw new Error("I couldn't confirm the account for that email. No change was made.");
@@ -423,6 +455,11 @@ serve(async (req: Request) => {
       .eq("admin_user_id", userId).eq("role", "user").gte("created_at", since);
     if ((count ?? 0) >= 30) return jsonResponse({ error: "Too many messages in a short time. Give it a few minutes and try again." }, 429);
     await persistMessage(admin, userId, "user", "chat", chatPrompt);
+    const nameCheck = await checkNamedRecipient(userClient, chatPrompt);
+    if (nameCheck.clarification) {
+      await persistMessage(admin,userId,"assistant","chat",nameCheck.clarification);
+      return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
+    }
     const { data: recent } = await admin.from("admin_command_messages")
       .select("role,content").eq("admin_user_id", userId)
       .order("created_at", { ascending: false }).limit(24);
@@ -430,9 +467,10 @@ serve(async (req: Request) => {
       .map((m: any) => `${m.role === "user" ? "Admin" : "Assistant"}: ${String(m.content ?? "").slice(0, 800)}`).join("\n");
     const recipientText = (recent ?? []).filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n") + "\n" + chatPrompt;
     const recipients = await recipientContext(userClient, recipientText);
+    const nameCandidates = JSON.stringify(nameCheck.candidates);
     const { data: insights } = await userClient.rpc("admin_member_insights", {});
     const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2);
-    const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\n</live-data>\n\n<conversation>\n${convo}\n</conversation>\n\nAdministrator's latest message: ${chatPrompt}\n\nReply with the JSON now.`;
+    const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${nameCandidates}\n</live-data>\n\n<conversation>\n${convo}\n</conversation>\n\nAdministrator's latest message: ${chatPrompt}\n\nReply with the JSON now.`;
     const started = Date.now();
     const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
     if (!planned) {
@@ -450,7 +488,7 @@ serve(async (req: Request) => {
     const steps = (planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
       tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} }));
     let resolvedEmails: string[] = [];
-    try { resolvedEmails = await bindRecipients(userClient, steps, recipientText, true); }
+    try { resolvedEmails = await bindRecipients(userClient, steps, chatPrompt + "\n" + recipientText, true); }
     catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
     const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
     if (proposeError) {
@@ -474,10 +512,12 @@ serve(async (req: Request) => {
   // action === "plan"
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 2000) : "";
   if (!prompt) return jsonResponse({ error: "A prompt is required" }, 400);
+  const nameCheck = await checkNamedRecipient(userClient,prompt);
+  if (nameCheck.clarification) return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
   const recipients = await recipientContext(userClient, prompt);
   const { data: insights } = await userClient.rpc("admin_member_insights", {});
   const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2);
-  const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\n</live-data>\n\n<conversation>\n(no prior messages)\n</conversation>\n\nAdministrator's latest message: ${prompt}\n\nReply with the JSON now.`;
+  const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${JSON.stringify(nameCheck.candidates)}\n</live-data>\n\n<conversation>\n(no prior messages)\n</conversation>\n\nAdministrator's latest message: ${prompt}\n\nReply with the JSON now.`;
   const started = Date.now();
   const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
   if (!planned) {
