@@ -1,4 +1,4 @@
-import { adminJson } from './supabaseAdmin.js';
+import { adminJson, getAdminSession } from './supabaseAdmin.js';
 
 // Admin Command client: prompt -> plan card -> approval -> executed steps.
 const call = (config, body, onSessionChange) =>
@@ -18,7 +18,7 @@ export const commandHistoryList = (config, onSessionChange) => call(config, { ac
 // re-derives identity on every call.
 export function adminIdFromConfig(config) {
   try {
-    const token = String(config?.accessToken || '');
+    const token = String(config?.accessToken || getAdminSession()?.access_token || '');
     const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
     return String(payload?.sub || 'unknown');
   } catch { return 'unknown'; }

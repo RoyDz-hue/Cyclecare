@@ -3,7 +3,7 @@ import { Sparkles, Send, CheckCircle2, XCircle, Clock3, ShieldAlert, ChevronDown
 import {
   commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, planRiskLevel, adminIdFromConfig,
 } from '../lib/adminCommand.js';
-import { adminResultMessage } from '../lib/supabaseAdmin.js';
+import { adminResultMessage, getAdminSession } from '../lib/supabaseAdmin.js';
 
 // Admin Command chat: a ChatGPT/WhatsApp-style thread. Messages persist per
 // admin (backend table + local cache), paint instantly from the local cache,
@@ -41,7 +41,7 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
       </h4>
       {plan.steps.map((s, i) => (
         <p key={i} style={{ margin: '8px 0 0', fontSize: 13, color: '#c4cbe4' }}>
-          {i + 1}. {describeStep(s)} <span style={{ opacity: 0.6 }}>({s.tool})</span>
+          {i + 1}. {s.label || describeStep(s)}
         </p>
       ))}
       {message.meta?.requires_approval !== false && !decided && (
@@ -79,6 +79,7 @@ function Bubble({ message, busy, onApprove, onReject }) {
         </span>
       )}
       {message.content}
+      {message.kind === 'result' && (message.meta?.steps || []).map((step, index) => <StepCard key={index} step={step} index={index} />)}
       <div style={{ fontSize: 10, opacity: 0.55, marginTop: 4, textAlign: 'right' }}>
         {message.pending ? 'Sending...' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>
@@ -95,6 +96,8 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState(null);
+  const frameRef = useRef(null);
   const scrollRef = useRef(null);
   const taRef = useRef(null);
   const chips = useMemo(() => buildLocalSuggestions(insights || {}), [insights]);
@@ -122,11 +125,13 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       } catch { /* keep the cached thread */ }
     };
     sync();
+    poll = setInterval(sync, 60000);
     (async () => {
       try {
         const pkg = await import('@supabase/supabase-js');
         if (cancelled) return;
         client = pkg.createClient(supabaseConfig.url, supabaseConfig.anonKey, { auth: { persistSession: false } });
+        await client.realtime.setAuth(getAdminSession()?.access_token);
         channel = client.channel(`admin-command-${adminId}`)
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'admin_command_messages', filter: `admin_user_id=eq.${adminId}` }, (payload) => {
             const row = payload?.new;
@@ -141,7 +146,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
           })
           .subscribe();
       } catch {
-        if (!cancelled) poll = setInterval(sync, 20000);
+        // The minute-based silent sync remains available if realtime fails.
       }
     })();
     return () => {
@@ -153,6 +158,18 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   }, [adminId]);
 
   useEffect(() => { scrollDown(); }, [messages.length, thinking]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const fit = () => {
+      const top = frameRef.current?.getBoundingClientRect().top || 0;
+      setViewportHeight(Math.max(180, (viewport?.height || window.innerHeight) - Math.max(top, 0) - 16));
+    };
+    fit();
+    viewport?.addEventListener('resize', fit);
+    window.addEventListener('resize', fit);
+    return () => { viewport?.removeEventListener('resize', fit); window.removeEventListener('resize', fit); };
+  }, []);
 
   const autoGrow = () => {
     const ta = taRef.current;
@@ -183,7 +200,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
         };
         const next = [...base, planMsg];
         if (res.requires_approval === false && res.status) {
-          next.push({ id: `r-${res.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res.status }, created_at: new Date().toISOString() });
+          next.push({ id: `r-${res.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res.status, steps: res.steps || [] }, created_at: new Date().toISOString() });
         }
         persist(next);
       } else if (res?.error) {
@@ -207,7 +224,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       const res = await commandDecide(supabaseConfig, message.run_id, true, true, onSessionChange);
       setMessages((cur) => {
         const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true } } : m));
-        next.push({ id: `r-${message.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res?.status || (res?.success ? 'done' : 'failed') }, created_at: new Date().toISOString() });
+        next.push({ id: `r-${message.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res?.status || (res?.success ? 'done' : 'failed'), steps: res.steps || [] }, created_at: new Date().toISOString() });
         try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
         return next;
       });
@@ -234,13 +251,13 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   };
 
   return (
-    <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', height: '78dvh', minHeight: 420 }}>
+    <div ref={frameRef} className="glass-card" style={{ display: 'flex', flexDirection: 'column', height: viewportHeight || '78dvh', minHeight: 180 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px 12px' }}>
         <Sparkles size={18} color="#b7a6ff" />
         <h3 style={{ margin: 0, fontSize: 16 }}>Admin Command</h3>
       </div>
 
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}>
+      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}>
         {messages.length === 0 && !thinking && (
           <div style={{ margin: 'auto', textAlign: 'center', color: '#9aa4c0', maxWidth: 460 }}>
             <p style={{ fontSize: 14 }}>Ask for insights, or tell me what to change. Anything risky waits for your approval.</p>

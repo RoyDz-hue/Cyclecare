@@ -217,7 +217,8 @@ async function verifyWrite(admin: any, tool: string, args: any): Promise<boolean
       case "set_coin_packages": {
         const { data } = await admin.from("app_config").select("value").eq("key", "coin_packages").maybeSingle();
         const live = Array.isArray(data?.value) ? data.value : [];
-        return live.length === (args?.packages ?? []).length;
+        const fields = ["id", "title", "coins", "bonus_coins", "price_kes", "price_usd", "tag"];
+        return live.length === (args?.packages ?? []).length && live.every((row: any, i: number) => fields.every((key) => (row[key] ?? null) === (args.packages[i][key] ?? null)));
       }
       case "set_cosmetic_price": {
         const { data } = await admin.from("cosmetic_catalog").select("price_coins,is_active").eq("item_id", String(args?.item_id ?? "")).maybeSingle();
@@ -256,7 +257,9 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
   const { data: run } = await admin.from("admin_command_runs").select("*").eq("id", runId).maybeSingle();
   if (!run || run.admin_user_id !== adminId) return { status: "not_found", steps: [] };
   if (run.status !== "approved") return { status: run.status, steps: run.step_results ?? [] };
-  await admin.from("admin_command_runs").update({ status: "executing" }).eq("id", runId);
+  const { data: claimed, error: claimError } = await admin.from("admin_command_runs")
+    .update({ status: "executing" }).eq("id", runId).eq("status", "approved").select("id").maybeSingle();
+  if (claimError || !claimed) return { status: "already_started", steps: [] };
   const steps: any[] = run.plan?.steps ?? [];
   const results: unknown[] = [];
   // Independent READ steps run in parallel; WRITE/RISKY run sequentially after.
@@ -330,9 +333,13 @@ serve(async (req: Request) => {
   if (action === "decide") {
     const { data, error } = await userClient.rpc("admin_command_decide", { p_run_id: String(body?.run_id ?? ""), p_approve: body?.approve === true });
     if (error) return jsonResponse({ error: error.message }, 400);
+    const { data: planMessages } = await admin.from("admin_command_messages").select("id,meta")
+      .eq("admin_user_id", userId).eq("run_id", String(body.run_id)).eq("kind", "plan");
+    for (const message of planMessages ?? []) await admin.from("admin_command_messages")
+      .update({ meta: { ...message.meta, decided: true } }).eq("id", message.id).eq("admin_user_id", userId);
     if (body?.approve === true && body?.execute === true) {
       const outcome = await executeRun(admin, userClient, String(body.run_id), userId);
-      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), String(body.run_id), { status: outcome.status });
+      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), String(body.run_id), { status: outcome.status, steps: outcome.steps });
       return jsonResponse({ success: outcome.status === "done", run_id: body.run_id, ...outcome });
     }
     return jsonResponse({ success: true, ...(data as object) });
@@ -397,7 +404,7 @@ serve(async (req: Request) => {
     await persistMessage(admin, userId, "assistant", "plan", summary, runId, { steps, requires_approval: needsApproval });
     if (!needsApproval) {
       const outcome = await executeRun(admin, userClient, runId, userId);
-      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), runId, { status: outcome.status });
+      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), runId, { status: outcome.status, steps: outcome.steps });
       return jsonResponse({ success: outcome.status === "done", type: "plan", run_id: runId, requires_approval: false, summary, ...outcome });
     }
     return jsonResponse({ success: true, type: "plan", run_id: runId, requires_approval: true, summary, plan: { steps } });
