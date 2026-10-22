@@ -1,8 +1,8 @@
 // Explicit coin slots. A confirmation never executes a pending plan.
 export function parseCoinRequest(text) {
-  const t=text.trim();
+  const t=text.trim().replace(/^debit\s+amount\s+of\s+/i,'deduct ').replace(/^debit\s+/i,'deduct ');
   let m=t.match(/^(deduct|remove|take)\s+(\d+)\s*(?:coins?\s*)?from\s+(.+?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
-  if(m)return {delta:-Number(m[2]),query:m[3].trim(),reason:m[4]?.trim()||null};
+  if(m)return {delta:-Number(m[2]),query:m[3].trim().replace(/(?:['’]s)?\s+(?:ledger|wallet|account)\s*$/i,''),reason:m[4]?.trim()||null};
   m=t.match(/^(give|grant|gift|credit|award)\s+(?:(\d+)\s+coins?\s+to\s+(.+?)|(.+?)\s+(\d+)\s*(?:coins?)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:Number(m[2]||m[5]),query:(m[3]||m[4]).trim(),reason:m[6]?.trim()||null};
   return null;
@@ -29,3 +29,5 @@ export function selectCandidate(candidates,text) {
  const matches=rows.filter(r=>String(r.display_name||'').toLowerCase().includes(t)||String(r.email||'').toLowerCase().includes(t));
  return matches.length===1?matches[0]:null;
 }
+
+export const startsCoinCommand=text=>/^(?:deduct|debit|remove|take|give|grant|gift|credit|award)\b/i.test(text.trim());

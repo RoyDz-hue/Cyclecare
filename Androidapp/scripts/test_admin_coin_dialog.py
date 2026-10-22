@@ -11,8 +11,9 @@ try:
   u=post(base+'/auth/v1/signup',{'email':'instinct-selection-'+uuid.uuid4().hex[:10]+'@example.com','password':uuid.uuid4().hex+'A!'},{'apikey':key});users.append(u);uid=u['user']['id'];sql(f"insert into profiles(user_id,display_name,account_mode) values('{uid}','{name}','EMAIL')")
  uid=users[0]['user']['id'];sql(f"insert into cyclecare_admin_roles(user_id) values('{uid}')")
  def cmd(text):return post(base+'/functions/v1/admin-command',{'action':'message','prompt':text},{'Authorization':'Bearer '+users[0]['access_token']})
- for choice in ['2','number 2','the second one','Beta']:
-  cmd('cancel');r=cmd('Deduct 1000 coins from SelectionKevin');assert r['type']=='clarify' and 'SelectionKevin Beta' in r['message'];r=cmd(choice);assert 'SelectionKevin Beta' in r['message'];r=cmd('Help find a reason');assert r['requires_approval'] and r['plan']['steps'][0]['args']['targets']==[users[1]['user']['id']];print(choice,'selected Beta, reason Admin adjustment, approval held')
+ cmd('Deduct 1000 coins from SelectionKevin Alpha')
+ r=cmd('Debit amount of 651 coins from SelectionKevin Beta ledger');assert '651' in r['message'] and 'Beta' in r['message'];r=cmd('Test adj');assert r['plan']['steps'][0]['args']['delta']==-651 and r['plan']['steps'][0]['args']['targets']==[users[1]['user']['id']];print('Fresh debit replaced -1000/Alpha with -651/Beta; approval held')
+ cmd('cancel');r=cmd('you decide');assert not r.get('run_id');print('Cancel cleared pending request')
  ids=','.join("'"+u['user']['id']+"'" for u in users);count=sql(f"select count(*) as n from coin_transactions where user_id in ({ids})")[0]['n'];assert count==0;print('No coin transactions:',count)
 finally:
  for u in users:

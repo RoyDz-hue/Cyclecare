@@ -1,4 +1,4 @@
-import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate } from "../_shared/coin-dialog.js";
+import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { formatCommandOutcome } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -108,8 +108,17 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
  const {data:previous,error:stateError}=await admin.from("admin_coin_dialog_state").select("state,updated_at").eq("admin_user_id",adminId).maybeSingle();
  if(stateError) return {success:false,type:"chat",message:"I couldn't check the pending request. No change was made."};
  const active=previous && Date.now()-Date.parse(previous.updated_at)<30*60_000 ? previous.state : null;
+ if(startsCoinCommand(text)&&!fresh){
+   await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
+ }
+ if(fresh&&active?.run_id) await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});
  if(!fresh&&!active)return null;
- if(/^(cancel|stop|forget it)$/i.test(text.trim())) {await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);return {success:true,type:"chat",message:"Cancelled. No change was made."};}
+ if(/^(cancel|stop|forget it)$/i.test(text.trim())) {if(active?.run_id)await userClient.rpc("admin_command_decide",{p_run_id:active.run_id,p_approve:false});await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);return {success:true,type:"chat",message:"Cancelled. No change was made."};}
+ if(!fresh&&active?.awaiting==="reason"&&/\b(?:coins?|from|to)\b/i.test(text)&&/\d/.test(text)) {
+   await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   return {success:true,type:"clarify",message:"That looks like a changed amount or recipient, not a reason. I cleared the earlier request. Please state the new coin action in full; no change was made."};
+ }
  let st=fresh?{...fresh,recipient:null,awaiting:"recipient"}:applyCoinReply(active,text);
  const save=async()=>{const {error}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:st,updated_at:new Date().toISOString()});if(error)throw new Error("Pending request could not be saved");};
  const reply=async(message:string)=>{

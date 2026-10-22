@@ -9,3 +9,5 @@ test('candidate choices use saved list, not a new lookup',()=>{
  for(const t of ['2','number 2','the second one','Smith','smith@example.com'])assert.equal(selectCandidate(rows,t),rows[1]);
  assert.equal(selectCandidate(rows,'Kevin'),null);assert.equal(selectCandidate(rows,'9'),null);
 });
+
+test('debit amount-of replaces stale slots and strips ledger suffix',()=>{assert.deepEqual(parseCoinRequest('Debit amount of 651 coins from deburgs ledger'),{delta:-651,query:'deburgs',reason:null});assert.equal(parseCoinRequest('Debit 651 coins from Kevin wallet').delta,-651)});
