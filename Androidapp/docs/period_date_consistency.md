@@ -55,3 +55,37 @@ never claims the entry is saved. 9/9 tests pass on an isolated JVM compile
 - Storage design for the raw episode record (Room migration risk flagged).
 - Popup UX wording/placement (approved shape: gentle "Your period lasted N
   days...", Edit dates / Dates are correct).
+
+## Design clarification: mixed-duration history (Roy's 20-day / 3-day scenario)
+
+Scenario: a user confirms a real 20-day period; a later period lasts 3 days and
+the app learns this from daily logs. Design requirements this raises (still
+hypotheses pending the owner's policy answer):
+
+1. **Historical confirmed episodes are immutable.** A later 3-day period never
+   overwrites, shortens or re-labels the earlier confirmed 20-day record, and
+   never erases the warning that was attached to it. Each episode is its own
+   record with its own provenance.
+2. **Provenance is explicit per episode.** Possible tiers, in descending
+   trust: (a) start/end dates the user entered and confirmed; (b) daily flow
+   logs the user recorded day by day; (c) anything inferred. Tier (c) is an
+   estimate and must be presented as one. There is no hidden "realisation
+   chip": the app only learns from data the user actually logged plus the
+   existing pattern engine. No capability beyond that may be implied.
+3. **The typical-duration estimate updates cautiously.** One new observation
+   (the 3-day period) must not flip the typical-duration estimate on its own.
+   Updates should weigh several recent reliable episodes, and confirmed
+   unusual episodes should inform the estimate only in a way the owner
+   approves (e.g. excluded from the "typical" window but kept in history).
+4. **Missing logs are not proof a period ended.** An inference layer must
+   treat unlogged days as unknown, never as non-bleeding, and must not
+   manufacture episode ends or starts from silence. When evidence is
+   insufficient, the honest output is to ask the user, not to guess.
+5. **Ended vs inferred stays distinguishable in the record.** An episode with
+   user-confirmed start and end dates is fact. An episode whose end is
+   inferred from a gap in logs is an estimate and must carry that label
+   wherever it is displayed or used in predictions.
+
+These remain design preparation only. No storage, schema, episode-detection or
+wiring changes have been made; all stay on hold until the save policy and this
+design are settled with the owner.
