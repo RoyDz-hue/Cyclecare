@@ -53,6 +53,33 @@ class LearningEnginePhaseSummaryTest {
     }
 
     @Test
+    fun duplicatedSymptomWithinOneLogNeverExceedsTheLoggedDayDenominator() {
+        val logs = listOf(
+            CycleDayLog(dateString = "2026-10-16", symptomsCsv = "cramps,cramps,cramps"),
+            CycleDayLog(dateString = "2026-10-17", symptomsCsv = "cramps"),
+            CycleDayLog(dateString = "2026-10-18", symptomsCsv = "cramps"),
+            CycleDayLog(dateString = "2026-10-19", symptomsCsv = "")
+        )
+
+        val observations = LearningEngine.compileLearnedObservations(settings(), logs)
+        val summary = observations.first { it.id == "phase_symptom_luteal_cramps" }
+
+        assertTrue(summary.description.contains("3 of 4 logged days"))
+    }
+
+    @Test
+    fun unparseableLastPeriodStartYieldsNoPhaseSummaries() {
+        val logs = (16..20).map { day ->
+            CycleDayLog(dateString = "2026-10-$day", symptomsCsv = "cramps")
+        }
+        val invalidSettings = settings().copy(lastPeriodStartDate = "not-a-date")
+
+        val observations = LearningEngine.compileLearnedObservations(invalidSettings, logs)
+
+        assertTrue(observations.none { it.id.startsWith("phase_symptom_") })
+    }
+
+    @Test
     fun blankLastPeriodStartYieldsNoPhaseSummaries() {
         val logs = (16..20).map { day ->
             CycleDayLog(dateString = "2026-10-$day", symptomsCsv = "cramps")

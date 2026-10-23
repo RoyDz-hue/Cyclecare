@@ -277,7 +277,7 @@ object LearningEngine {
         settings: CycleSettings,
         validLogs: List<DatedLog>
     ): List<LearnedObservation> {
-        if (settings.lastPeriodStartDate.isBlank()) return emptyList()
+        val anchor = runCatching { LocalDate.parse(settings.lastPeriodStartDate) }.getOrNull() ?: return emptyList()
         data class PhaseSymptom(val phase: CyclePhase, val phaseLoggedDays: Int, val symptom: String, val count: Int)
         val rows = mutableListOf<PhaseSymptom>()
         val byPhase = validLogs.groupBy { PatternEngine.calculatePhaseForDate(it.date, settings) }
@@ -317,9 +317,7 @@ object LearningEngine {
         .sortedBy { it.date }
 
     private fun symptomCounts(logs: List<DatedLog>): Map<String, Int> = logs
-        .flatMap { it.log.symptomsCsv.split(',') }
-        .map(String::trim)
-        .filter(String::isNotBlank)
+        .flatMap { it.log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).distinct() }
         .groupingBy { it }
         .eachCount()
 
