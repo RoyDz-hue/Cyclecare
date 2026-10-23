@@ -1,10 +1,10 @@
 # Building the efficient CycleCare APK
 
-For any coding assistant (or human) building this app: follow this guide to produce the small,
-fully functional APK instead of a bloated one. Size evidence: a measured slim arm64 build was
-12.5 MB (delivered 2026-10-22, commit a7e64fb era). The project owner recalls ~7-11 MB for these
-efficient builds versus ~37-40 MB from other agents' universal builds; treat those two figures as
-the owner's recollection, with 12.5 MB the measured data point.
+For any coding assistant (or human) building this app: follow this guide to produce the small
+APK instead of a bloated one. Size evidence: a measured slim arm64 build was 12.5 MB (delivered
+2026-10-23 00:44 EAT, commit a7e64fb era). The project owner recalls ~7-11 MB for these efficient
+builds versus ~37-40 MB from other agents' universal builds; treat those two figures as the
+owner's recollection, with 12.5 MB the measured data point.
 
 ## The one command
 
@@ -15,11 +15,11 @@ cd Androidapp
 
 Output APK: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/app-slim-arm64-v8a.apk` (unsigned builds are named `app-slim-arm64-v8a-unsigned.apk`).
 
-## Why this build is small and fast
+## Why this build is small
 
 1. **arm64-v8a only.** `-PslimApk` enables the ABI split (`splits.abi` in `app/build.gradle.kts`),
-   dropping x86/x86_64/armeabi-v7a native code. Virtually all physical phones are arm64; x86 is
-   only emulators. This alone roughly halves the size versus a universal APK.
+   so the APK contains native code for 64-bit ARM only. Compatibility boundary: devices on 32-bit
+   ARM (armeabi-v7a) or x86/x86_64 cannot install this artifact.
 2. **R8 full mode + resource shrinking.** The `slim` build type sets `isMinifyEnabled = true` and
    `isShrinkResources = true` with `proguard-android-optimize.txt`. Dead code and unused resources
    are stripped.
@@ -41,8 +41,10 @@ container:
   reached dex merging with no memory errors. That run was then killed by an environment reset, so
   end-to-end success at these settings is NOT verified.
 
-A full MINIFIED build has never completed on 2 GB. Use a machine with 4 GB+ RAM for the minified
-route. On constrained machines you may try appending to `Androidapp/gradle.properties`:
+None of today's (2026-10-23) attempts completed a minified build on a 2 GB container; earlier
+minified builds did succeed on other environments. A machine with 4 GB+ RAM is recommended for the
+minified route (recommendation, not a proven minimum). On constrained machines you may try
+appending to `Androidapp/gradle.properties`:
 
 ```
 org.gradle.jvmargs=-Xmx900m -XX:MaxMetaspaceSize=512m
@@ -87,6 +89,17 @@ apksigner verify --print-certs cyclecare-slim.apk
 Signer #1 cert SHA-256 must be:
 `23:65:F8:88:A3:37:38:A1:B6:A1:EC:E0:3E:E7:D3:2E:8D:57:54:7C:FA:4F:1C:61:79:0B:35:14:97:F7:C0:CF`
 A different certificate means the APK will NOT install over the existing app.
+
+A matching certificate alone does not prove the APK is functional or lossless. Before shipping,
+verify on a real arm64 device:
+- Installs in place over the previous install (same package, versionCode higher, cert above).
+- App launches; home, chat, and wallet screens render without missing resources.
+- Google sign-in works with the repo's configured auth (no altered OAuth/client IDs).
+- Account routing: returning user, new user, and damaged-data recovery each land on the right
+  screen without bypassing consent gates.
+- Wallet and realtime updates load and refresh.
+- Chat: posting a message triggers the server reply path (post-post pulse ping).
+- Payments stay fail-closed: no test charge paths against real wallets.
 
 ## CI route
 
