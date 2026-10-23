@@ -30,6 +30,17 @@ Rules: use only tools from the supplied catalog and only argument fields documen
 // Community Guides promo ban list (single copy; was inline in community-pulse).
 export const GUIDE_BANNED_PROMO: RegExp[] = [/hurry/i, /last chance/i, /limited time only/i, /don'?t miss/i, /fixed my/i, /cured/i, /guarantee/i, /must buy/i, /everyone is buying/i];
 
+// Community Guides robotic-chat ban list: template openings, self-announcements
+// and brochure phrasing that made circles feel scripted instead of human.
+export const GUIDE_BANNED_OPENERS: RegExp[] = [
+  /^(hey|hi|hello)[,!\s]+(there[,!\s]+)?(friends|everyone|everybody|guys|beautiful|lovelies|ladies)\b/i,
+  /let'?s (chat|talk) about/i,
+  /i'?m here to (chat|talk) about/i,
+  /join me (as|to|in)\b/i,
+  /warm hug for/i,
+  /sweet flow/i,
+];
+
 // Wisdom filters: output scans every agent's text passes before it can ship.
 export const OVERCLAIM_PATTERNS: RegExp[] = [/100%/i, /guarantee/i, /will definitely/i, /always works/i, /\bcure[sd]?\b/i, /proven to fix/i, /medically proven/i];
 export const PROVIDER_LEAK_PATTERNS: RegExp[] = [/\bgemini\b/i, /\bcohere\b/i, /openrouter/i, /\bopenai\b/i, /\bgpt-?\d/i, /language model/i, /as an ai\b/i, /\bllm\b/i, /system prompt/i];
@@ -44,10 +55,11 @@ export function scanExpertText(text: string): WisdomVerdict {
   return { ok: reasons.length === 0, reasons };
 }
 
-// Scan a Community Guide message: promo rules plus leak rules.
+// Scan a Community Guide message: promo rules, robotic-chat rules plus leak rules.
 export function scanGuideMessage(text: string): WisdomVerdict {
   const reasons: string[] = [];
   for (const rx of GUIDE_BANNED_PROMO) if (rx.test(text)) reasons.push("banned_promo");
+  for (const rx of GUIDE_BANNED_OPENERS) if (rx.test(text)) reasons.push("banned_opener");
   for (const rx of PROVIDER_LEAK_PATTERNS) if (rx.test(text)) reasons.push("provider_or_ai_leak");
   for (const rx of OVERCLAIM_PATTERNS) if (rx.test(text)) reasons.push("overclaim");
   return { ok: reasons.length === 0, reasons };
