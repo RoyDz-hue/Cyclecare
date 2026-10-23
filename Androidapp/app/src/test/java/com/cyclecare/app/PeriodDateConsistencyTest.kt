@@ -21,7 +21,7 @@ class PeriodDateConsistencyTest {
     }
 
     @Test
-    fun unusualDurationIsValidWithGentleWarningThatKeepsTheEntry() {
+    fun unusualEndedPeriodIsValidWithGentleWarning() {
         val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 20), today)
         assertTrue(check.isValid)
         assertEquals(20, check.durationDays)
@@ -29,9 +29,33 @@ class PeriodDateConsistencyTest {
         assertTrue(warning.contains("period lasted 20 days"))
         assertTrue(warning.contains("check the dates"))
         assertTrue(warning.contains("healthcare professional"))
-        assertTrue(warning.contains("kept as you entered it"))
         assertFalse(warning.contains("bleeding"))
         assertFalse(warning.contains("impossible"))
+    }
+
+    @Test
+    fun unusualOngoingPeriodGetsFirmerGuidance() {
+        val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 10, 1), today, today, isOngoing = true)
+        assertTrue(check.isValid)
+        val warning = check.warningMessage!!
+        assertTrue(warning.contains("so far"))
+        assertTrue(warning.contains("check the start date"))
+        assertTrue(warning.contains("healthcare professional soon"))
+    }
+
+    @Test
+    fun validatorNeverPromisesTheEntryIsSaved() {
+        val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 20), today)
+        assertFalse(check.warningMessage!!.contains("kept"))
+    }
+
+    @Test
+    fun veryLongRealPeriodStaysConfirmableNeverRejected() {
+        // 90 days of continuous bleeding can be real; only chronology/parse rules reject.
+        val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 7, 25), LocalDate.of(2026, 10, 22), today)
+        assertTrue(check.isValid)
+        assertEquals(90, check.durationDays)
+        assertTrue(check.warningMessage != null)
     }
 
     @Test
@@ -48,32 +72,16 @@ class PeriodDateConsistencyTest {
     }
 
     @Test
-    fun implausiblyLongRangeIsHardInvalidAtFortySixDays() {
-        val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 10, 17), today)
-        assertFalse(check.isValid)
-        assertEquals(47, check.durationDays)
-        assertEquals(PeriodDateConsistency.IMPLAUSIBLE_MESSAGE, check.errorMessage)
-    }
-
-    @Test
-    fun fortyFiveDaysStaysConfirmableNotRejected() {
-        val check = PeriodDateConsistency.validatePair(LocalDate.of(2026, 9, 8), LocalDate.of(2026, 10, 22), today)
-        assertTrue(check.isValid)
-        assertTrue(check.warningMessage != null)
-    }
-
-    @Test
     fun missingDatesAreRequiredErrors() {
         assertEquals("Period start date is required", PeriodDateConsistency.validatePair(null, today, today).errorMessage)
         assertEquals("Period end date is required", PeriodDateConsistency.validatePair(today, null, today).errorMessage)
     }
 
     @Test
-    fun verdictBoundaries() {
+    fun verdictBoundaryAtSevenDays() {
         assertEquals(PeriodDateConsistency.Verdict.TYPICAL, PeriodDateConsistency.verdictFor(1))
         assertEquals(PeriodDateConsistency.Verdict.TYPICAL, PeriodDateConsistency.verdictFor(7))
         assertEquals(PeriodDateConsistency.Verdict.UNUSUAL_CONFIRM, PeriodDateConsistency.verdictFor(8))
-        assertEquals(PeriodDateConsistency.Verdict.UNUSUAL_CONFIRM, PeriodDateConsistency.verdictFor(45))
-        assertEquals(PeriodDateConsistency.Verdict.IMPLAUSIBLE_EDIT, PeriodDateConsistency.verdictFor(46))
+        assertEquals(PeriodDateConsistency.Verdict.UNUSUAL_CONFIRM, PeriodDateConsistency.verdictFor(200))
     }
 }
