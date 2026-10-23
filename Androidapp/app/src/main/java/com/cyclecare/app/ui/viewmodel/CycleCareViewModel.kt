@@ -296,6 +296,8 @@ class CycleCareViewModel(
     private val _logsMap = MutableStateFlow<Map<String, CycleDayLog>>(emptyMap())
     val logsMap: StateFlow<Map<String, CycleDayLog>> = _logsMap.asStateFlow()
 
+    private val reconnectWorkState = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.State()
+
     init {
         viewModelScope.launch {
             repository.scopedLogs.collect { snapshot ->
@@ -383,32 +385,42 @@ class CycleCareViewModel(
                 }
             }
 
-            if (hasCompletedInitialAuth) {
-                autoSyncSilently()
-            }
+            // One startup sync is enough: the earlier autoSyncSilently() call
+            // already covers this, and repeating it only duplicated the
+            // wallet refresh.
             refreshAiProcessorManifest()
         }
 
-        // Reactive network connectivity observer
+        // Reactive network connectivity observer. Reconnect work runs only on
+        // an offline -> online transition, throttled per owner, so flappy
+        // networks cannot trigger unbounded reconcile/fetch loops.
         viewModelScope.launch {
             com.cyclecare.app.util.NetworkHelper.observeNetwork(authPreferences.context).collect { isConnected ->
-                if (isConnected && !authPreferences.isLocalOnlyMode && authPreferences.userId != null) {
-                    val reconciled = miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile)
-                    if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
-                        _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
-                    }
-                    val verified = economyService.fetchVerifiedProfile(authPreferences.effectiveUserId)
-                    if (verified is com.cyclecare.app.data.economy.EconomyResult.Success) {
-                        val econ = verified.data
-                        _uiState.value = _uiState.value.copy(
-                            economyProfile = econ,
-                            isBanned = econ.isBanned,
-                            isSuspended = econ.isSuspended,
-                            accountNoticeMessage = econ.suspensionReason
-                        )
-                    }
-                    refreshNotifications()
+                val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
+                val shouldRun = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.shouldRun(
+                    reconnectWorkState, isConnected, eligible,
+                    authPreferences.effectiveUserId, System.currentTimeMillis()
+                )
+                if (!shouldRun) return@collect
+                val owner = authPreferences.effectiveUserId
+                val session = authPreferences.sessionGeneration
+                val reconciled = miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile)
+                if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@collect
+                if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
+                    _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
                 }
+                val verified = economyService.fetchVerifiedProfile(owner)
+                if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@collect
+                if (verified is com.cyclecare.app.data.economy.EconomyResult.Success) {
+                    val econ = verified.data
+                    _uiState.value = _uiState.value.copy(
+                        economyProfile = econ,
+                        isBanned = econ.isBanned,
+                        isSuspended = econ.isSuspended,
+                        accountNoticeMessage = econ.suspensionReason
+                    )
+                }
+                refreshNotifications()
             }
         }
 
