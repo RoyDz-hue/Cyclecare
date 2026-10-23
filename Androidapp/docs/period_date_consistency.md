@@ -62,21 +62,34 @@ Scenario: a user confirms a real 20-day period; a later period lasts 3 days and
 the app learns this from daily logs. Design requirements this raises (still
 hypotheses pending the owner's policy answer):
 
-1. **Historical confirmed episodes are immutable.** A later 3-day period never
-   overwrites, shortens or re-labels the earlier confirmed 20-day record, and
-   never erases the warning that was attached to it. Each episode is its own
-   record with its own provenance.
-2. **Provenance is explicit per episode.** Possible tiers, in descending
-   trust: (a) start/end dates the user entered and confirmed; (b) daily flow
-   logs the user recorded day by day; (c) anything inferred. Tier (c) is an
-   estimate and must be presented as one. There is no hidden "realisation
-   chip": the app only learns from data the user actually logged plus the
-   existing pattern engine. No capability beyond that may be implied.
+1. **No automatic overwrite of history.** A later 3-day period never
+   automatically overwrites, shortens or re-labels the earlier confirmed
+   20-day record, and never erases the warning that was attached to it. Each
+   episode is its own record with its own provenance. This protects history
+   from silent algorithmic rewriting only: the user always keeps the right to
+   correct or delete any of their own records, including confirmed ones, and
+   privacy rights (edit, export, erase) take precedence over any "immutable"
+   framing.
+2. **Provenance is explicit per episode.** Sources: (a) start/end dates the
+   user entered and confirmed; (b) daily flow logs the user recorded day by
+   day; (c) anything inferred (always labeled an estimate). These describe
+   origin, not an absolute superiority ranking: when sources conflict (e.g.
+   confirmed dates disagree with the daily logs around them), the conflict
+   needs visible reconciliation - surface the discrepancy and ask the user,
+   never silently let one tier win. There is no hidden "realisation chip": the
+   app only learns from data the user actually logged plus the existing
+   pattern engine. No capability beyond that may be implied.
 3. **The typical-duration estimate updates cautiously.** One new observation
    (the 3-day period) must not flip the typical-duration estimate on its own.
-   Updates should weigh several recent reliable episodes, and confirmed
-   unusual episodes should inform the estimate only in a way the owner
-   approves (e.g. excluded from the "typical" window but kept in history).
+   Updates should weigh several recent reliable episodes. Whether and how a
+   confirmed unusual episode feeds the "typical" statistics is a
+   health-sensitive rule, not merely a preference: it needs explicit
+   justification and safeguards before adoption. Proposed safeguard: exclude
+   flagged-unusual episodes from the typical-duration window while keeping
+   them fully in history, and document the clinical reasoning (a typical-range
+   estimate should describe the user's normal pattern, not be dragged by an
+   episode the user confirmed as unusual) - subject to validation, not assumed
+   correct.
 4. **Missing logs are not proof a period ended.** An inference layer must
    treat unlogged days as unknown, never as non-bleeding, and must not
    manufacture episode ends or starts from silence. When evidence is
