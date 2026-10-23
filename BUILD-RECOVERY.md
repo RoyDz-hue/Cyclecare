@@ -30,3 +30,8 @@
    (matches the currently installed app; updates install in place).
 
 Keystore and passwords are in the Instinct vault ("CycleCare fixed Android debug signing bundle"). Never commit them.
+
+## Build guide
+
+ANDROID-BUILD-GUIDE.md is the canonical guide for producing the small (~7-11 MB) efficient APK,
+including memory settings, signing, and verification. Read it before any build attempt.
