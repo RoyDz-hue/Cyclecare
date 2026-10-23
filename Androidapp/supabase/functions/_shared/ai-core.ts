@@ -49,6 +49,16 @@ export const GUIDE_BANNED_OPENERS: RegExp[] = [
   /\bfor me personally/i,
   /\bmy (cramps|period|cycle|body|back|sleep|bed|bedtime|routine|kitchen|blanket|tea|doctor)/i,
   /\bwhen i was (younger|a teen|pregnant|growing up)/i,
+  // app promotion of any kind (Guides never pitch the product)
+  /cyclecare app/i,
+  /\bthe app('s)?\b/i,
+  /\bin the app\b/i,
+  /\bpremium\b/i,
+  /\bcoins?\b/i,
+  /\bavatars?\b/i,
+  /\bbadges?\b/i,
+  /\bthemes?\b/i,
+  /\bmeditation timer/i,
   // cling / blanket-availability wording (dependency pressure)
   /always here for you/i,
   /here whenever you need/i,
