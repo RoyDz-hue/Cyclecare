@@ -124,12 +124,14 @@ async function generate(admin: any, persona: Persona, system: string, user: stri
   if (configured.length === 0) return null;
   // Same balancing idea as the chat bridge: O(1) stateless rotation.
   const start = (fnv1a(persona.persona_id) + Math.floor(Date.now() / 600_000)) % configured.length;
-  const order = configured.map((_, i) => configured[(start + i) % configured.length]);
-  // One budget unit per generation, not per provider attempt: provider
-  // failures must not multiply cost and starve the daily budget.
-  const allowed = await admin.rpc("community_pulse_spend", { p_budget: DAILY_LLM_BUDGET });
-  if (allowed.data !== true) return null;
+  // Budget accounting is per real provider attempt: one unit equals one
+  // actual provider API call, so DAILY_LLM_BUDGET stays a true daily ceiling
+  // on provider calls (and cost exposure). At most 2 providers are tried per
+  // generation so a flaky day cannot burn the whole allowance on one message.
+  const order = configured.map((_, i) => configured[(start + i) % configured.length]).slice(0, 2);
   for (const provider of order) {
+    const allowed = await admin.rpc("community_pulse_spend", { p_budget: DAILY_LLM_BUDGET });
+    if (allowed.data !== true) return null;
     const text = await callProvider(provider, keys[provider]!, system, user);
     if (text) return text;
   }
