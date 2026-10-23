@@ -36,9 +36,9 @@ object PeriodDateConsistency {
      */
     fun unusualMessage(durationDays: Int, isOngoing: Boolean): String =
         if (isOngoing) {
-            "Your period has lasted $durationDays days so far. That's longer than the usual range of up to about a week - please check the start date. If it's right, it's worth speaking with a healthcare professional soon."
+            "Your period has lasted $durationDays days so far. That's longer than usual. Please check the start date. If it's right, it's worth speaking with a healthcare professional soon."
         } else {
-            "Your period lasted $durationDays days. That's longer than the usual range of up to about a week - please check the dates. If they're right, it's worth mentioning to a healthcare professional."
+            "Your period lasted $durationDays days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional."
         }
 
     data class PeriodPairCheck(
