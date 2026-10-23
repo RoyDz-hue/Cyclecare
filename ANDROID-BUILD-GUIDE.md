@@ -33,8 +33,12 @@ Output APK: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/app-slim-arm64-v8a.
 The repo default `org.gradle.jvmargs` (-Xmx1536m, 768m metaspace) exceeds small (2 GB) build
 containers and kills the Gradle daemon at startup.
 
-**Verified working on a 2 GB container** (minified slim build a7e64fb, BUILD SUCCESSFUL in
-1h 6m 43s, delivered 2026-10-23 00:44 EAT):
+**Recovered from the session that produced the successful minified a7e64fb build** (BUILD
+SUCCESSFUL in 1h 6m 43s, delivered 2026-10-23 00:44 EAT, on a 2 GB container): that evening's
+build scripts used `--no-daemon --max-workers=1` with SerialGC and low heap - two recorded
+variants were 850m heap / 256m metaspace and 1100m heap / 320m metaspace. The exact flags of the
+final successful launch are not recorded, so treat these as the recovered pattern, not a proven
+exact recipe:
 
 ```bash
 ./gradlew --no-daemon --max-workers=1 \
@@ -42,10 +46,10 @@ containers and kills the Gradle daemon at startup.
   assembleSlim -PslimApk
 ```
 
-SerialGC + a single worker + 850m heap keeps the whole build (including R8) inside 2 GB, at the
-cost of speed - expect about an hour for a cold build. The environment must stay alive for the
-full build; several 2026-10-23 attempts were killed by environment resets mid-build, not by the
-build itself. Do not run two Gradle builds concurrently.
+SerialGC + a single worker + low heap keeps the build inside 2 GB at the cost of speed - expect
+about an hour for a cold build. The environment must stay alive for the full build; several
+2026-10-23 attempts were killed by environment resets mid-build (reset cause unknown). Do not run
+two Gradle builds concurrently.
 
 Failed settings observed 2026-10-23 (all with the default G1 GC): repo defaults (daemon OOM at
 startup); 700m heap / 320m metaspace (R8 heap OOM after ~26 min); 1350m heap / 320m metaspace
