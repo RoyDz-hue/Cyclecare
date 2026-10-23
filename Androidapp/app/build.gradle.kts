@@ -72,7 +72,14 @@ android {
     // Build with: ./gradlew assembleSlim -PslimApk  (arm64-v8a only, ~half the size)
     create("slim") {
       initWith(getByName("debug"))
-      signingConfig = signingConfigs.getByName("fixedDebug")
+      val slimKeystore =
+          file(System.getenv("CYCLECARE_DEBUG_KEYSTORE") ?: "${rootDir}/.private/cyclecare-debug.jks")
+      if (slimKeystore.exists()) {
+        signingConfig = signingConfigs.getByName("fixedDebug")
+      } else {
+        // CI builds leave the APK unsigned; sign locally with apksigner using the vault keystore.
+        signingConfig = null
+      }
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
