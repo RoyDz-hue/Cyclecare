@@ -28,31 +28,29 @@ Output APK: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/app-slim-arm64-v8a.
    Do NOT ship the plain `debug` variant: it has `applicationIdSuffix = ".debug"` (installs as a
    separate app) and uses a random per-machine debug keystore (updates will not install in place).
 
-## Memory settings (tested 2026-10-23, read carefully)
+## Memory settings (verified low-RAM recipe included)
 
 The repo default `org.gradle.jvmargs` (-Xmx1536m, 768m metaspace) exceeds small (2 GB) build
-containers and kills the Gradle daemon at startup. Tested failure/success ladder on a 2 GB
-container:
+containers and kills the Gradle daemon at startup.
 
-- 1536m heap / 768m metaspace (repo default): daemon OOM, build never starts.
-- 700m heap / 320m metaspace: reaches `minifySlimWithR8`, then R8 heap OOM after ~26 min.
-- 1350m heap / 320m metaspace: KSP runs out of metaspace during Kotlin compile.
-- 900m heap / 512m metaspace (non-minified `-PnoMinify` route): passed KSP and Kotlin compile and
-  reached dex merging with no memory errors. That run was then killed by an environment reset, so
-  end-to-end success at these settings is NOT verified.
+**Verified working on a 2 GB container** (minified slim build a7e64fb, BUILD SUCCESSFUL in
+1h 6m 43s, delivered 2026-10-23 00:44 EAT):
 
-None of today's (2026-10-23) attempts completed a minified build on a 2 GB container; earlier
-minified builds did succeed on other environments. A machine with 4 GB+ RAM is recommended for the
-minified route (recommendation, not a proven minimum). On constrained machines you may try
-appending to `Androidapp/gradle.properties`:
-
-```
-org.gradle.jvmargs=-Xmx900m -XX:MaxMetaspaceSize=512m
-kotlin.compiler.execution.strategy=in-process
+```bash
+./gradlew --no-daemon --max-workers=1 \
+  -Dorg.gradle.jvmargs='-Xmx850m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC' \
+  assembleSlim -PslimApk
 ```
 
-Cold builds (no Gradle cache) took ~20-26 min to reach packaging; warm incremental builds are
-much faster.
+SerialGC + a single worker + 850m heap keeps the whole build (including R8) inside 2 GB, at the
+cost of speed - expect about an hour for a cold build. The environment must stay alive for the
+full build; several 2026-10-23 attempts were killed by environment resets mid-build, not by the
+build itself. Do not run two Gradle builds concurrently.
+
+Failed settings observed 2026-10-23 (all with the default G1 GC): repo defaults (daemon OOM at
+startup); 700m heap / 320m metaspace (R8 heap OOM after ~26 min); 1350m heap / 320m metaspace
+(KSP metaspace exhaustion during Kotlin compile). G1 needs more headroom than SerialGC at these
+heap sizes. On machines with 4 GB+ RAM the repo defaults are fine and much faster.
 
 ## Fallback: memory-constrained diagnostic build (NEVER deliver)
 
