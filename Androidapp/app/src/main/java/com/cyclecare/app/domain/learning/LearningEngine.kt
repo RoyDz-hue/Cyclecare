@@ -9,6 +9,7 @@ import com.cyclecare.app.data.model.ExplainMyBodyResult
 import com.cyclecare.app.data.model.LearnedObservation
 import com.cyclecare.app.data.model.MonthlyTimelineEntry
 import com.cyclecare.app.data.model.SafetyLevel
+import com.cyclecare.app.domain.pattern.PatternEngine
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -18,6 +19,11 @@ import java.time.format.DateTimeFormatter
  * A calendar estimate is never presented as a measured biological event.
  */
 object LearningEngine {
+
+    /** A phase needs at least this many logged days before frequencies are shown. */
+    private const val MIN_PHASE_LOGGED_DAYS = 3
+    /** Cap on phase summaries so the list stays calm. */
+    private const val MAX_PHASE_SUMMARIES = 3
 
     fun compileLearnedObservations(
         settings: CycleSettings,
@@ -94,6 +100,8 @@ object LearningEngine {
                 confidence = "Early records"
             )
         }
+
+        observations += compilePhaseSymptomSummaries(settings, validLogs)
 
         return observations
     }
@@ -256,6 +264,49 @@ object LearningEngine {
             whenToGetChecked = "Seek advice from a qualified health professional about symptoms that are severe, new, persistent, or worrying to you.",
             safetyLevel = SafetyLevel.LOW
         )
+    }
+
+    /**
+     * Descriptive symptom frequencies per estimated phase. Denominators are
+     * logged days only, phases come from the calendar estimate, and a phase
+     * needs at least MIN_PHASE_LOGGED_DAYS logged days before any of its
+     * frequencies are shown. Describes saved entries only: no causes, no
+     * predictions, no probabilities.
+     */
+    private fun compilePhaseSymptomSummaries(
+        settings: CycleSettings,
+        validLogs: List<DatedLog>
+    ): List<LearnedObservation> {
+        if (settings.lastPeriodStartDate.isBlank()) return emptyList()
+        data class PhaseSymptom(val phase: CyclePhase, val phaseLoggedDays: Int, val symptom: String, val count: Int)
+        val rows = mutableListOf<PhaseSymptom>()
+        val byPhase = validLogs.groupBy { PatternEngine.calculatePhaseForDate(it.date, settings) }
+        for ((phase, phaseLogs) in byPhase) {
+            if (phaseLogs.size < MIN_PHASE_LOGGED_DAYS) continue
+            symptomCounts(phaseLogs).forEach { (symptom, count) ->
+                rows += PhaseSymptom(phase, phaseLogs.size, symptom, count)
+            }
+        }
+        return rows
+            .sortedWith(compareByDescending<PhaseSymptom> { it.count }.thenBy { it.phase.name }.thenBy { it.symptom })
+            .take(MAX_PHASE_SUMMARIES)
+            .map { row ->
+                val phaseName = phaseDisplayName(row.phase)
+                LearnedObservation(
+                    id = "phase_symptom_${row.phase.name.lowercase()}_${row.symptom}",
+                    category = "Recorded observation",
+                    headline = "${displayLabel(row.symptom)} in estimated $phaseName phase",
+                    description = "You recorded ${displayLabel(row.symptom)} on ${row.count} of ${row.phaseLoggedDays} logged days in your estimated $phaseName phase. The phase is a calendar estimate, not a measured biological event. This describes saved entries only; it does not establish a cause or predict what will happen.",
+                    confidence = "Recorded entries"
+                )
+            }
+    }
+
+    private fun phaseDisplayName(phase: CyclePhase): String = when (phase) {
+        CyclePhase.MENSTRUAL -> "menstrual"
+        CyclePhase.FOLLICULAR -> "follicular"
+        CyclePhase.OVULATION -> "ovulation"
+        CyclePhase.LUTEAL -> "luteal"
     }
 
     private data class DatedLog(val date: LocalDate, val log: CycleDayLog)
