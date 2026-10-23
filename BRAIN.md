@@ -4,7 +4,7 @@
 
 This is the project's **current working memory**: architecture, implemented contracts, known limits, release boundaries and the next real decisions. It is not a setup guide, a running conversation log, a backlog dump or evidence of approval. [README.md](README.md) owns installation, commands and local configuration.
 
-Guiding frameworks and build recipes (AI core, tone language, payment routing, learning/persona memory) live in [frameworks/](frameworks/README.md); they are developer guidance, never bundled or compiled with the app.
+Guiding frameworks and build recipes (AI core, tone language, payment routing, persona memory) live in [frameworks/](frameworks/README.md); they are developer guidance, never bundled or compiled with the app.
 
 This package contains the integrated 5-sprint remediation across Android, Supabase, and Admin PWA:
 
