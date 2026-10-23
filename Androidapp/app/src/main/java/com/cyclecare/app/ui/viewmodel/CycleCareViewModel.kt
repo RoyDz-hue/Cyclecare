@@ -1223,6 +1223,7 @@ class CycleCareViewModel(
     private var walletRefreshJob: kotlinx.coroutines.Job? = null
     private var lastWalletRefreshAtMs: Long = 0L
     private var lastWalletRefreshOwner: String? = null
+    private var lastWalletRefreshSession: Long = 0L
     private val walletRefreshMinIntervalMs: Long = 30_000L
 
     /**
@@ -1237,16 +1238,19 @@ class CycleCareViewModel(
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) return
         if (walletRefreshJob?.isActive == true) return
         val owner = authPreferences.effectiveUserId
-        if (!force && owner == lastWalletRefreshOwner &&
+        val session = authPreferences.sessionGeneration
+        if (!force && owner == lastWalletRefreshOwner && session == lastWalletRefreshSession &&
             System.currentTimeMillis() - lastWalletRefreshAtMs < walletRefreshMinIntervalMs
         ) return
-        val session = authPreferences.sessionGeneration
         walletRefreshJob = viewModelScope.launch {
             val result = economyService.fetchVerifiedProfile(owner)
-            lastWalletRefreshAtMs = System.currentTimeMillis()
-            lastWalletRefreshOwner = owner
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             if (result is com.cyclecare.app.data.economy.EconomyResult.Success) {
+                // Only a successful, still-current fetch earns freshness:
+                // failures and stale-session results never mark the cache.
+                lastWalletRefreshAtMs = System.currentTimeMillis()
+                lastWalletRefreshOwner = owner
+                lastWalletRefreshSession = session
                 val econ = result.data
                 _uiState.value = _uiState.value.copy(economyProfile=econ, isBanned=econ.isBanned,
                     isSuspended=econ.isSuspended, accountNoticeMessage=econ.suspensionReason)
@@ -1321,7 +1325,7 @@ class CycleCareViewModel(
 
     fun onForeground() {
         walletRealtime.start()
-        refreshWalletNow()
+        refreshWalletNow(force = true)
         if (_uiState.value.hasCompletedInitialAuth) autoSyncSilently()
     }
 
