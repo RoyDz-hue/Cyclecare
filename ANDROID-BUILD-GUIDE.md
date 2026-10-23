@@ -1,8 +1,10 @@
 # Building the efficient CycleCare APK
 
 For any coding assistant (or human) building this app: follow this guide to produce the small,
-fully functional APK instead of a bloated one. Previously observed sizes: ~7-11 MB with this
-route versus ~37-40 MB for naive/universal builds.
+fully functional APK instead of a bloated one. Size evidence: a measured slim arm64 build was
+12.5 MB (delivered 2026-10-22, commit a7e64fb era). The project owner recalls ~7-11 MB for these
+efficient builds versus ~37-40 MB from other agents' universal builds; treat those two figures as
+the owner's recollection, with 12.5 MB the measured data point.
 
 ## The one command
 
@@ -11,7 +13,7 @@ cd Androidapp
 ./gradlew assembleSlim -PslimApk
 ```
 
-Output: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/`
+Output APK: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/app-slim-arm64-v8a.apk` (unsigned builds are named `app-slim-arm64-v8a-unsigned.apk`).
 
 ## Why this build is small and fast
 
@@ -26,22 +28,29 @@ Output: `Androidapp/app/build/outputs/apk/slim/arm64-v8a/`
    Do NOT ship the plain `debug` variant: it has `applicationIdSuffix = ".debug"` (installs as a
    separate app) and uses a random per-machine debug keystore (updates will not install in place).
 
-## Memory settings that actually work
+## Memory settings (tested 2026-10-23, read carefully)
 
 The repo default `org.gradle.jvmargs` (-Xmx1536m, 768m metaspace) exceeds small (2 GB) build
-containers and kills the Gradle daemon. On constrained machines append to
-`Androidapp/gradle.properties`:
+containers and kills the Gradle daemon at startup. Tested failure/success ladder on a 2 GB
+container:
+
+- 1536m heap / 768m metaspace (repo default): daemon OOM, build never starts.
+- 700m heap / 320m metaspace: reaches `minifySlimWithR8`, then R8 heap OOM after ~26 min.
+- 1350m heap / 320m metaspace: KSP runs out of metaspace during Kotlin compile.
+- 900m heap / 512m metaspace (non-minified `-PnoMinify` route): passed KSP and Kotlin compile and
+  reached dex merging with no memory errors. That run was then killed by an environment reset, so
+  end-to-end success at these settings is NOT verified.
+
+A full MINIFIED build has never completed on 2 GB. Use a machine with 4 GB+ RAM for the minified
+route. On constrained machines you may try appending to `Androidapp/gradle.properties`:
 
 ```
 org.gradle.jvmargs=-Xmx900m -XX:MaxMetaspaceSize=512m
 kotlin.compiler.execution.strategy=in-process
 ```
 
-Notes learned the hard way (2026-10-23):
-- KSP needs metaspace: 320m is not enough and fails during Kotlin compile.
-- R8 (`minifySlimWithR8`) is the heap peak; 700m heap is not enough, ~900m works for the
-  non-minified path. For a full minified build prefer a machine with 4 GB+ RAM.
-- Cold builds (no Gradle cache) take ~25-35 min; warm incremental builds are much faster.
+Cold builds (no Gradle cache) took ~20-26 min to reach packaging; warm incremental builds are
+much faster.
 
 ## Fallback: memory-constrained recovery build
 
