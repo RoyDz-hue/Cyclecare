@@ -72,17 +72,58 @@ never claims the entry is saved. 9/9 tests pass on an isolated JVM compile
   (chronology/future hard errors only, warning for >7 days).
 - PDF/JSON data exports include the raw end date.
 
+## PatternEngine episode detection (corrected 2026-10-23, review round 2)
+
+Precise current behavior: a new observed episode starts at a logged bleeding
+day when (a) there is no current episode, or (b) it is more than the
+typical-duration window after the current episode's start AND the previous
+calendar day was NOT a logged bleeding day. Consecutive logged bleeding runs
+are therefore never split - a fully logged 20-day period is one episode and
+produces no fake ~10-day cycle intervals (regression-tested). Sparse logging
+with gaps beyond the window keeps the previous window semantics: such gaps
+are uncertain evidence (missing logs are unknown, not non-bleeding), and a
+later bleeding log after a long gap may start a new episode. That is a known
+limitation of sparse data, not a claim about when a period ended.
+
+## Typical-duration estimate: precise current behavior
+
+The estimate (periodDurationDays, 2..10) changes ONLY when: (1) the user
+picks a duration option in onboarding/settings, or (2) the user enters a
+typical-length (<=7 day) start/end pair in onboarding, which sets the
+estimate to that pair's length. A confirmed unusual pair NEVER changes it.
+There is NO adaptation from accumulated episode history - "several reliable
+episodes" was discussed as design direction but is not implemented.
+
+## Sync and consent notes
+
+- Verbatim JSONB storage of the profile payload (including the raw end date)
+  is verified by contract reading plus executable codec tests
+  (HealthSyncProfilePayloadTest, 6/6): round-trip fidelity, old-payload
+  compatibility (missing key tolerated), forward compatibility (unknown keys
+  ignored, never stored or executed), strict typing/range checks on all known
+  keys, malformed or wrong-type end dates rejected. Known keys keep their
+  strict validation; ignoring unknown keys accepts no new data into records.
+- Verbatim storage is NOT evidence sync is enabled: the health-sync consent
+  gate stays closed until the user explicitly allows cloud sync; nothing here
+  changes the consent flow.
+- Old app installs reading a newer payload is only relevant after those
+  installs receive one, which requires sync enabled on both devices.
+
 ## Deliberately NOT implemented (not approved / unresolved)
 
-- Episode detection from logged bleeding runs (the >2 gap rule stays a
-  hypothesis; PatternEngine detection is unchanged, and it now only ever
-  receives the 2..10 typical estimate, so confirmed long episodes no longer
-  split).
-- Automatic typical-duration adaptation from accumulated episodes ("several
-  reliable episodes" was never specified; the estimate only changes from
-  typical-length entries and user settings).
+- Episode-end inference from gaps, and any use of missing logs as
+  non-bleeding evidence.
+- Automatic typical-duration adaptation from accumulated episodes.
 - Seeding daily logs from an inferred onboarding range - never.
 - Any probabilistic fertility/medical scoring.
+
+## Confirmation-state invalidation
+
+The unusual-entry confirmation applies to the exact pair entered: changing
+the start date, the end date, or picking a preset duration resets it, and the
+popup re-asks for the new pair. Each account has its own namespaced local
+database, so an account change starts with a fresh profile and no inherited
+confirmation.
 
 ## Design clarification: mixed-duration history (Roy's 20-day / 3-day scenario)
 

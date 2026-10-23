@@ -131,6 +131,34 @@ class PatternEngineTest {
         assertTrue(acnePattern.supportingObservations.contains("2 times"))
     }
 
+    @Test
+    fun fullyLoggedLongPeriodIsOneEpisodeAndNeverSplitsIntoFakeCycleStarts() {
+        // 20 consecutive logged bleeding days (a real long period), then a
+        // normal 4-day period 16 days later. Old window logic invented a fake
+        // start at day 11, producing bogus ~10-day cycle intervals.
+        val longEpisode = (0..19).map { bleed("2026-01-01").let { log ->
+            log.copy(dateString = java.time.LocalDate.parse("2026-01-01").plusDays(it.toLong()).toString())
+        } }
+        val nextEpisode = (0..3).map {
+            CycleDayLog(dateString = java.time.LocalDate.parse("2026-02-05").plusDays(it.toLong()).toString(), flowLevel = "LIGHT")
+        }
+        val result = PatternEngine.computeBaseline(CycleSettings(), longEpisode + nextEpisode)
+
+        assertEquals(1, result.observedCycleIntervals)
+        assertEquals(35.0, result.averageCycleLength, 0.001)
+        assertEquals(35, result.minCycleLength)
+        assertEquals(35, result.maxCycleLength)
+    }
+
+    @Test
+    fun twentyConsecutiveBleedingDaysAloneYieldNoFakeInterval() {
+        val logs = (0..19).map {
+            CycleDayLog(dateString = java.time.LocalDate.parse("2026-06-01").plusDays(it.toLong()).toString(), flowLevel = "MODERATE")
+        }
+        val result = PatternEngine.computeBaseline(CycleSettings(), logs)
+        assertEquals(0, result.observedCycleIntervals)
+    }
+
     private fun bleed(date: String, flow: String = "LIGHT") = CycleDayLog(
         dateString = date,
         flowLevel = flow

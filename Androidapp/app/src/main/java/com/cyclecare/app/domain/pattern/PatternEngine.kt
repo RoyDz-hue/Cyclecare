@@ -90,13 +90,24 @@ object PatternEngine {
 
         val starts = mutableListOf<LocalDate>()
         var episodeStart: LocalDate? = null
+        var lastBleedingDate: LocalDate? = null
         val episodeWindow = settings.periodDuration.coerceIn(1, 10)
         for (date in bleedingDays) {
             val currentStart = episodeStart
-            if (currentStart == null || ChronoUnit.DAYS.between(currentStart, date) > episodeWindow) {
+            // A run of consecutive logged bleeding days is positive evidence of
+            // ONE episode - a genuinely long period must never be split into a
+            // fake new cycle start. Only a gap beyond the typical-duration
+            // window (missing or non-bleeding days - uncertain evidence) lets
+            // the window semantics start a new episode, as before.
+            val previousDayWasBleeding =
+                lastBleedingDate?.let { ChronoUnit.DAYS.between(it, date) == 1L } == true
+            if (currentStart == null ||
+                (ChronoUnit.DAYS.between(currentStart, date) > episodeWindow && !previousDayWasBleeding)
+            ) {
                 starts += date
                 episodeStart = date
             }
+            lastBleedingDate = date
         }
 
         val configuredStart = settings.lastPeriodStartDate
