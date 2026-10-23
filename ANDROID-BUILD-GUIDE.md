@@ -68,8 +68,9 @@ a delivery fallback; prefer the minified build whenever the machine allows it.
 ## Signing (never commit secrets)
 
 - Keystore lives in the Instinct vault item "CycleCare fixed Android debug signing bundle"
-  (keystore bytes + store password + alias `cyclecare-debug`). Never commit it; `.private/` is
-  gitignored.
+  (keystore bytes + store password + alias `cyclecare-debug`). Never commit it. `.gitignore`
+  enforces this: `.private/` and `*.jks` are excluded, so signing material cannot be committed or
+  bundled into any APK (debug, release, or slim).
 - Local: place the keystore at `Androidapp/.private/cyclecare-debug.jks` (or set
   `CYCLECARE_DEBUG_KEYSTORE`, `CYCLECARE_DEBUG_STORE_PASSWORD`, `CYCLECARE_DEBUG_KEY_PASSWORD`).
   The slim variant signs automatically when the keystore file exists.
@@ -100,6 +101,20 @@ verify on a real arm64 device:
 - Wallet and realtime updates load and refresh.
 - Chat: posting a message triggers the server reply path (post-post pulse ping).
 - Payments stay fail-closed: no test charge paths against real wallets.
+
+## In-place updates
+
+An APK updates in place over an existing install only when ALL of these hold: same applicationId,
+same signing certificate, and a higher `versionCode`. The signing key alone does not guarantee an
+update path - keep the slim variant and the fixed key for user installs, and confirm the built
+APK's applicationId matches the installed app (`aapt dump badging app.apk | grep package`).
+The private key never leaves the vault; the public certificate fingerprint below is safe to share.
+
+## This guide is never shipped
+
+This file (and BUILD-RECOVERY.md) lives at the repository root. Gradle only packages what is under
+`Androidapp/app/src/` (code, resources, manifest), so repo-root docs are never bundled into any
+APK variant. Do not move documentation into the app module or its `assets`.
 
 ## CI route
 

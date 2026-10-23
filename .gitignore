@@ -45,3 +45,7 @@ replay_pid*.log
 # Python contract-test caches
 __pycache__/
 *.py[cod]
+
+# Signing material must never be committed
+.private/
+*.jks
