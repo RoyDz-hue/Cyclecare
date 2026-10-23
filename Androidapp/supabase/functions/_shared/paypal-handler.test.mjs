@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { createPayPalHandler } from './paypal-handler.ts';
 import { COIN_PACKAGES } from './payments.ts';
 
+
+// The payment routing registry (added with the AI core + payment routing
+// framework) consults a live RPC before these handlers run. Stub it allowed so
+// these tests exercise their own contracts; the gate itself is covered by
+// payment-routing.test.mjs.
+Deno.env.set("SUPABASE_URL", "https://routing.invalid");
+Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "routing-test-key");
+const realFetch = globalThis.fetch;
+const routingAllowResponse = () => new Response(JSON.stringify({ allowed: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+const isRoutingCall = (input) => String(input).includes('/rest/v1/rpc/payment_option_allowed');
+globalThis.fetch = async (input, init) => isRoutingCall(input) ? routingAllowResponse() : realFetch(input, init);
+
 const owner = '11111111-1111-4111-8111-111111111111';
 const intent = '22222222-2222-4222-8222-222222222222';
 const config = { mode: 'sandbox', clientId: 'client', clientSecret: 'secret', url: 'https://db.invalid', serviceKey: 'service', returnUrl: 'https://app.invalid/paypal/return', cancelUrl: 'https://app.invalid/paypal/cancel', webhookId: 'hook' };
@@ -42,7 +54,7 @@ test('create requires exact stable client ID, rejects inherited package and dire
 
 test('create uses server package amount/reward and mode-bound approval URL', async () => {
   const f = fixture({ api: { getOrder: async () => ({ ...order('CREATED'), links: [{ rel: 'approve', href: 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER1' }] }) } });
-  const original = globalThis.fetch; globalThis.fetch = async (url) => { assert.equal(String(url), 'https://api-m.sandbox.paypal.com/v2/checkout/orders'); return new Response(JSON.stringify({ ...order('CREATED'), purchase_units: [{ reference_id: `CC_${owner}_11111111-1111-4111-8111-111111111111`, custom_id: owner, amount: { currency_code: 'USD', value: '2.99' } }] }), { status: 201 }); };
+  const original = globalThis.fetch; globalThis.fetch = async (url) => { if (isRoutingCall(url)) return routingAllowResponse(); assert.equal(String(url), 'https://api-m.sandbox.paypal.com/v2/checkout/orders'); return new Response(JSON.stringify({ ...order('CREATED'), purchase_units: [{ reference_id: `CC_${owner}_11111111-1111-4111-8111-111111111111`, custom_id: owner, amount: { currency_code: 'USD', value: '2.99' } }] }), { status: 201 }); };
   let result; try { result = await body(await createPayPalHandler('create', f.deps)(req({ package_id: 'pkg_seed', checkout_request_id: '11111111-1111-4111-8111-111111111111' }))); } finally { globalThis.fetch = original; }
   assert.equal(result.success, true); assert.equal(result.amount_usd, COIN_PACKAGES.pkg_seed.priceUsd); assert.equal(result.coins_to_credit, COIN_PACKAGES.pkg_seed.coins);
   assert.equal(result.approval_url.startsWith('https://www.sandbox.paypal.com/'), true);

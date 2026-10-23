@@ -4,6 +4,8 @@
 
 This is the project's **current working memory**: architecture, implemented contracts, known limits, release boundaries and the next real decisions. It is not a setup guide, a running conversation log, a backlog dump or evidence of approval. [README.md](README.md) owns installation, commands and local configuration.
 
+Guiding frameworks and build recipes (AI core, tone language, payment routing, learning/persona memory) live in [frameworks/](frameworks/README.md); they are developer guidance, never bundled or compiled with the app.
+
 This package contains the integrated 5-sprint remediation across Android, Supabase, and Admin PWA:
 
 | Project | Implemented State |
@@ -80,7 +82,7 @@ These items remain real-world external prerequisites and must not be represented
 | Device/staging acceptance | Authorized connected host and test handset(s), staging accounts and two-device tests for Keystore/SQLCipher recovery, account switching, outbox restarts, conflicts, erasure/revocation, keyboard and accessibility |
 | Processor eligibility | Account/DPA, retention, region, audience/age, use-case and upstream/model evidence; Gemini also needs a valid eligible server-side replacement key |
 | Hosted PayPal sandbox | Sandbox merchant client ID/secret, webhook ID, buyer access, approved return/cancel origins and agreed ambiguous/partial-refund policy; then hosted lifecycle evidence |
-| Other payment rails | M-Pesa/PayHero, PayNexus/OKX and direct cards remain unsupported/closed where independently verified settlement/reversal contracts are incomplete |
+| Approved payment rails | Four rails decided by the owner, each fail-closed until its provider credentials and settlement/reversal contracts are independently verified: M-Pesa via PayHero, PayPal wallet (standard), card via PayPal ACDC, crypto via OKX USDT/USDC on X Layer |
 | Recurring subscriptions | Renewal/expiry/cancellation/refund entitlement lifecycle is not implemented; an approved product contract is needed first |
 | Full account/provider deletion | Retention/lifecycle decisions, provider erasure mechanisms, safeguards and acceptance are not supplied by health erasure |
 | Rollout/store release | Exact target-catalog comparison, reviewed forward migration, staging acceptance, protected signing access and separate explicit merge/deploy/publish authorization |

@@ -63,8 +63,12 @@ test('schema readiness is v2-only', () => {
 });
 
 test('AI safety contract asks for uncertainty and escalation without diagnosis claims', () => {
+  // The Expert prompt moved to _shared/ai-core.ts (EXPERT_SYSTEM_PROMPT_V1, the
+  // built-in fallback for the versioned registry) in the AI core framework.
+  const aiCore = readFileSync(new URL('./ai-core.ts', import.meta.url), 'utf8');
+  assert.match(aiCore, /not a diagnosis or a substitute for medical care/);
+  assert.match(aiCore, /avoid claiming certainty/);
+  assert.match(aiCore, /sudden severe pain, fainting, or heavy bleeding/);
   const gateway = readFileSync(new URL('../ai-gateway/index.ts', import.meta.url), 'utf8');
-  assert.match(gateway, /not a diagnosis or a substitute for medical care/);
-  assert.match(gateway, /avoid claiming certainty/);
-  assert.match(gateway, /sudden severe pain, fainting, or heavy bleeding/);
+  assert.match(gateway, /EXPERT_SYSTEM_PROMPT_V1/);
 });

@@ -7,6 +7,18 @@ import { boundedJson, boundedResponseJson, fetchDeadline, verifiedProviderGate, 
 import { COIN_PACKAGES, jsonResponse } from './payments.ts';
 import { createPayPalHandler } from './paypal-handler.ts';
 
+
+// The payment routing registry (added with the AI core + payment routing
+// framework) consults a live RPC before these handlers run. Stub it allowed so
+// these tests exercise their own contracts; the gate itself is covered by
+// payment-routing.test.mjs.
+Deno.env.set("SUPABASE_URL", "https://routing.invalid");
+Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "routing-test-key");
+const realFetch = globalThis.fetch;
+const routingAllowResponse = () => new Response(JSON.stringify({ allowed: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+const isRoutingCall = (input) => String(input).includes('/rest/v1/rpc/payment_option_allowed');
+globalThis.fetch = async (input, init) => isRoutingCall(input) ? routingAllowResponse() : realFetch(input, init);
+
 function requestWithStream(stream) {
   return new Request('https://offline.invalid', { method: 'POST', body: stream, duplex: 'half' });
 }

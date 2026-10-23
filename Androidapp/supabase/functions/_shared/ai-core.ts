@@ -2,7 +2,7 @@
 // One source of truth for voice rules, wisdom filters, the versioned prompt
 // registry and the run audit. Used by ai-gateway (CycleCare Expert),
 // community-pulse (Community Guides) and admin-command (Admin Command).
-// See Androidapp/docs/AI_CORE.md.
+// See frameworks/AI_CORE.md (repo-only guidance, never bundled with the app).
 
 export const AGENT_EXPERT = "expert";
 export const AGENT_GUIDES = "community_guides";
