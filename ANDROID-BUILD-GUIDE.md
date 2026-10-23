@@ -54,7 +54,7 @@ kotlin.compiler.execution.strategy=in-process
 Cold builds (no Gradle cache) took ~20-26 min to reach packaging; warm incremental builds are
 much faster.
 
-## Fallback: memory-constrained recovery build
+## Fallback: memory-constrained diagnostic build (NEVER deliver)
 
 If R8 cannot run at all, `-PnoMinify` skips minification and resource shrinking:
 
@@ -62,8 +62,9 @@ If R8 cannot run at all, `-PnoMinify` skips minification and resource shrinking:
 ./gradlew assembleSlim -PslimApk -PnoMinify
 ```
 
-Same features, same signing key, but a noticeably larger APK and no code obfuscation. Use only as
-a delivery fallback; prefer the minified build whenever the machine allows it.
+The output is NOT obfuscated. Obfuscation is a hard delivery requirement, so a `-PnoMinify` APK
+is an internal diagnostic artifact only: it must never be delivered to users or members. If only
+this route is available, the correct outcome is "no deliverable APK", not a non-obfuscated one.
 
 ## Signing (never commit secrets)
 
@@ -74,7 +75,10 @@ a delivery fallback; prefer the minified build whenever the machine allows it.
 - Local: place the keystore at `Androidapp/.private/cyclecare-debug.jks` (or set
   `CYCLECARE_DEBUG_KEYSTORE`, `CYCLECARE_DEBUG_STORE_PASSWORD`, `CYCLECARE_DEBUG_KEY_PASSWORD`).
   The slim variant signs automatically when the keystore file exists.
-- Unsigned builds (e.g. CI): sign afterwards with build-tools 34.0.0:
+- Other builders never need the keystore or vault access. Every builder produces an UNSIGNED
+  APK (`-PslimApk` with no keystore present leaves it unsigned automatically) and hands it to the
+  owner; only the owner (or the owner's Instinct, via the vault) signs. Sign an unsigned build
+  with build-tools 34.0.0:
   ```bash
   apksigner sign --ks cyclecare-debug.jks --ks-key-alias cyclecare-debug \
     --ks-pass file:store_password.txt --key-pass file:store_password.txt \
