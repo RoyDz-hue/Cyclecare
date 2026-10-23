@@ -1681,6 +1681,7 @@ class CycleCareViewModel(
     fun completeOnboarding(
         goals: List<String>,
         lastPeriodDate: LocalDate,
+        lastPeriodEndDate: LocalDate? = null,
         periodStartChoice: String = "EXACT",
         cycleLength: Int,
         cycleLengthOption: String = "",
@@ -1719,6 +1720,9 @@ class CycleCareViewModel(
                 accountMode = authPreferences.accountMode,
                 selectedGoalsCsv = goals.joinToString(","),
                 lastPeriodDateString = if (periodStartChoice == "UNKNOWN") "" else lastPeriodDate.toString(),
+                // Raw episode record: the end date exactly as entered and
+                // confirmed, never clamped into the typical-duration range.
+                lastPeriodEndDateString = lastPeriodEndDate?.toString() ?: "",
                 approximatePeriodChoice = periodStartChoice,
                 cycleLengthOption = cycleLengthOption.ifBlank { "UNKNOWN" },
                 cycleLengthDays = cycleLength,
@@ -1783,6 +1787,7 @@ class CycleCareViewModel(
             org.json.JSONObject().apply {
                 put("selected_goals", it.selectedGoalsCsv)
                 put("last_period_date", it.lastPeriodDateString)
+                put("last_period_end_date", it.lastPeriodEndDateString)
                 put("period_date_precision", it.approximatePeriodChoice)
                 put("cycle_length_choice", it.cycleLengthOption)
                 put("cycle_length_days", it.cycleLengthDays)

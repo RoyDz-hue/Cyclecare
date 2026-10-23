@@ -18,6 +18,10 @@ data class OnboardingProfile(
     val accountMode: String = "PRIVATE", // "PRIVATE" or "SYNC_ACCOUNT"
     val selectedGoalsCsv: String = "",
     val lastPeriodDateString: String = "", // YYYY-MM-DD
+    // Raw episode record: the period end date exactly as entered/confirmed.
+    // Kept separate from periodDurationDays (the typical-duration estimate)
+    // so a real unusual entry is never silently rewritten to fit 2..10.
+    val lastPeriodEndDateString: String = "", // YYYY-MM-DD, "" when unknown/ongoing
     val approximatePeriodChoice: String = "EXACT", // e.g., "EXACT", "Today", "A few days ago", etc.
     val cycleLengthOption: String = "",
     val cycleLengthDays: Int = 28,

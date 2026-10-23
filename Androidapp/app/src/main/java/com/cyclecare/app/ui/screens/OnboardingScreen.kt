@@ -85,6 +85,7 @@ fun OnboardingScreen(
     onComplete: (
         goals: List<String>,
         lastPeriod: LocalDate,
+        periodEndDate: LocalDate?,
         periodStartChoice: String,
         cycleLength: Int,
         cycleLengthOption: String,
@@ -279,6 +280,7 @@ fun OnboardingScreen(
                         onComplete(
                             uiState.selectedGoals.toList(),
                             uiState.effectiveLastPeriodDate,
+                            viewModel.confirmedPeriodEndDate(),
                             uiState.periodStartChoice,
                             uiState.cycleLengthDays,
                             uiState.selectedCycleOption,
@@ -366,6 +368,15 @@ fun OnboardingScreen(
         ) {
             DatePicker(state = datePickerState)
         }
+    }
+
+    // Unusual period-length confirmation popup
+    uiState.periodDateDialogMessage?.let { message ->
+        PeriodDateConfirmDialog(
+            message = message,
+            onConfirm = { viewModel.confirmPeriodEndDate() },
+            onEdit = { viewModel.editPeriodEndDate() }
+        )
     }
 
     // Material 3 Date Picker Dialog for Period End Date
@@ -641,6 +652,52 @@ private fun Step2PrivacyFirst(
             }
         }
     }
+}
+
+/**
+ * Unusual period-length confirmation: keeps the user's real entry on confirm,
+ * or lets them fix the dates. The record is only kept after save succeeds.
+ */
+@Composable
+private fun PeriodDateConfirmDialog(
+    message: String,
+    onConfirm: () -> Unit,
+    onEdit: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { /* A choice is required: keep or edit. */ },
+        title = {
+            Text(
+                text = "Please check your dates",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+            )
+        },
+        text = {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.testTag("period_dates_confirm_button")
+            ) {
+                Text("Dates are correct", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onEdit,
+                modifier = Modifier.testTag("period_dates_edit_button")
+            ) {
+                Text("Edit dates")
+            }
+        },
+        shape = RoundedCornerShape(20.dp)
+    )
 }
 
 /**

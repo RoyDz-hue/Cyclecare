@@ -207,10 +207,11 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
             // Onboarding Flow
             uiState.showOnboarding -> {
                 OnboardingScreen(
-                    onComplete = { goals, lastPeriod, periodStartChoice, cycleLength, cycleLengthOption, periodDuration, pin, enableLock, remindFertile, typicalSymptoms, typicalEnergy, typicalSleep, hasCompletedDeepBaseline, isCloudSyncAllowed, dynamicAnswers ->
+                    onComplete = { goals, lastPeriod, periodEndDate, periodStartChoice, cycleLength, cycleLengthOption, periodDuration, pin, enableLock, remindFertile, typicalSymptoms, typicalEnergy, typicalSleep, hasCompletedDeepBaseline, isCloudSyncAllowed, dynamicAnswers ->
                         viewModel.completeOnboarding(
                             goals = goals,
                             lastPeriodDate = lastPeriod,
+                            lastPeriodEndDate = periodEndDate,
                             periodStartChoice = periodStartChoice,
                             cycleLength = cycleLength,
                             cycleLengthOption = cycleLengthOption,

@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 @Database(
     entities = [CycleDayLog::class, CycleSettings::class, OnboardingProfile::class, HealthSyncRevision::class, HealthSyncOutboxEntry::class, HealthSyncCursor::class, HealthSyncConflictEntity::class],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class CycleCareDatabase : RoomDatabase() {
@@ -148,6 +148,14 @@ abstract class CycleCareDatabase : RoomDatabase() {
             }
         }
 
+        fun createMigration8To9(): Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Raw period end date, preserved exactly as the user entered
+                // it; separate from the typical-duration estimate.
+                db.execSQL("ALTER TABLE `onboarding_profiles` ADD COLUMN `lastPeriodEndDateString` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private fun buildDatabase(context: Context, databaseName: String): CycleCareDatabase {
                 val appContext = context.applicationContext
                 System.loadLibrary("sqlcipher")
@@ -160,7 +168,7 @@ abstract class CycleCareDatabase : RoomDatabase() {
                     databaseName
                 )
                     .openHelperFactory(encryptedFactory)
-                    .addMigrations(createMigration4To5(appContext), createMigration5To6(), createMigration6To7(), createMigration7To8())
+                    .addMigrations(createMigration4To5(appContext), createMigration5To6(), createMigration6To7(), createMigration7To8(), createMigration8To9())
                     .build()
                 return instance
         }

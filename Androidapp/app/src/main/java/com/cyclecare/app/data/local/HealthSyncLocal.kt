@@ -148,6 +148,7 @@ object HealthSyncPayloadCodec {
 
     fun profilePayload(value: OnboardingProfile): String = JSONObject().apply {
         put("selected_goals", value.selectedGoalsCsv); put("last_period_date", value.lastPeriodDateString)
+        put("last_period_end_date", value.lastPeriodEndDateString)
         put("approximate_period_choice", value.approximatePeriodChoice); put("cycle_length_option", value.cycleLengthOption)
         put("cycle_length_days", value.cycleLengthDays); put("period_duration_days", value.periodDurationDays)
         put("typical_symptoms", value.typicalSymptomsCsv); put("typical_energy", value.typicalEnergy)
@@ -180,11 +181,15 @@ object HealthSyncPayloadCodec {
     fun parseProfilePayload(payload: String, recordId: String, local: OnboardingProfile? = null): OnboardingProfile {
         require(recordId == "profile") { "record_identity" }
         val o = JSONObject(payload)
-        checkKeys(o,setOf("selected_goals","last_period_date","approximate_period_choice","cycle_length_option","cycle_length_days","period_duration_days","typical_symptoms","typical_energy","typical_sleep_quality","has_completed_deep_baseline"))
+        // Known keys are type-checked below; unknown keys are ignored so
+        // older installs keep reading newer payloads (and vice versa for the
+        // optional last_period_end_date added later).
         val date=text(o,"last_period_date"); require(date.isEmpty() || runCatching { LocalDate.parse(date) }.isSuccess) { "invalid_date" }
+        val endDate = if (o.has("last_period_end_date") && !o.isNull("last_period_end_date")) (o.get("last_period_end_date") as? String) ?: throw IllegalArgumentException("type_last_period_end_date") else ""
+        require(endDate.isEmpty() || runCatching { LocalDate.parse(endDate) }.isSuccess) { "invalid_end_date" }
         // Restored data cannot certify age, accept terms, complete onboarding, or change account mode.
         return (local ?: OnboardingProfile(isCompleted=false,completedAtTimestamp=0,isAgeVerified=false,isTermsAgreed=false)).copy(
-            selectedGoalsCsv=text(o,"selected_goals"),lastPeriodDateString=date,approximatePeriodChoice=text(o,"approximate_period_choice"),
+            selectedGoalsCsv=text(o,"selected_goals"),lastPeriodDateString=date,lastPeriodEndDateString=endDate,approximatePeriodChoice=text(o,"approximate_period_choice"),
             cycleLengthOption=text(o,"cycle_length_option"),cycleLengthDays=integer(o,"cycle_length_days",21..45),
             periodDurationDays=integer(o,"period_duration_days",2..10),typicalSymptomsCsv=text(o,"typical_symptoms"),
             typicalEnergy=text(o,"typical_energy"),typicalSleepQuality=text(o,"typical_sleep_quality"),hasCompletedDeepBaseline=bool(o,"has_completed_deep_baseline"))

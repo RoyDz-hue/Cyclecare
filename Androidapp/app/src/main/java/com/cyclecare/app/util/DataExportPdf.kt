@@ -99,6 +99,7 @@ object DataExportPdf {
             line("Profile baseline", sectionPaint, 22f)
             field("Goals", profile.selectedGoalsCsv)
             field("Last period", profile.lastPeriodDateString)
+            if (profile.lastPeriodEndDateString.isNotBlank()) field("Period end", profile.lastPeriodEndDateString)
             field("Period date precision", profile.approximatePeriodChoice)
             field("Cycle length", profile.cycleLengthOption.ifBlank { "${profile.cycleLengthDays} days" })
             field("Period duration", "${profile.periodDurationDays} days")

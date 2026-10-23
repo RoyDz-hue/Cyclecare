@@ -1,7 +1,9 @@
 # Period date consistency - research note (2026-10-23)
 
-Status: research + prepared validator only. NOT wired into any UI. NOT a live
-fix. Save policy and storage design await the owner's decision.
+Status: IMPLEMENTED on main (2026-10-23) after the owner approved the flow
+("Implement all approved"). Full Android build, Room migration execution and
+UI pixels remain unverified in this environment - an APK/device check is
+still required before calling this a live fix.
 
 ## Defect found (verified in code)
 
@@ -49,12 +51,38 @@ gentle confirmation message, firmer when the period is ongoing. The validator
 never claims the entry is saved. 9/9 tests pass on an isolated JVM compile
 (PeriodDateConsistencyTest); not run against the full Android build.
 
-## Open decisions (owner)
+## What was implemented (2026-10-23)
 
-- Save policy for a confirmed unusual duration (Roy's answer pending).
-- Storage design for the raw episode record (Room migration risk flagged).
-- Popup UX wording/placement (approved shape: gentle "Your period lasted N
-  days...", Edit dates / Dates are correct).
+- Onboarding no longer clamps the entered duration with coerceIn(2, 10).
+  PeriodEpisodeEntry.decide (domain/health, pure + JVM-tested 6/6) separates
+  the raw episode record from the typical-duration estimate: an unusual
+  confirmed pair keeps its exact end date and does NOT drag the estimate.
+- Popup: gentle "Your period lasted N days..." wording with "Dates are
+  correct" / "Edit dates" (OnboardingScreen PeriodDateConfirmDialog); a
+  choice is required, no dismiss-into-silence.
+- Raw end date stored on OnboardingProfile.lastPeriodEndDateString (Room
+  migration 8 -> 9, ALTER TABLE ADD COLUMN - compile-verified only, NOT run
+  on a device). The user can still edit/delete via existing flows.
+- Sync: profile payload carries last_period_end_date; the live v3 sync
+  contract stores payloads as verbatim JSONB, so the raw date round-trips
+  without any server clamp. Older installs ignore the new key; newer
+  installs treat it as optional. The legacy sync_my_profile 2..10 clamp now
+  only bounds the typical-duration ESTIMATE column, which is its contract.
+- CycleRepository.validatePeriodDatePair delegates to PeriodDateConsistency
+  (chronology/future hard errors only, warning for >7 days).
+- PDF/JSON data exports include the raw end date.
+
+## Deliberately NOT implemented (not approved / unresolved)
+
+- Episode detection from logged bleeding runs (the >2 gap rule stays a
+  hypothesis; PatternEngine detection is unchanged, and it now only ever
+  receives the 2..10 typical estimate, so confirmed long episodes no longer
+  split).
+- Automatic typical-duration adaptation from accumulated episodes ("several
+  reliable episodes" was never specified; the estimate only changes from
+  typical-length entries and user settings).
+- Seeding daily logs from an inferred onboarding range - never.
+- Any probabilistic fertility/medical scoring.
 
 ## Design clarification: mixed-duration history (Roy's 20-day / 3-day scenario)
 

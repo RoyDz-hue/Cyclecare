@@ -69,7 +69,10 @@ data class PeriodDateValidationResult(
     val isValid: Boolean,
     val errorMessage: String? = null,
     val durationDays: Int = 0,
-    val range: PeriodDateRange? = null
+    val range: PeriodDateRange? = null,
+    // Gentle confirmation text for unusual-but-real durations; null when the
+    // pair is typical. Never promises the entry is saved.
+    val warningMessage: String? = null
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -440,37 +443,26 @@ class CycleRepository(database: CycleCareDatabase) {
             return validatePeriodDates(range.period_start_date, range.period_end_date)
         }
 
+        /**
+         * Delegates to the tested PeriodDateConsistency rules: only chronology
+         * and future dates are hard errors; unusual durations stay valid and
+         * carry a confirmation warning.
+         */
         fun validatePeriodDatePair(
             period_start_date: LocalDate?,
-            period_end_date: LocalDate?
+            period_end_date: LocalDate?,
+            isOngoing: Boolean = false,
+            today: LocalDate = LocalDate.now()
         ): PeriodDateValidationResult {
-            if (period_start_date == null) {
-                return PeriodDateValidationResult(
-                    isValid = false,
-                    errorMessage = "Period start date is required",
-                    durationDays = 0
-                )
-            }
-            if (period_end_date == null) {
-                return PeriodDateValidationResult(
-                    isValid = false,
-                    errorMessage = "Period end date is required",
-                    durationDays = 0
-                )
-            }
-            if (period_end_date.isBefore(period_start_date)) {
-                return PeriodDateValidationResult(
-                    isValid = false,
-                    errorMessage = "Period end date cannot be earlier than start date",
-                    durationDays = 0
-                )
-            }
-            val durationDays = (ChronoUnit.DAYS.between(period_start_date, period_end_date) + 1).toInt()
+            val check = com.cyclecare.app.domain.health.PeriodDateConsistency.validatePair(
+                period_start_date, period_end_date, today, isOngoing
+            )
             return PeriodDateValidationResult(
-                isValid = true,
-                errorMessage = null,
-                durationDays = durationDays,
-                range = PeriodDateRange(period_start_date, period_end_date)
+                isValid = check.isValid,
+                errorMessage = check.errorMessage,
+                durationDays = check.durationDays,
+                range = if (check.isValid) PeriodDateRange(period_start_date, period_end_date) else null,
+                warningMessage = check.warningMessage
             )
         }
 
