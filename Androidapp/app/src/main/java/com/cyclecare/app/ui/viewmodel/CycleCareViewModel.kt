@@ -393,34 +393,29 @@ class CycleCareViewModel(
 
         // Reactive network connectivity observer. Reconnect work runs only on
         // an offline -> online transition, throttled per owner, so flappy
-        // networks cannot trigger unbounded reconcile/fetch loops.
+        // networks cannot trigger unbounded reconcile/fetch loops. A throttled
+        // transition is deferred, not dropped: one trailing run fires when the
+        // cooldown expires, and a failed run gets exactly one bounded retry,
+        // so pending offline claims are reconciled once the network settles.
         viewModelScope.launch {
             com.cyclecare.app.util.NetworkHelper.observeNetwork(authPreferences.context).collect { isConnected ->
                 val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
-                val shouldRun = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.shouldRun(
+                when (val decision = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decide(
                     reconnectWorkState, isConnected, eligible,
                     authPreferences.effectiveUserId, System.currentTimeMillis()
-                )
-                if (!shouldRun) return@collect
-                val owner = authPreferences.effectiveUserId
-                val session = authPreferences.sessionGeneration
-                val reconciled = miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile)
-                if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@collect
-                if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
-                    _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
+                )) {
+                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Run -> {
+                        if (!runReconnectWorkOnce()) {
+                            scheduleTrailingReconnectWork(
+                                com.cyclecare.app.domain.sync.ReconnectWorkPolicy.MIN_INTERVAL_MS,
+                                allowReschedule = false
+                            )
+                        }
+                    }
+                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Throttled ->
+                        scheduleTrailingReconnectWork(decision.retryAfterMs, allowReschedule = true)
+                    com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Skip -> Unit
                 }
-                val verified = economyService.fetchVerifiedProfile(owner)
-                if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@collect
-                if (verified is com.cyclecare.app.data.economy.EconomyResult.Success) {
-                    val econ = verified.data
-                    _uiState.value = _uiState.value.copy(
-                        economyProfile = econ,
-                        isBanned = econ.isBanned,
-                        isSuspended = econ.isSuspended,
-                        accountNoticeMessage = econ.suspensionReason
-                    )
-                }
-                refreshNotifications()
             }
         }
 
@@ -1223,22 +1218,103 @@ class CycleCareViewModel(
         }
     }
 
-    private val walletRealtime by lazy { com.cyclecare.app.data.economy.WalletRealtimeObserver(authPreferences, viewModelScope) { refreshWalletNow() } }
+    private val walletRealtime by lazy { com.cyclecare.app.data.economy.WalletRealtimeObserver(authPreferences, viewModelScope) { refreshWalletNow(force = true) } }
     private var accountRefreshJob: kotlinx.coroutines.Job? = null
     private var walletRefreshJob: kotlinx.coroutines.Job? = null
+    private var lastWalletRefreshAtMs: Long = 0L
+    private var lastWalletRefreshOwner: String? = null
+    private val walletRefreshMinIntervalMs: Long = 30_000L
 
-    fun refreshWalletNow() {
+    /**
+     * Fetch the verified wallet profile. Automatic callers are deduplicated:
+     * one refresh per walletRefreshMinIntervalMs per owner, so rapid autoSync
+     * entrants cannot duplicate fetches while a sync is already running.
+     * Manual retries and realtime invalidations pass force = true and always
+     * fetch. An owner change always fetches: a fresh sign-in never inherits
+     * the previous account's dedupe.
+     */
+    fun refreshWalletNow(force: Boolean = false) {
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) return
         if (walletRefreshJob?.isActive == true) return
         val owner = authPreferences.effectiveUserId
+        if (!force && owner == lastWalletRefreshOwner &&
+            System.currentTimeMillis() - lastWalletRefreshAtMs < walletRefreshMinIntervalMs
+        ) return
         val session = authPreferences.sessionGeneration
         walletRefreshJob = viewModelScope.launch {
             val result = economyService.fetchVerifiedProfile(owner)
+            lastWalletRefreshAtMs = System.currentTimeMillis()
+            lastWalletRefreshOwner = owner
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             if (result is com.cyclecare.app.data.economy.EconomyResult.Success) {
                 val econ = result.data
                 _uiState.value = _uiState.value.copy(economyProfile=econ, isBanned=econ.isBanned,
                     isSuspended=econ.isSuspended, accountNoticeMessage=econ.suspensionReason)
+            }
+        }
+    }
+
+    // One trailing reconnect run per cooldown window; coalesced so flapping
+    // can never stack up pending runs.
+    private var reconnectTrailingJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * One pass of reconnect work: reconcile pending offline claims, fetch the
+     * verified profile, refresh notifications. Owner and session are
+     * re-checked after every network call. Returns false when a network step
+     * failed and the run deserves one bounded retry; owner/session aborts
+     * return true (the new session's own events drive its work).
+     */
+    private suspend fun runReconnectWorkOnce(): Boolean {
+        val owner = authPreferences.effectiveUserId
+        val session = authPreferences.sessionGeneration
+        val reconciled = runCatching { miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile) }.getOrNull()
+        if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return true
+        if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
+            _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
+        }
+        val verified = runCatching { economyService.fetchVerifiedProfile(owner) }.getOrNull()
+        if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return true
+        if (verified is com.cyclecare.app.data.economy.EconomyResult.Success) {
+            val econ = verified.data
+            _uiState.value = _uiState.value.copy(
+                economyProfile = econ,
+                isBanned = econ.isBanned,
+                isSuspended = econ.isSuspended,
+                accountNoticeMessage = econ.suspensionReason
+            )
+        }
+        runCatching { refreshNotifications() }
+        return reconciled is com.cyclecare.app.data.economy.EconomyResult.Success &&
+            verified is com.cyclecare.app.data.economy.EconomyResult.Success
+    }
+
+    /** Schedule the single trailing reconnect run; an active one covers new requests. */
+    private fun scheduleTrailingReconnectWork(delayMs: Long, allowReschedule: Boolean) {
+        if (reconnectTrailingJob?.isActive == true) return
+        reconnectTrailingJob = launchTrailingReconnectWork(delayMs, allowReschedule)
+    }
+
+    private fun launchTrailingReconnectWork(delayMs: Long, allowReschedule: Boolean): kotlinx.coroutines.Job {
+        val ownerAtSchedule = authPreferences.effectiveUserId
+        return viewModelScope.launch {
+            kotlinx.coroutines.delay(delayMs)
+            if (ownerAtSchedule != authPreferences.effectiveUserId) return@launch
+            val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
+            val online = com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)
+            when (val decision = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decideTrailing(
+                reconnectWorkState, online, eligible,
+                authPreferences.effectiveUserId, System.currentTimeMillis()
+            )) {
+                is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Run -> runReconnectWorkOnce()
+                is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Throttled -> {
+                    // Another emission ran the work just before us; keep one
+                    // trailing run alive for the remaining cooldown.
+                    if (allowReschedule) {
+                        reconnectTrailingJob = launchTrailingReconnectWork(decision.retryAfterMs, allowReschedule = true)
+                    }
+                }
+                com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Skip -> Unit
             }
         }
     }
@@ -1251,13 +1327,13 @@ class CycleCareViewModel(
 
     fun onBackground() { walletRealtime.stop() }
 
-    fun autoSyncSilently() {
+    fun autoSyncSilently(forceWalletRefresh: Boolean = false) {
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) {
             _uiState.value = _uiState.value.copy(isCheckingCloudProfile = false,
                 showOnboarding = !_uiState.value.settings.isOnboardingCompleted)
             return
         }
-        refreshWalletNow()
+        refreshWalletNow(forceWalletRefresh)
         if (accountRefreshJob?.isActive == true) return
         val owner = authPreferences.effectiveUserId
         val session = authPreferences.sessionGeneration

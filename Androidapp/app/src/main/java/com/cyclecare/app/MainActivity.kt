@@ -179,7 +179,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Your saved account could not be checked yet.")
                         Text("Reconnect and try again. Your account has not been reset.")
-                        TextButton(onClick = { viewModel.autoSyncSilently() }) { Text("Try again") }
+                        TextButton(onClick = { viewModel.autoSyncSilently(forceWalletRefresh = true) }) { Text("Try again") }
                     }
                 }
             }
