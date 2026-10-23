@@ -80,8 +80,10 @@ android {
         // CI builds leave the APK unsigned; sign locally with apksigner using the vault keystore.
         signingConfig = null
       }
-      isMinifyEnabled = true
-      isShrinkResources = true
+      // Local sandboxes that cannot run R8 can build with -PnoMinify (larger APK, same features).
+      val noMinify = project.hasProperty("noMinify")
+      isMinifyEnabled = !noMinify
+      isShrinkResources = !noMinify
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
