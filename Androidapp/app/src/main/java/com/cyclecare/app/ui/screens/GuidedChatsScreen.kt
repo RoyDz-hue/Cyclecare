@@ -56,6 +56,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cyclecare.app.data.economy.CommunityGuidesService
+import com.cyclecare.app.data.economy.CommunityPulsePinger
 import com.cyclecare.app.data.economy.CosmeticAssets
 import com.cyclecare.app.data.economy.EconomyProfile
 import com.cyclecare.app.data.economy.GuidedChatMessage
@@ -302,6 +303,10 @@ fun GuidedChatsScreen(
                                                 if (posted != null) {
                                                     messages.add(posted)
                                                     draftText = ""
+                                                    // Give the circle's Community Guides a chance to
+                                                    // answer soon. Server-side lease, cooldowns and
+                                                    // budgets gate everything; failure is ignored.
+                                                    try { CommunityPulsePinger.ping(null) } catch (_: Exception) { }
                                                 } else {
                                                     sendFailed = true
                                                 }

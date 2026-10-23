@@ -39,6 +39,24 @@ export const GUIDE_BANNED_OPENERS: RegExp[] = [
   /join me (as|to|in)\b/i,
   /warm hug for/i,
   /sweet flow/i,
+  // invented body/life claims (a Guide has no body, no routine, no past)
+  /\bi('ve| have) been (trying|doing|using|drinking|taking|loving|enjoying)/i,
+  /\bi (just )?(stretch|meditate|do yoga|journal|go for walks|exercise|work out)/i,
+  /\bit helps me (relax|sleep|unwind|calm|cope)/i,
+  /\bhelps me (relax|sleep|unwind|calm|cope)/i,
+  /\bi find\b/i,
+  /\bworks for me/i,
+  /\bfor me personally/i,
+  /\bmy (cramps|period|cycle|body|back|sleep|bed|bedtime|routine|kitchen|blanket|tea|doctor)/i,
+  /\bwhen i was (younger|a teen|pregnant|growing up)/i,
+  // cling / blanket-availability wording (dependency pressure)
+  /always here for you/i,
+  /here whenever you need/i,
+  /whenever you need (us|me)/i,
+  /come back soon/i,
+  /i'?ll be (right )?here waiting/i,
+  /talk to (me|us) (anytime|any time)/i,
+  /i missed you/i,
 ];
 
 // Wisdom filters: output scans every agent's text passes before it can ship.
