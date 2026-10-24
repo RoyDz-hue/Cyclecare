@@ -461,7 +461,8 @@ class CycleRepository(database: CycleCareDatabase) {
                 isValid = check.isValid,
                 errorMessage = check.errorMessage,
                 durationDays = check.durationDays,
-                range = if (check.isValid) PeriodDateRange(period_start_date, period_end_date) else null,
+                range = if (check.isValid && period_start_date != null && period_end_date != null)
+                    PeriodDateRange(period_start_date, period_end_date) else null,
                 warningMessage = check.warningMessage
             )
         }
