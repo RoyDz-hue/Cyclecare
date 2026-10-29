@@ -1,7 +1,7 @@
 export const MAX_QUESTION = 1200;
 export const MAX_SUMMARY = 2400;
 export const MAX_PROMPT = 500;
-export const SUPPORTED_AI_PROVIDERS = Object.freeze(["COHERE", "GEMINI", "OPENROUTER"]);
+export const SUPPORTED_AI_PROVIDERS = Object.freeze(["COHERE", "GEMINI", "OPENROUTER", "LAJIWA"]);
 
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 export function normalizeAiProvider(value) {

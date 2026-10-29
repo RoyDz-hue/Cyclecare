@@ -6,7 +6,7 @@ import { fetchJsonBounded } from "../_shared/bounded-json.js";
 import { boundedJson } from "../_shared/payment-request.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-store" } });
-const providers = ["COHERE", "GEMINI", "OPENROUTER"];
+const providers = ["COHERE", "GEMINI", "OPENROUTER", "LAJIWA"];
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "GET" && req.method !== "POST") return json({ error: "Method not allowed" }, 405);

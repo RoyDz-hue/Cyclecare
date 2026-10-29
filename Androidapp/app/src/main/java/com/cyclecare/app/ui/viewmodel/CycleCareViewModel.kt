@@ -94,7 +94,7 @@ data class CycleUiState(
     val pendingCareTurnId: String? = null,
     val careContextPreview: String? = null,
     val isAiSharingAllowed: Boolean = false,
-    val aiProviderConsents: Map<String, Boolean> = mapOf("COHERE" to false, "GEMINI" to false, "OPENROUTER" to false),
+    val aiProviderConsents: Map<String, Boolean> = mapOf("COHERE" to false, "GEMINI" to false, "OPENROUTER" to false, "LAJIWA" to false),
     val aiProcessorManifest: com.cyclecare.app.domain.ai.AiProcessorManifest? = null,
     val isLoadingAiProcessorManifest: Boolean = false,
     val generatedCareImage: ByteArray? = null,
@@ -766,7 +766,7 @@ class CycleCareViewModel(
     fun enableAiProcessingForAllProviders() {
         val manifest = _uiState.value.aiProcessorManifest
         val providers = manifest?.providers?.filter { it.eligible }?.map { it.id }
-            ?: listOf("COHERE", "GEMINI", "OPENROUTER")
+            ?: listOf("COHERE", "GEMINI", "OPENROUTER", "LAJIWA")
         providers.forEach { setAiProviderSharingAllowed(it, true) }
     }
 

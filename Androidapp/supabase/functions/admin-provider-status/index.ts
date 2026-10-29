@@ -50,6 +50,7 @@ serve(async (req: Request) => {
       COHERE: providerStatus("COHERE", isConfiguredSecret(Deno.env.get("COHERE_API_KEY"))),
       GEMINI: providerStatus("GEMINI", isConfiguredSecret(Deno.env.get("GEMINI_API_KEY"))),
       OPENROUTER: providerStatus("OPENROUTER", isConfiguredSecret(Deno.env.get("OPENROUTER_API_KEY"))),
+      LAJIWA: providerStatus("LAJIWA", isConfiguredSecret(Deno.env.get("LAJIWA_API_KEY"))),
       HYBRID: {
         ...hybridReadiness({
           enabled: (runtime as Record<string, unknown>).hybrid_enabled === true,

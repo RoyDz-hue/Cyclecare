@@ -53,7 +53,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
         private const val KEY_IS_PENDING_RECONCILIATION = "is_pending_reconciliation"
         private const val KEY_SOUND_ENABLED = "sound_feedback_enabled"
         private const val AI_CONSENT_REVISION = "ai-provider-consent-v1"
-        private val AI_PROVIDERS = setOf("COHERE", "GEMINI", "OPENROUTER")
+        private val AI_PROVIDERS = setOf("COHERE", "GEMINI", "OPENROUTER", "LAJIWA")
         const val AI_PROCESSOR_CONSENT_REVISION: String = "ai-provider-consent-v1"
 
         // Quick-unlock PIN: PBKDF2 parameters. 150k iterations is deliberately

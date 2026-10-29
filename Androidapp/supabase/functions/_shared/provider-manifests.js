@@ -23,6 +23,13 @@ export const PROVIDER_MANIFESTS = Object.freeze({
     upstream: "openai/gpt-4.1-mini", provider_only: "openai", allow_fallbacks: false, data_collection: "deny", zdr: true,
     account_reviewed: false, use_case_reviewed: false, audience_reviewed: false,
     eligible: false, unavailable_reason: "Pinned upstream, OpenRouter routing and ZDR eligibility have not been reviewed."
+  }),
+  LAJIWA: Object.freeze({
+    id: "LAJIWA", display_name: "Lajiwa", model: "llama-3.1-8b-instruct-fp8",
+    policy_revision: "lajiwa-selfhosted-2026-10", policy_url: "https://lajiwa.pages.dev/",
+    processors: Object.freeze([{ id: "lajiwa", name: "Lajiwa", policy_url: "https://lajiwa.pages.dev/" }]),
+    account_reviewed: false, use_case_reviewed: false, audience_reviewed: false,
+    eligible: false, unavailable_reason: "Lajiwa self-hosted provider eligibility has not been reviewed."
   })
 });
 

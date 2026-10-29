@@ -8,8 +8,8 @@ import {
 } from './aiProviders.js';
 
 test('mobile AI provider choices match the CycleCare gateway contract', () => {
-  assert.deepEqual(AI_PROVIDER_IDS, ['OPENROUTER', 'GEMINI', 'COHERE']);
-  assert.deepEqual(AI_PROVIDER_CATALOG.map(({ name }) => name), ['OpenRouter', 'Gemini', 'Cohere']);
+  assert.deepEqual(AI_PROVIDER_IDS, ['OPENROUTER', 'GEMINI', 'COHERE', 'LAJIWA']);
+  assert.deepEqual(AI_PROVIDER_CATALOG.map(({ name }) => name), ['OpenRouter', 'Gemini', 'Cohere', 'Lajiwa']);
 });
 
 test('retired provider IDs are absent from the Admin PWA selector', () => {

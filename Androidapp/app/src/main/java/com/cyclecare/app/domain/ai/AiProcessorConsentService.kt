@@ -36,7 +36,7 @@ class AiProcessorConsentService(
         const val API_PATH = "/functions/v1/ai-provider-consent"
         const val VERSION = 3
         private const val MAX_BODY = 64 * 1024
-        private val IDS = setOf("COHERE", "GEMINI", "OPENROUTER")
+        private val IDS = setOf("COHERE", "GEMINI", "OPENROUTER", "LAJIWA")
         private val FINGERPRINT = Regex("^[a-f0-9]{64}$")
     }
     private fun request(token: String) = Request.Builder().url(baseUrl.trimEnd('/') + API_PATH)

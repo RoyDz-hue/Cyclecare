@@ -1,7 +1,8 @@
 export const AI_PROVIDER_CATALOG = Object.freeze([
   Object.freeze({ id: 'OPENROUTER', name: 'OpenRouter', purpose: 'Model routing for mobile AI' }),
   Object.freeze({ id: 'GEMINI', name: 'Gemini', purpose: 'Google Gemini guidance' }),
-  Object.freeze({ id: 'COHERE', name: 'Cohere', purpose: 'Cohere Command guidance' })
+  Object.freeze({ id: 'COHERE', name: 'Cohere', purpose: 'Cohere Command guidance' }),
+  Object.freeze({ id: 'LAJIWA', name: 'Lajiwa', purpose: 'Lajiwa self-hosted guidance' })
 ]);
 
 export const AI_PROVIDER_IDS = Object.freeze(AI_PROVIDER_CATALOG.map(({ id }) => id));

@@ -19,7 +19,7 @@ interface AiGatewayRequest {
 }
 
 
-type AiProvider = "COHERE" | "GEMINI" | "OPENROUTER";
+type AiProvider = "COHERE" | "GEMINI" | "OPENROUTER" | "LAJIWA";
 
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -189,6 +189,38 @@ async function requestProvider(
       return { status: lastStatus };
     }
 
+    if (provider === "LAJIWA") {
+      // Contract verified from Lajiwa source (main 514642a / Worker 705ff256):
+      // POST /api/chat, Bearer ljw_ key, body {"message": string <= 2000 unicode scalars},
+      // 200 {"reply": string, ...optional stats}; reply may carry a trailing
+      // <!--LAJIWA_SOURCES:{...}--> comment that must be stripped. No JSON mode, no
+      // truncation flag, hard 450-token output cap, and a 200 reply can be a refusal.
+      // The full Expert prompt (1359 chars) plus a max-length question cannot fit the
+      // 2000-scalar input limit, so LAJIWA uses this compact envelope carrying the
+      // schema, length and safety-critical constraints. Output still passes the same
+      // strict six-field validation and wisdom filters below. History is omitted:
+      // stateless single call, no retries (shared free budget).
+      const compactInstruction = "You are the CycleCare Expert, a warm menstrual-health companion. Reply in the user's language. Give general educational information, never a diagnosis; never infer pregnancy or disease; encourage a qualified clinician for concerning symptoms and urgent care for severe warning signs. Never mention being an AI or any software. Return only valid JSON with string keys: summary, what, understand, care, watch, escalate. Keep every field under 140 characters.";
+      let lajiwaMessage = `${compactInstruction}\n\n${userMessage}`;
+      if ([...lajiwaMessage].length > 2000) {
+        // Drop the consented context summary first; the question itself always fits.
+        lajiwaMessage = `${compactInstruction}\n\nQuestion: ${userMessage.slice(0, 1200)}`;
+      }
+      if ([...lajiwaMessage].length > 2000) return { status: 413 };
+      const baseUrl = (Deno.env.get("LAJIWA_API_URL") || "https://lajiwa.roydeburgs.workers.dev").replace(/\/+$/, "");
+      response = await fetch(`${baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        signal: externalSignal ?? controller.signal,
+        body: JSON.stringify({ message: lajiwaMessage }),
+      });
+      if (!response.ok) return { status: response.status };
+      const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
+      const reply = typeof data?.reply === "string" ? data.reply : undefined;
+      const text = reply?.replace(/\n?<!--LAJIWA_SOURCES:[\s\S]*?-->\s*$/, "").trim();
+      return { text: text || undefined, status: response.status };
+    }
+
     const model = provider === "COHERE"
       ? "command-a-03-2025"
       : "openai/gpt-4.1-mini";
@@ -306,7 +338,7 @@ serve(async (req: Request) => {
       // Hybrid context bridge: one shared envelope (system instruction + consented
       // context + conversation history) is built once and carried identically to
       // every provider, so routing stays invisible to the conversation.
-      const providerKeys: Record<AiProvider, string | undefined> = { COHERE: Deno.env.get("COHERE_API_KEY"), GEMINI: Deno.env.get("GEMINI_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY") };
+      const providerKeys: Record<AiProvider, string | undefined> = { COHERE: Deno.env.get("COHERE_API_KEY"), GEMINI: Deno.env.get("GEMINI_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY"), LAJIWA: Deno.env.get("LAJIWA_API_KEY") };
       const ALL_PROVIDERS: AiProvider[] = ["GEMINI", "COHERE", "OPENROUTER"];
       const configured = ALL_PROVIDERS.filter((p) => isConfiguredSecret(providerKeys[p]));
 
@@ -403,6 +435,7 @@ serve(async (req: Request) => {
       COHERE: Deno.env.get("COHERE_API_KEY"),
       GEMINI: Deno.env.get("GEMINI_API_KEY"),
       OPENROUTER: Deno.env.get("OPENROUTER_API_KEY"),
+      LAJIWA: Deno.env.get("LAJIWA_API_KEY"),
     };
     const apiKey = providerApiKeys[provider];
     if (!isConfiguredSecret(apiKey)) {

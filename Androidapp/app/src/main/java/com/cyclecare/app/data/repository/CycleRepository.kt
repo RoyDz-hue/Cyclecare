@@ -371,7 +371,7 @@ class CycleRepository(database: CycleCareDatabase) {
         capturedContext?.let { OwnerDataGate.markWiped(it, wipeOwner) }
         if (capturedPreferences != null && capturedPreferences.userId == wipeOwner) {
             capturedPreferences.isCloudSyncAllowed = false
-            listOf("COHERE", "GEMINI", "OPENROUTER").forEach(capturedPreferences::revokeProcessorReceipt)
+            listOf("COHERE", "GEMINI", "OPENROUTER", "LAJIWA").forEach(capturedPreferences::revokeProcessorReceipt)
         }
         val owner = wipeOwner?.takeIf { it.isNotBlank() } ?: "legacy_guest"
         selectedDatabase.withTransaction {
