@@ -5,6 +5,7 @@ import {
 } from '../lib/adminCommand.js';
 import { formatCommandOutcome } from '../lib/commandResults.js';
 import { adminResultMessage, getAdminSession } from '../lib/supabaseAdmin.js';
+import { applyRealtimeInsert } from '../lib/commandThread.js';
 
 // Admin Command chat: a ChatGPT/WhatsApp-style thread. Messages persist per
 // admin (backend table + local cache), paint instantly from the local cache,
@@ -143,8 +144,8 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
             const row = payload?.new;
             if (!row) return;
             setMessages((cur) => {
-              if (cur.some((m) => m.id === row.id)) return cur;
-              const next = [...cur.filter((m) => !(m.pending && m.role === 'user' && m.content === row.content)), row];
+              const next = applyRealtimeInsert(cur, row);
+              if (next === cur) return cur;
               try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
               return next;
             });
@@ -197,26 +198,26 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       const res = await commandMessage(supabaseConfig, trimmed, onSessionChange);
       const base = [...messages.filter((m) => !m.pending), { ...optimistic, pending: false }];
       if (res?.type === 'chat' || res?.type === 'clarify') {
-        persist([...base, { id: `a-${Date.now()}`, role: 'assistant', kind: 'chat', content: res.message || '', created_at: new Date().toISOString() }]);
+        persist([...base, { id: `a-${Date.now()}`, echo: true, role: 'assistant', kind: 'chat', content: res.message || '', created_at: new Date().toISOString() }]);
       } else if (res?.type === 'plan' || res?.run_id) {
         const planMsg = {
-          id: `p-${res.run_id}`, role: 'assistant', kind: 'plan', content: res.summary || '', run_id: res.run_id,
+          id: `p-${res.run_id}`, echo: true, role: 'assistant', kind: 'plan', content: res.summary || '', run_id: res.run_id,
           meta: { steps: res.plan?.steps || res.steps || [], requires_approval: res.requires_approval !== false },
           created_at: new Date().toISOString(),
         };
         const next = [...base, planMsg];
         if (res.requires_approval === false && res.status) {
-          next.push({ id: `r-${res.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res.status, steps: res.steps || [] }, created_at: new Date().toISOString() });
+          next.push({ id: `r-${res.run_id}`, echo: true, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res.status, steps: res.steps || [] }, created_at: new Date().toISOString() });
         }
         persist(next);
       } else if (res?.error) {
-        persist([...base, { id: `e-${Date.now()}`, role: 'assistant', kind: 'chat', content: res.error, created_at: new Date().toISOString() }]);
+        persist([...base, { id: `e-${Date.now()}`, echo: true, role: 'assistant', kind: 'chat', content: res.error, created_at: new Date().toISOString() }]);
       } else {
         persist(base);
       }
     } catch (e) {
       persist([...messages.filter((m) => !m.pending), { ...optimistic, pending: false },
-        { id: `e-${Date.now()}`, role: 'assistant', kind: 'chat', content: adminResultMessage(e?.message, 'Something went wrong. Please try again.'), created_at: new Date().toISOString() }]);
+        { id: `e-${Date.now()}`, echo: true, role: 'assistant', kind: 'chat', content: adminResultMessage(e?.message, 'Something went wrong. Please try again.'), created_at: new Date().toISOString() }]);
     } finally {
       setBusy(false);
       setThinking(false);
@@ -230,7 +231,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       const res = await commandDecide(supabaseConfig, message.run_id, true, true, onSessionChange);
       setMessages((cur) => {
         const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true } } : m));
-        next.push({ id: `r-${message.run_id}`, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res?.status || (res?.success ? 'done' : 'failed'), steps: res.steps || [] }, created_at: new Date().toISOString() });
+        next.push({ id: `r-${message.run_id}`, echo: true, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res?.status || (res?.success ? 'done' : 'failed'), steps: res.steps || [] }, created_at: new Date().toISOString() });
         try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
         return next;
       });
