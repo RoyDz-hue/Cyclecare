@@ -72,7 +72,7 @@ Deno.test("after a group proposal there is no typed-confirm state; approval is o
   assertEquals(r.type, "plan");
   assertEquals(state.row, null, "dialog state cleared after proposal");
   const again = await coinDialog(admin, userClient, "admin-1", "Yes");
-  assertEquals(again, null, "no pending dialog: execution only via Approve and run");
+  assertEquals(again, null, "no pending dialog: execution only via the plan card Confirm button");
   assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
 });
 

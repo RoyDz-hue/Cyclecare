@@ -52,6 +52,11 @@ export const asksJoinedList = (text) => {
   return win[1].toLowerCase();
 };
 
+// A bare confirmation typed in chat ("yes", "confirm", ...). Confirmation is a
+// click on the plan card; a typed one must never be re-planned into new writes.
+export const isBareConfirmation = (text) =>
+  /^(?:yes|yeah|yep|yup|ok(?:ay)?|sure|confirm(?:ed)?|go ahead|do it|proceed|approve[ds]?|correct|that'?s right)[.!\s]*$/i.test(String(text ?? '').trim());
+
 // Calendar boundaries in Africa/Nairobi (fixed +03:00): today, this week (Monday), this month.
 export const joinedWindowBoundary = (win, nowMs = Date.now()) => {
   const EAT = 3 * 3600_000;

@@ -53,11 +53,11 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  const reply=async(message:string)=>{
    if(message===st.lastQuestion){
      st.repeatCount=(st.repeatCount??0)+1;
-     message=st.awaiting==="reason" ? (st.repeatCount%2 ? 'Recipient and amount are already confirmed. Choose a reason: "Admin adjustment", your own short explanation, or say cancel.' : 'I still need only the reason, not the account. Say "you decide" to use Admin adjustment, or cancel.') : st.run_id ? (st.repeatCount%2 ? 'No new plan is needed. The existing approval card is ready; use its buttons or say cancel.' : 'The saved plan is unchanged. Review the card above before choosing Approve and run or Reject.') : 'I need an exact email to choose safely. Reply with one email from the candidates, or cancel.';
+     message=st.awaiting==="reason" ? (st.repeatCount%2 ? 'Recipient and amount are already confirmed. Choose a reason: "Admin adjustment", your own short explanation, or say cancel.' : 'I still need only the reason, not the account. Say "you decide" to use Admin adjustment, or cancel.') : st.run_id ? (st.repeatCount%2 ? 'No new plan is needed. The existing approval card is ready; use its buttons or say cancel.' : 'The saved plan is unchanged. Review the card above before choosing Confirm or Cancel.') : 'I need an exact email to choose safely. Reply with one email from the candidates, or cancel.';
    }
    st.lastQuestion=message;
    await save();await persistMessage(admin,adminId,"assistant","chat",message);return {success:true,type:"clarify",message};};
- if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Approve and run to make the change, Reject to discard it, or say cancel. No extra change has been made.");
+ if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Confirm to make the change, Cancel to discard it, or say cancel. No extra change has been made.");
  if(!Number.isInteger(st.delta)||st.delta===0||Math.abs(st.delta)>10000)return reply("Choose a non-zero whole number up to 10,000 coins. No change has been made.");
  if(!st.recipient && !fresh && active?.awaiting==="recipient") {
    const picked=selectCandidate(active.candidates,text);
@@ -139,7 +139,7 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
         return error ? { ok: false, error: error.message } : { ok: true, result: data };
       }
       case "adjust_coins": case "set_user_status": case "set_user_tier": case "gift_artifact": case "moderate_message": {
-        const results: unknown[] = [];
+        const results: { target: string; ok: boolean; error?: string; result?: unknown }[] = [];
         const list = tool === "moderate_message" ? targets : targets;
         for (const target of list) {
           let out;

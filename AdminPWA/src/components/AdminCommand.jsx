@@ -26,9 +26,9 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
       {message.meta?.requires_approval !== false && !decided && (
         <div className="btn-row">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onApprove(message)}>
-            {busy ? 'Running...' : 'Approve and run'}
+            {busy ? 'Running...' : 'Confirm'}
           </button>
-          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => onReject(message)}>Reject</button>
+          <button type="button" className="btn btn-outline" disabled={busy} onClick={() => onReject(message)}>Cancel</button>
         </div>
       )}
     </div>

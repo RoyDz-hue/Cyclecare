@@ -1,5 +1,5 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
-import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
+import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -396,6 +396,18 @@ serve(async (req: Request) => {
       }
       const dialog=await coinDialog(admin,userClient,userId,chatPrompt);
       if(dialog)return jsonResponse(dialog);
+      if (isBareConfirmation(chatPrompt)) {
+        // A typed "yes" is never a new plan. If a card is waiting, point at it;
+        // otherwise there is nothing to confirm. No writes either way.
+        const { data: waiting } = await admin.from("admin_command_runs")
+          .select("id").eq("admin_user_id", userId).eq("status", "proposed")
+          .order("created_at", { ascending: false }).limit(1);
+        const msg = (waiting ?? []).length
+          ? "There's a plan waiting for your decision just above. Tap Confirm to make the change, or Cancel to discard it. Nothing has changed yet."
+          : "There's nothing waiting for confirmation right now. Tell me what you'd like to do and I'll prepare it for your review.";
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "chat", message: msg });
+      }
     } catch {return jsonResponse({error:"I couldn't save the pending request. No change was made."},503);}
     if (asksMemberCount(chatPrompt)) {
       const { data: mc, error: mcErr } = await userClient.rpc("admin_member_count", {});

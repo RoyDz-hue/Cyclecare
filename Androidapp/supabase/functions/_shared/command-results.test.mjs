@@ -33,3 +33,21 @@ test('joined-list reply is honest when empty or truncated',()=>{
  assert.match(out,/and 54 more/);
  assert.match(formatJoinedListReply(null,'today'),/unavailable right now/);
 });
+
+test('joined list renders real names, email fallback, empty case, and no rankings note', () => {
+  const named = formatJoinedListReply({ total: 2, members: [
+    { display_name: 'Wanjiru Kamau', email: 'wanjiru@example.com', created_at: '2026-10-30T08:15:00Z', status: 'active' },
+    { display_name: null, email: 'otieno.m@example.com', created_at: '2026-10-30T06:02:00Z', status: 'active' },
+  ] }, 'today');
+  assert.match(named, /^2 new members joined today:/);
+  assert.match(named, /Wanjiru Kamau \(wanjiru@example\.com\)/);
+  assert.match(named, /otieno\.m \(otieno\.m@example\.com\)/, 'email prefix stands in when no name');
+  assert.ok(!/unnamed/i.test(named), 'no Unnamed member rows');
+  assert.ok(!/rank|top|leaderboard/i.test(named), 'no unrelated rankings note');
+
+  const empty = formatJoinedListReply({ total: 0, members: [] }, 'today');
+  assert.equal(empty, 'No new members joined today.');
+
+  const capped = formatJoinedListReply({ total: 54, members: new Array(50).fill({ display_name: 'Member', email: 'm@example.com', created_at: '2026-10-30T00:00:00Z' }) }, 'this week');
+  assert.match(capped, /and 4 more\./);
+});

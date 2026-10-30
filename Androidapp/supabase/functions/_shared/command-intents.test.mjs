@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import{asksMemberCount,mixesCoinWithOtherAction,asksJoinedCount,asksJoinedList,asksTierCount,asksTopBalance,mixesWriteActions,joinedWindowBoundary}from './command-intents.js';
+import test from 'node:test';import assert from 'node:assert/strict';import{asksMemberCount,mixesCoinWithOtherAction,asksJoinedCount,asksJoinedList, isBareConfirmation,asksTierCount,asksTopBalance,mixesWriteActions,joinedWindowBoundary}from './command-intents.js';
 test('plain member-count questions are recognized',()=>{
  for(const t of ['How many users do we have','how many members','How many users are there?','What is the total number of users','total member count','user count','How many users'])assert.ok(asksMemberCount(t),t);
 });
@@ -61,4 +61,20 @@ test('joined-list intent never steals counts or unrelated asks',()=>{
  assert.equal(asksJoinedList('How many premium members'),null);
  assert.equal(asksJoinedList('show me the newest users and their tier split'),null);
  assert.equal(asksJoinedList('gift all users 2 coins each'),null);
+});
+
+test('asksJoinedList matches the exact persisted phrasings, including the Amy typo', () => {
+  assert.equal(asksJoinedList('Any person who has created an account today'), 'today');
+  assert.equal(asksJoinedList('Amy person who has created an account today'), 'today');
+  assert.equal(asksJoinedList('Amy person who has created an account today?'), 'today');
+  assert.equal(asksJoinedList('Who has created an account today'), 'today');
+});
+
+test('isBareConfirmation matches typed confirmations only', () => {
+  for (const t of ['Yes', 'yes!', 'yeah', 'ok', 'confirm', 'go ahead', 'do it', 'proceed', 'sure.']) {
+    assert.equal(isBareConfirmation(t), true, t);
+  }
+  for (const t of ['yes give 3 coins', 'confirm the gift to Kevin', 'Gift all users 3 coins each', '']) {
+    assert.equal(isBareConfirmation(t), false, t);
+  }
 });
