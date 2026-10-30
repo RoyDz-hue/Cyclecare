@@ -7,6 +7,7 @@ const list = (rows, render, empty) => Array.isArray(rows) && rows.length ? rows.
 
 export function formatCommandStep(step) {
   if (step?.ok !== true) return `${step?.label || 'This step'} could not be completed. No success is confirmed for this step.`;
+  if (step.kind === 'WRITE' && step.verified !== true) return 'The change was accepted but not confirmed. Do not repeat it yet; review the current state and history first.';
   const r = step.result;
   switch (step.tool) {
     case 'adjust_coins': {

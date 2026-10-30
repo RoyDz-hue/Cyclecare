@@ -73,7 +73,7 @@ function Bubble({ message, busy, onApprove, onReject }) {
   );
 }
 
-export default function AdminCommand({ supabaseConfig, onSessionChange, showNotification, insights, counts, title = 'Admin Command' }) {
+export default function AdminCommand({ supabaseConfig, onSessionChange, showNotification, insights, counts, title = 'Admin Command', bare = false }) {
   const adminId = useMemo(() => adminIdFromConfig(supabaseConfig), [supabaseConfig]);
   const cacheKey = `admin-command-thread-${adminId}`;
   const [messages, setMessages] = useState(() => {
@@ -258,8 +258,8 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   };
 
   return (
-    <section ref={frameRef} className="chat-shell" style={viewportHeight ? { height: viewportHeight } : undefined} aria-label="Admin Command">
-      <div className="chat-heading"><strong>{title}</strong><span>ASK · REVIEW · ACT</span></div>
+    <section ref={frameRef} className={`chat-shell${bare ? ' chat-bare' : ''}`} style={viewportHeight ? { height: viewportHeight } : undefined} aria-label="Admin Command">
+      {!bare && <div className="chat-heading"><strong>{title}</strong><span>ASK · REVIEW · ACT</span></div>}
       <div ref={scrollRef} className="chat-scroll">
         {messages.length === 0 && !thinking && (
           <div className="chat-empty">

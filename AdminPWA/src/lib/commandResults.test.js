@@ -7,10 +7,17 @@ test('missing names never invent one or leak identifiers',()=>{const s=read('get
 test('tier split and empty reads are plain language',()=>{assert.match(read('get_user_insights',{tier_split:{FREE:18,PREMIUM:9}}),/premium: 9 members/);assert.match(read('get_flagged_messages',[]),/no flagged messages/);assert.match(read('get_safety_signals',[]),/No safety signals/);});
 test('prices, flags and safety render actual values',()=>{assert.match(read('get_pricing',{coin_packages:[{title:'Starter',coins:100,price_kes:98,price_usd:0.98}]}),/Starter: 100 coins, KES 98 \/ US\$0.98/);assert.match(read('get_flagged_messages',[{sender_alias:'Mia',content:'Hi'}]),/Mia: "Hi"/);assert.match(read('get_safety_signals',[{display_name:'Mia',level:'HIGH',trigger_key:'heavy_bleeding'}]),/Mia: high signal, heavy bleeding/);});
 test('group gift result names the gift and its confirmation state',()=>{
-  assert.match(formatCommandStep({tool:'gift_all_coins',ok:true,verified:true,result:{recipients:20,total_coins:40}}),/The gift to every member completed successfully/);
-  assert.match(formatCommandStep({tool:'gift_all_coins',ok:true,verified:true,result:{recipients:20,total_coins:40}}),/confirmed/);
-  assert.match(formatCommandStep({tool:'gift_all_coins',ok:true,verified:false,result:{}}),/did not confirm/);
-  assert.match(formatCommandStep({tool:'gift_all_coins',ok:false}),/could not be completed/);
+  assert.match(formatCommandStep({tool:'gift_all_coins',kind:'WRITE',ok:true,verified:true,result:{recipients:20,total_coins:40}}),/The gift to every member completed successfully/);
+  assert.match(formatCommandStep({tool:'gift_all_coins',kind:'WRITE',ok:true,verified:true,result:{recipients:20,total_coins:40}}),/confirmed/);
+  assert.match(formatCommandStep({tool:'gift_all_coins',kind:'WRITE',ok:false}),/could not be completed/);
+});
+test('unconfirmed writes never claim completed success',()=>{
+  for (const verified of [false, null, undefined]) {
+    const text = formatCommandStep({tool:'gift_all_coins',kind:'WRITE',ok:true,verified,result:{recipients:20,total_coins:40}});
+    assert.match(text,/accepted but not confirmed/);
+    assert.match(text,/Do not repeat/);
+    assert.doesNotMatch(text,/completed successfully/);
+  }
 });
 test('writes distinguish verified, accepted and failed outcomes',()=>{assert.match(formatCommandStep({tool:'set_user_tier',ok:true,verified:true}),/confirmed/);assert.match(formatCommandStep({tool:'send_notice',ok:true}),/separate follow-up check was not available/);assert.match(formatCommandStep({tool:'send_notice',ok:false}),/could not be completed/);assert.doesNotMatch(formatCommandOutcome({status:'failed',steps:[{ok:false,error:'raw sql code'}]}),/raw sql/);});
 

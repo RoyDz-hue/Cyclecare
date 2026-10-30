@@ -589,3 +589,9 @@ body {
 .auth-inline { min-height: auto; padding: 24px 16px; }
 .welcome-card { max-width: 560px; margin: 40px auto 0; padding: 28px 22px; display: flex; flex-direction: column; gap: 14px; }
 .profile-row { display: flex; align-items: center; gap: 12px; padding: 6px 2px; }
+
+/* ---------- ACI: the screen is the chat canvas ---------- */
+.content-aci { padding-top: 4px; }
+.content-aci .chat-shell.chat-bare { background: none; border: none; border-radius: 0; box-shadow: none; }
+.content-aci .chat-scroll { padding: 12px 4px 8px; gap: 12px; }
+.content-aci .composer { margin: 4px 0 12px; }

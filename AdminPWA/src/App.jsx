@@ -67,9 +67,9 @@ const OTHER_SCREENS = [
   PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]
 ];
 const NAV_GROUPS = [
-  { label: null, items: [HOME_SCREEN, ACI_SCREEN] },
+  { label: null, items: [HOME_SCREEN] },
   { label: 'Other', items: OTHER_SCREENS },
-  { label: null, items: [PROFILE_SCREEN, SETTINGS_SCREEN] }
+  { label: null, items: [ACI_SCREEN, PROFILE_SCREEN, SETTINGS_SCREEN] }
 ];
 const ALL_SCREENS = NAV_GROUPS.flatMap((g) => g.items);
 
@@ -552,7 +552,7 @@ export default function App() {
           )}
 
           {activeTab === 'aci' && (
-            <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} title="ACI" />
+            <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} title="ACI" bare />
           )}
 
           {activeTab === 'profile' && (
