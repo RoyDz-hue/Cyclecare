@@ -1,7 +1,7 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
-import { asksMemberCount, mixesCoinWithOtherAction, asksJoinedCount, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
+import { asksMemberCount, mixesWriteActions, asksJoinedCount, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { coinDialog, executeStep, persistMessage } from "../_shared/admin-command-flow.ts";
-import { formatCommandOutcome, formatCommandStep } from "../_shared/command-results.js";
+import { formatCommandOutcome, formatTopBalanceReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
 // (DB policy gate: tools, kinds, limits) -> admin approval for WRITE/RISKY ->
@@ -388,7 +388,7 @@ serve(async (req: Request) => {
     if ((count ?? 0) >= 30) return jsonResponse({ error: "Too many messages in a short time. Give it a few minutes and try again." }, 429);
     await persistMessage(admin, userId, "user", "chat", chatPrompt);
     try {
-      if (mixesCoinWithOtherAction(chatPrompt)) {
+      if (mixesWriteActions(chatPrompt)) {
         const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
         await persistMessage(admin, userId, "assistant", "chat", msg);
         return jsonResponse({ success: true, type: "clarify", message: msg });
@@ -404,17 +404,7 @@ serve(async (req: Request) => {
     }
     const joinedWindow = asksJoinedCount(chatPrompt);
     if (joinedWindow) {
-      const now = Date.now();
-      let since: string; let span: string;
-      if (joinedWindow === "today") {
-        const eat = new Date(now + 3 * 3600_000);
-        since = new Date(Date.UTC(eat.getUTCFullYear(), eat.getUTCMonth(), eat.getUTCDate()) - 3 * 3600_000).toISOString();
-        span = "since midnight";
-      } else if (joinedWindow === "this week") {
-        since = new Date(now - 7 * 86400_000).toISOString(); span = "in the last 7 days";
-      } else {
-        since = new Date(now - 30 * 86400_000).toISOString(); span = "in the last 30 days";
-      }
+      const { since, span } = joinedWindowBoundary(joinedWindow);
       const { data: jc, error: jcErr } = await userClient.rpc("admin_member_count", { p_since: since });
       const msg = jcErr || typeof (jc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `${(jc as any).total} members joined ${span}.`;
       await persistMessage(admin, userId, "assistant", "chat", msg);
@@ -429,8 +419,8 @@ serve(async (req: Request) => {
     }
     if (asksTopBalance(chatPrompt)) {
       const { data: ins, error: insErr } = await userClient.rpc("admin_member_insights_scoped", { p_include_guides: false });
-      const rows = Array.isArray((ins as any)?.richest) ? (ins as any).richest.slice(0, 3) : [];
-      const msg = insErr || !rows.length ? "I couldn't check the balances just now." : formatCommandStep({ ok: true, kind: "READ", tool: "get_user_insights", result: { richest: rows } });
+      const rows = Array.isArray((ins as any)?.richest) ? (ins as any).richest : [];
+      const msg = insErr ? "I couldn't check the balances just now." : formatTopBalanceReply(rows);
       await persistMessage(admin, userId, "assistant", "chat", msg);
       return jsonResponse({ success: true, type: "chat", message: msg });
     }

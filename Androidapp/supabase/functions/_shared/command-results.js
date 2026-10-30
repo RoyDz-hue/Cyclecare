@@ -62,3 +62,16 @@ export function formatCommandOutcome(outcome) {
   if (!steps.length) return outcome?.status === 'done' ? 'The request completed. No further details were returned.' : 'This request has not completed. No completed steps are confirmed.';
   return steps.map(formatCommandStep).join('\n\n');
 }
+
+// "Who has the most coins" is singular: name the winner, name every tie, and say
+// honestly when the read window ran out before the ties did.
+export const formatTopBalanceReply = (rows) => {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return "I couldn't check the balances just now.";
+  const top = Number(list[0]?.coin_balance);
+  if (!Number.isFinite(top)) return "I couldn't check the balances just now.";
+  const winners = list.filter((r) => Number(r?.coin_balance) === top).map((r) => String(r?.user_id ?? 'Unknown'));
+  if (winners.length === 1) return `${winners[0]} has the most coins: ${top} coins.`;
+  if (winners.length < list.length) return `${winners.length} members tie for the most coins at ${top} each: ${winners.join(', ')}.`;
+  return `At least ${winners.length} members tie for the most coins at ${top} each: ${winners.slice(0, 5).join(', ')}${winners.length > 5 ? ` and ${winners.length - 5} more` : ''}.`;
+};

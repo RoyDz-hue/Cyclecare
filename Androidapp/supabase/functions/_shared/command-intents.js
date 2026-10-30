@@ -23,3 +23,31 @@ export const asksTierCount = (text) => {
 // A single proportional answer for the top-balance question.
 export const asksTopBalance = (text) =>
   /^(?:who has the most coins|who(?:'s| is) (?:the )?richest(?: member)?|(?:top|highest) (?:coin )?balance)\s*[?]?$/i.test(String(text ?? '').trim());
+
+// Distinct write categories bundled in one message: clarify order, never half-do.
+const WRITE_CATEGORIES = [
+  /\b(?:gift|give|grant|award|credit|deduct|debit)\b|\b(?:send|remove|take)\b[^.!?;]*\bcoins?\b/i,
+  /\b(?:ban|suspend|restrict|unban|unsuspend)\b/i,
+  /\b(?:announce|announcement|broadcast|notice|notify)\b/i,
+  /\b(?:upgrade|downgrade)\b|\btier\b/i,
+  /\b(?:artifact|pricing|price)\b/i,
+];
+export const mixesWriteActions = (text) => {
+  const t = String(text ?? '').trim();
+  if (!/\b(?:and|then|also|after that)\b/i.test(t)) return false;
+  let hits = 0;
+  for (const re of WRITE_CATEGORIES) if (re.test(t)) hits++;
+  return hits >= 2;
+};
+
+// Calendar boundaries in Africa/Nairobi (fixed +03:00): today, this week (Monday), this month.
+export const joinedWindowBoundary = (win, nowMs = Date.now()) => {
+  const EAT = 3 * 3600_000;
+  const shifted = new Date(nowMs + EAT);
+  const y = shifted.getUTCFullYear(), m = shifted.getUTCMonth(), d = shifted.getUTCDate();
+  let start;
+  if (win === 'today') start = Date.UTC(y, m, d);
+  else if (win === 'this week') start = Date.UTC(y, m, d - ((shifted.getUTCDay() + 6) % 7));
+  else start = Date.UTC(y, m, 1);
+  return { since: new Date(start - EAT).toISOString(), span: win };
+};
