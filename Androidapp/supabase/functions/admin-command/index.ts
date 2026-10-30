@@ -117,10 +117,33 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
    return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
  }
  if(fresh) await retire(previous?.state?.run_id);
- if(fresh?.scope==="all"){
+ if(fresh?.scope==="all"||(!fresh&&active?.scope==="all"&&!active?.cancelled)){
+   if(fresh&&fresh.delta<0){
+     await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+     return {success:true,type:"chat",message:"Taking coins from every member at once isn't something I'll do; a deduction has to name each member. To gift every member instead, say the amount, for example: Gift all users 2 coins each. No change was made."};
+   }
+   let gst=fresh?{scope:"all",delta:fresh.delta,reason:fresh.reason??null,awaiting:"reason"}:applyCoinReply(active,text);
+   if(!Number.isInteger(gst.delta)||gst.delta<1||gst.delta>10000){
+     await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+     return {success:true,type:"chat",message:"Choose a whole gift between 1 and 10,000 coins for each member. No change has been made."};
+   }
+   const {count,error:countError}=await admin.from("profiles").select("id",{count:"exact",head:true});
+   if(countError||count===null||count<1)return {success:true,type:"chat",message:"I couldn't count the members just now. No change was made."};
+   if(!gst.reason){
+     gst.awaiting="reason";
+     const {error:gsaveError}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:gst,updated_at:new Date().toISOString()});
+     if(gsaveError)throw new Error("Pending request could not be saved");
+     const msg=`That's a gift of ${gst.delta} coins for each of the ${count} members, ${gst.delta*count} coins in total. What reason should I record? You can say "Admin adjustment", give your own reason, or ask me to choose.`;
+     await persistMessage(admin,adminId,"assistant","chat",msg);
+     return {success:true,type:"clarify",message:msg};
+   }
+   const total=gst.delta*count;
+   const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${count} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID()}}];
+   const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:steps[0].label,p_plan:{steps}});
+   if(proposeError){const msg="I couldn't prepare the gift safely. Nothing was changed; please try again or say cancel.";await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-   const n=Math.abs(fresh.delta);
-   return {success:true,type:"chat",message:`You'd like to ${fresh.delta<0?"take":"gift"} ${n} coin${n===1?"":"s"} ${fresh.delta<0?"from":"to"} every member. I can't change all members' balances in one step yet: today a coin change can cover up to five named members at a time, and always waits for your approval. Name the members (emails work best) and I'll prepare it. No change was made.`};
+   await persistMessage(admin,adminId,"assistant","plan",steps[0].label,proposed.run_id,{steps,requires_approval:true});
+   return {success:true,type:"plan",run_id:proposed.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
  }
  if(!fresh&&active?.cancelled&&(isConfirmation(text)||/reason|decide|choose/i.test(text)))return {success:true,type:"chat",message:"The previous coin request was cancelled. Start a new request with an amount and recipient; no change has been made."};
  if(!fresh&&!active)return null;
@@ -294,6 +317,13 @@ async function executeStep(userClient: any, tool: string, args: any, includeGuid
         }
         const allOk = results.every((r: any) => r.ok);
         return { ok: allOk, result: results, error: allOk ? undefined : (results.find((r: any) => !r.ok)?.error ?? "step failed") };
+      }
+      case "gift_all_coins": {
+        const { data, error } = await rpc("admin_gift_all_coins", {
+          p_delta: Math.trunc(Number(args?.delta) || 0),
+          p_reason: String(args?.reason ?? ""),
+          p_run_key: String(args?.run_key ?? "") });
+        return error ? { ok: false, error: error.message } : { ok: true, result: data };
       }
       case "send_notice": {
         const audience = typeof args?.audience === "string" ? args.audience.toUpperCase() : (targets.length ? "CUSTOM_LIST" : "ALL");
