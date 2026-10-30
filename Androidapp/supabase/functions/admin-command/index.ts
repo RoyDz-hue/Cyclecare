@@ -117,6 +117,11 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
    return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
  }
  if(fresh) await retire(previous?.state?.run_id);
+ if(fresh?.scope==="all"){
+   await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   const n=Math.abs(fresh.delta);
+   return {success:true,type:"chat",message:`You'd like to ${fresh.delta<0?"take":"gift"} ${n} coin${n===1?"":"s"} ${fresh.delta<0?"from":"to"} every member. I can't change all members' balances in one step yet: today a coin change can cover up to five named members at a time, and always waits for your approval. Name the members (emails work best) and I'll prepare it. No change was made.`};
+ }
  if(!fresh&&active?.cancelled&&(isConfirmation(text)||/reason|decide|choose/i.test(text)))return {success:true,type:"chat",message:"The previous coin request was cancelled. Start a new request with an amount and recipient; no change has been made."};
  if(!fresh&&!active)return null;
  if(/^(cancel|stop|forget it)$/i.test(text.trim())) {await retire(active?.run_id);await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:{cancelled:true},updated_at:new Date().toISOString()});return {success:true,type:"chat",message:"Cancelled. No change was made."};}

@@ -11,3 +11,15 @@ test('candidate choices use saved list, not a new lookup',()=>{
 });
 
 test('debit amount-of replaces stale slots and strips ledger suffix',()=>{assert.deepEqual(parseCoinRequest('Debit amount of 651 coins from deburgs ledger'),{delta:-651,query:'deburgs',reason:null});assert.equal(parseCoinRequest('Debit 651 coins from Kevin wallet').delta,-651)});
+
+test('group gift parses as all-member scope, not a person',()=>{
+ assert.deepEqual(parseCoinRequest('Gift all users 2 coins each'),{scope:'all',delta:2,query:null,reason:null});
+ assert.deepEqual(parseCoinRequest('Give everyone 5 coins'),{scope:'all',delta:5,query:null,reason:null});
+ assert.deepEqual(parseCoinRequest('Gift 10 coins to all members'),{scope:'all',delta:10,query:null,reason:null});
+ assert.deepEqual(parseCoinRequest('Take 3 coins from everybody'),{scope:'all',delta:-3,query:null,reason:null});
+});
+test('named gifts stay single-member',()=>{
+ assert.deepEqual(parseCoinRequest('Give Kevin 200'),{delta:200,query:'Kevin',reason:null});
+ assert.deepEqual(parseCoinRequest('Gift 2 coins to Sarah'),{delta:2,query:'Sarah',reason:null});
+ assert.deepEqual(parseCoinRequest('Give 200 coins to Kevin'),{delta:200,query:'Kevin',reason:null});
+});
