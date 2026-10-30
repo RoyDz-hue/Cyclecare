@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart3, ChevronLeft, ChevronRight, Cloud, Coins, CreditCard, Gem, Lock, LogOut,
-  Menu, Radio, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Users, X, Activity, Check
+  Menu, MessageSquare, Radio, RefreshCw, Settings, ShieldAlert, ShieldCheck, Smartphone, Sparkles, User, Users, X, Activity, Check
 } from 'lucide-react';
 import UserManagement from './components/UserManagement';
 import InHouseMessaging from './components/InHouseMessaging';
@@ -56,24 +56,24 @@ const MORE_SCREENS = [
 
 const ACTIVITY_SCREEN = { id: 'activity', label: 'Alerts & admin actions', icon: Activity, hint: 'Safety signals and what admins changed' };
 
-// Every screen stays reachable; the grouping only decides where it sits.
+// Roy's structure: Home, ACI, Other (nested management screens), Profile, Settings.
+const HOME_SCREEN = PRIMARY_TABS[0];
+const ACI_SCREEN = { id: 'aci', label: 'ACI', icon: MessageSquare };
+const PROFILE_SCREEN = { id: 'profile', label: 'Profile', icon: User };
+const SETTINGS_SCREEN = { id: 'settings', label: 'Settings', icon: Settings };
+const OTHER_SCREENS = [
+  ACTIVITY_SCREEN,
+  PRIMARY_TABS[1], PRIMARY_TABS[3], MORE_SCREENS[5], MORE_SCREENS[2],
+  PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]
+];
 const NAV_GROUPS = [
-  { label: null, items: [PRIMARY_TABS[0], ACTIVITY_SCREEN] },
-  { label: 'Members & community', items: [PRIMARY_TABS[1], PRIMARY_TABS[3], MORE_SCREENS[5], MORE_SCREENS[2]] },
-  { label: 'Coins & payments', items: [PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[0]] },
-  { label: 'Safety & system', items: [MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]] }
+  { label: null, items: [HOME_SCREEN, ACI_SCREEN] },
+  { label: 'Other', items: OTHER_SCREENS },
+  { label: null, items: [PROFILE_SCREEN, SETTINGS_SCREEN] }
 ];
 const ALL_SCREENS = NAV_GROUPS.flatMap((g) => g.items);
 
-// Home shows the real hierarchy: the same groups as the menu, each with its screens.
-const HOME_ROUTES = [
-  { title: NAV_GROUPS[1].label, color: '#d4ff58', clip: 'circle(50%)', items: NAV_GROUPS[1].items },
-  { title: NAV_GROUPS[2].label, color: '#ff6b4a', clip: 'polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%)', items: NAV_GROUPS[2].items },
-  { title: NAV_GROUPS[3].label, color: '#8f7cff', clip: 'polygon(50% 0,100% 50%,50% 100%,0 50%)', items: NAV_GROUPS[3].items },
-  { title: ACTIVITY_SCREEN.label, color: '#f3efe4', clip: 'none', items: [{ ...ACTIVITY_SCREEN, short: 'Safety signals and admin log' }] }
-];
-
-const TAB_IDS = ['more', ...ALL_SCREENS.map((s) => s.id)];
+const TAB_IDS = ALL_SCREENS.map((s) => s.id);
 const initialTab = () => {
   const hash = window.location.hash.replace('#', '');
   return TAB_IDS.includes(hash) ? hash : 'home';
@@ -382,8 +382,35 @@ export default function App() {
   }
 
   if (!adminAccessToken) {
+    const signedOutTab = ['home', 'signin'].includes(activeTab) ? activeTab : 'home';
+    const signedOutNav = (afterClick) => (
+      <div className="nav-group">
+        {[
+          { id: 'home', label: 'Home', icon: BarChart3 },
+          { id: 'signin', label: 'Sign in', icon: Lock }
+        ].map((item) => (
+          <button key={item.id} type="button" className={`side-tab ${signedOutTab === item.id ? 'active' : ''}`}
+            aria-current={signedOutTab === item.id ? 'page' : undefined}
+            onClick={() => { setActiveTab(item.id); afterClick?.(); }}>
+            <item.icon size={18} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    );
     return (
-      <main className="auth-screen">
+      <div className="app-container">
+        <main className="main-content">
+          <header className="top-bar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              <button type="button" className="icon-btn" aria-label="Open menu" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
+                <Menu size={20} />
+              </button>
+              <div className="desk-breadcrumb"><span>CycleCare</span><ChevronRight size={11} /><strong>{signedOutTab === 'signin' ? 'Sign in' : 'Home'}</strong></div>
+            </div>
+          </header>
+          {signedOutTab === 'signin' ? (
+      <main className="auth-screen auth-inline">
         <form className="glass-card auth-card" onSubmit={handleSignIn}>
           <h1 className="font-editorial" style={{ fontSize: 28 }}>CycleCare Admin</h1>
           <p style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
@@ -408,11 +435,40 @@ export default function App() {
           </button>
         </form>
       </main>
+          ) : (
+            <div className="content-body">
+              <section className="glass-card welcome-card">
+                <h1 className="font-editorial" style={{ fontSize: 28 }}>CycleCare Admin</h1>
+                <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  One place to look after members, coins and safety. Sign in with an administrator account to continue.
+                </p>
+                <button type="button" className="btn btn-gold btn-block" onClick={() => setActiveTab('signin')}>Sign in</button>
+              </section>
+            </div>
+          )}
+        </main>
+
+        {drawerOpen && (
+          <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} role="presentation">
+            <aside className="drawer" aria-label="Menu" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 16px 8px' }}>
+                <h1 className="font-editorial gold-gradient-text" style={{ fontSize: 20 }}>CycleCare Admin</h1>
+                <button type="button" className="icon-btn" aria-label="Close menu" onClick={() => setDrawerOpen(false)}>
+                  <X size={20} />
+                </button>
+              </div>
+              <nav className="side-nav" aria-label="Main navigation">
+                {signedOutNav(() => setDrawerOpen(false))}
+              </nav>
+            </aside>
+          </div>
+        )}
+      </div>
     );
   }
 
   const navItem = (item, afterClick) => {
-    const isActive = activeTab === item.id || (item.id === 'home' && activeTab === 'more');
+    const isActive = activeTab === item.id;
     return (
       <button
         key={item.id}
@@ -448,7 +504,6 @@ export default function App() {
   });
 
   const currentScreen = ALL_SCREENS.find((x) => x.id === activeTab) || ALL_SCREENS[0];
-  const inMoreFlow = activeTab !== 'home' && activeTab !== 'more';
 
   return (
     <div className="app-container">
@@ -478,15 +533,17 @@ export default function App() {
           </button>
         </header>
 
-        <HomeScene
-          summary={deriveTiers(controlData)}
-          mode={activeTab === 'home' || activeTab === 'more' ? 'home' : 'strip'}
-          loadState={dataLoadState}
-          onOpenPlan={() => setActiveTab('users')}
-          onHome={() => setActiveTab('home')}
-        />
+        {activeTab !== 'aci' && (
+          <HomeScene
+            summary={deriveTiers(controlData)}
+            mode={activeTab === 'home' ? 'home' : 'strip'}
+            loadState={dataLoadState}
+            onOpenPlan={() => setActiveTab('users')}
+            onHome={() => setActiveTab('home')}
+          />
+        )}
 
-        <div className={`content-body ${activeTab === 'home' || activeTab === 'more' ? 'content-home' : ''}`} key={activeTab}>
+        <div className={`content-body ${activeTab === 'home' ? 'content-home' : ''} ${activeTab === 'aci' ? 'content-aci' : ''}`} key={activeTab}>
           {dataLoadState === 'error' && (
             <div className="glass-card" role="alert" style={{ borderColor: 'rgba(255, 158, 174, 0.4)' }}>
               <p style={{ color: '#ff9eae', fontSize: 13 }}>{dataLoadError}</p>
@@ -494,22 +551,24 @@ export default function App() {
             </div>
           )}
 
-          {(activeTab === 'home' || activeTab === 'more') && (
-            <>
-              <h2 className="home-command-head">Admin Command</h2>
-              <div className="desk-workspace">
-                <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} />
-              </div>
-              <p className="home-command-note">Changes always wait for your Approve tap.</p>
-              <div className="home-routes">
-                {HOME_ROUTES.map((route) => (
-                  <section className="home-route" key={route.title} style={{ '--c': route.color }}>
-                    <h2><s aria-hidden="true" style={{ clipPath: route.clip }} />{route.title}</h2>
-                    <ul>{route.items.map((item) => <li key={item.id}><button type="button" onClick={() => setActiveTab(item.id)}>{item.short || item.label}</button></li>)}</ul>
-                  </section>
-                ))}
-              </div>
-            </>
+          {activeTab === 'aci' && (
+            <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} title="ACI" />
+          )}
+
+          {activeTab === 'profile' && (
+            <div className="stack">
+              <section className="panel">
+                <header className="panel-head">
+                  <h4 className="section-title"><User size={18} /> Profile</h4>
+                  <p className="section-sub">Your administrator account.</p>
+                </header>
+                <div className="profile-row">
+                  <div className="avatar" aria-hidden="true">{(adminEmail || 'R')[0].toUpperCase()}</div>
+                  <div><strong>Administrator</strong><p className="meta-text" style={{ margin: 0 }}>{adminEmail}</p></div>
+                </div>
+              </section>
+              <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}><LogOut size={15} /> Sign out</button>
+            </div>
           )}
 
           {activeTab === 'activity' && <SignalsDashboard controlData={controlData} dataLoadState={dataLoadState} />}
@@ -547,7 +606,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'providers' && (
+          {activeTab === 'settings' && (
             <div className="stack">
               <section className="panel">
                 <header className="panel-head">
