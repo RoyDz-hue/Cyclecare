@@ -556,3 +556,14 @@ body {
   .option-row { flex-wrap: wrap; }
 }
 .field-row.wrap .check-row { flex: 1 1 100%; }
+
+/* Member row actions: one row of labelled icon buttons, handlers unchanged */
+.row-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; }
+.act-btn { padding: 0; width: 38px; min-height: 38px; height: 38px; gap: 0; flex-shrink: 0; }
+.act-btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.act-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 700px) {
+  .row-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .act-btn { width: 100%; flex-direction: column; padding: 6px 2px; gap: 3px; min-height: 54px; height: auto; }
+  .act-btn span { position: static; width: auto; height: auto; clip: auto; font-size: 11px; font-weight: 600; }
+}

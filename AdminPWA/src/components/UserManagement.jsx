@@ -405,11 +405,11 @@ export function UserManagement({
                       </td>
 
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
+                        <div className="row-actions" role="group" aria-label={`Actions for ${idDisplay}`}>
                           <button
-                            className="btn btn-outline"
-                            style={{ padding: '6px 10px', fontSize: 11 }}
+                            className="btn btn-outline act-btn"
                             title="Ban or Suspend User"
+                            aria-label="Ban or Suspend User"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
@@ -425,9 +425,9 @@ export function UserManagement({
                           </button>
 
                           <button
-                            className="btn btn-outline"
-                            style={{ padding: '6px 10px', fontSize: 11 }}
+                            className="btn btn-outline act-btn"
                             title="Credit or Debit Coins"
+                            aria-label="Credit or Debit Coins"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
@@ -444,9 +444,9 @@ export function UserManagement({
                           </button>
 
                           <button
-                            className="btn btn-outline"
-                            style={{ padding: '6px 10px', fontSize: 11 }}
+                            className="btn btn-outline act-btn"
                             title="Gift 3D Artifact"
+                            aria-label="Gift 3D Artifact"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({ ...modalForm, artifactName: '' });
@@ -459,9 +459,9 @@ export function UserManagement({
 
 
                           <button
-                            className="btn btn-outline"
-                            style={{ padding: '6px 10px', fontSize: 11 }}
+                            className="btn btn-outline act-btn"
                             title="Push Custom Official In-House Message"
+                            aria-label="Push Custom Official In-House Message"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
