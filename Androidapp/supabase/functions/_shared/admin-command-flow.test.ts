@@ -43,19 +43,12 @@ function makeClients(profiles: any[] = PROFILES) {
 Deno.test("group gift conversation: request -> reason -> plan carries the exact snapshot", async () => {
   const { admin, userClient, state, sent, rpcCalls } = makeClients();
 
-  const r1 = await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
-  assertEquals(r1.type, "clarify");
-  assertStringIncludes(r1.message, "3 members");
-  assertStringIncludes(r1.message, "6 coins in total");
-  assertEquals(state.row?.state?.scope, "all");
-  assertEquals(state.row?.state?.awaiting, "reason");
-  assertEquals(rpcCalls.length, 0, "no execution during preview");
-
-  const r2 = await coinDialog(admin, userClient, "admin-1", "Admin adjustment");
-  assertEquals(r2.type, "plan");
+  const r2 = await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
+  assertEquals(r2.type, "plan", "clear plan proposed immediately, no typed confirmation");
   assertEquals(r2.requires_approval, true);
   const step = r2.plan.steps[0];
   assertEquals(step.tool, "gift_all_coins");
+  assertEquals(step.args.reason, "Admin adjustment", "missing reason defaults");
   assertEquals(step.args.recipients, ["u-1", "u-2", "u-3"]);
   assertStringIncludes(step.label, "3 members");
   assertStringIncludes(step.label, "6 coins in total");
@@ -73,12 +66,14 @@ Deno.test("group gift conversation: request -> reason -> plan carries the exact 
   assertEquals((ex2.result as any).duplicate, true, "retry sees the stored result, no double gift");
 });
 
-Deno.test("cancel during the reason question aborts with no execution", async () => {
-  const { admin, userClient, rpcCalls } = makeClients();
-  await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
-  const r = await coinDialog(admin, userClient, "admin-1", "cancel");
-  assertStringIncludes(r.message, "Cancelled");
-  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0);
+Deno.test("after a group proposal there is no typed-confirm state; approval is only the plan card", async () => {
+  const { admin, userClient, state, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
+  assertEquals(r.type, "plan");
+  assertEquals(state.row, null, "dialog state cleared after proposal");
+  const again = await coinDialog(admin, userClient, "admin-1", "Yes");
+  assertEquals(again, null, "no pending dialog: execution only via Approve and run");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
 });
 
 Deno.test("mass deduction is refused with a clear boundary", async () => {
@@ -88,27 +83,25 @@ Deno.test("mass deduction is refused with a clear boundary", async () => {
   assertEquals(state.row, null);
 });
 
-Deno.test("single-member flow still resolves recipient then reason then plan", async () => {
+Deno.test("single-member flow resolves the recipient and proposes one plan with default reason", async () => {
   const { admin, userClient, state } = makeClients();
-  const r1 = await coinDialog(admin, userClient, "admin-1", "Give Kevin 200");
-  assertStringIncludes(r1.message, "Kevin");
-  assertStringIncludes(r1.message, "reason");
-  const r2 = await coinDialog(admin, userClient, "admin-1", "Admin adjustment");
+  const r2 = await coinDialog(admin, userClient, "admin-1", "Give Kevin 200");
   assertEquals(r2.type, "plan");
+  assertEquals(r2.plan.steps.length, 1);
   assertEquals(r2.plan.steps[0].tool, "adjust_coins");
   assertEquals(r2.plan.steps[0].args.targets, ["u-kevin"]);
   assertEquals(r2.plan.steps[0].args.delta, 200);
+  assertEquals(r2.plan.steps[0].args.reason, "Admin adjustment");
   assertEquals(state.row?.state?.awaiting, "approval");
 });
 
-Deno.test("a new group gift after a proposal starts a fresh dialog", async () => {
+Deno.test("a new group gift after a proposal proposes a fresh plan", async () => {
   const { admin, userClient } = makeClients();
-  await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
-  const plan = await coinDialog(admin, userClient, "admin-1", "Admin adjustment");
+  const plan = await coinDialog(admin, userClient, "admin-1", "Gift all users 2 coins each");
   assertEquals(plan.type, "plan");
   const r = await coinDialog(admin, userClient, "admin-1", "Gift everyone 5 coins");
-  assertEquals(r.type, "clarify");
-  assertStringIncludes(r.message, "15 coins in total");
+  assertEquals(r.type, "plan");
+  assertStringIncludes(r.plan.steps[0].label, "15 coins in total");
 });
 
 // Planner-level multi-write guard, with the registry lookup mocked. Fail-closed:
@@ -146,15 +139,8 @@ Deno.test("guard permits a single write and read-plus-write", async () => {
 Deno.test("gift typo then bare Yes: one approval plan, nothing executes", async () => {
   const { admin, userClient, state, rpcCalls } = makeClients();
 
-  const r1 = await coinDialog(admin, userClient, "admin-1", "Git all users 3 coins each");
-  assertEquals(r1.type, "clarify", "typo gift still enters the deterministic coin dialog");
-  assertStringIncludes(r1.message, "3 members");
-  assertStringIncludes(r1.message, "9 coins in total");
-  assertEquals(state.row?.state?.awaiting, "reason");
-  assertEquals(rpcCalls.length, 0, "no execution during preview");
-
-  const r2 = await coinDialog(admin, userClient, "admin-1", "Yes");
-  assertEquals(r2.type, "plan", "Yes confirms with the default reason, exactly one plan");
+  const r2 = await coinDialog(admin, userClient, "admin-1", "Git all users 3 coins each");
+  assertEquals(r2.type, "plan", "typo gift still enters the deterministic coin dialog and proposes one plan");
   assertEquals(r2.requires_approval, true);
   assertEquals(r2.plan.steps.length, 1, "single write step only");
   const step = r2.plan.steps[0];
@@ -162,5 +148,6 @@ Deno.test("gift typo then bare Yes: one approval plan, nothing executes", async 
   assertEquals(step.args.delta, 3);
   assertEquals(step.args.reason, "Admin adjustment");
   assertEquals(step.args.recipients, ["u-1", "u-2", "u-3"]);
+  assertStringIncludes(step.label, "9 coins in total");
   assertEquals(rpcCalls.filter((c: any) => c.name === "admin_gift_all_coins").length, 0, "proposal never executes");
 });

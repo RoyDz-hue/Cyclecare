@@ -35,16 +35,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
      return {success:true,type:"chat",message:"Choose a whole gift between 1 and 10,000 coins for each member. No change has been made."};
    }
-   if(!gst.reason){
-     const {count,error:countError}=await admin.from("profiles").select("id",{count:"exact",head:true});
-     if(countError||count===null||count<1)return {success:true,type:"chat",message:"I couldn't count the members just now. No change was made."};
-     gst.awaiting="reason";
-     const {error:gsaveError}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:gst,updated_at:new Date().toISOString()});
-     if(gsaveError)throw new Error("Pending request could not be saved");
-     const msg=`That's a gift of ${gst.delta} coins for each of the ${count} members, ${gst.delta*count} coins in total. What reason should I record? You can say "Admin adjustment", give your own reason, or ask me to choose.`;
-     await persistMessage(admin,adminId,"assistant","chat",msg);
-     return {success:true,type:"clarify",message:msg};
-   }
+   if(!gst.reason)gst.reason="Admin adjustment";
    const {data:profs,error:profErr}=await admin.from("profiles").select("user_id,device_id,id");
    if(profErr||!Array.isArray(profs))return {success:true,type:"chat",message:"I couldn't list the members just now. No change was made."};
    const snapshot=profs.map((p:any)=>String(p.user_id||p.device_id||p.id));
@@ -88,7 +79,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    if(candidates.length!==1){st.awaiting="recipient";return reply(candidates.length?`Which member did you mean? No change has been made.\n${candidates.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nReply with a number, their email, or say cancel.`:`No member matches "${st.query}". Try their full name, exact email, or say cancel. No change has been made.`);}
    st.recipient=candidates[0];
  }
- if(!st.reason){st.awaiting="reason";return reply(`The account is ${st.recipient.display_name} (${st.recipient.email}); the amount is ${Math.abs(st.delta)} coins to ${st.delta<0?"deduct":"grant"}. What reason should I record? You can say "Admin adjustment", give your own reason, or ask me to choose.`);}
+ if(!st.reason)st.reason="Admin adjustment";
  // Resolve account again through exact email before proposal. Never trust stored identifiers.
  const {data:bound,error}=await userClient.rpc("admin_resolve_recipient",{p_email:st.recipient.email});
  if(error||bound?.user_id!==st.recipient.user_id)return reply("The account changed or couldn't be confirmed. Please cancel and start again. No change was made.");
