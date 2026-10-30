@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles, Send, CheckCircle2, XCircle, Clock3, ShieldAlert, ChevronDown, ChevronUp, BadgeCheck } from 'lucide-react';
+import { ArrowUp, ArrowUpRight, CheckCircle2, XCircle, ShieldAlert, Copy, Check } from 'lucide-react';
 import {
   commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, planRiskLevel, adminIdFromConfig,
 } from '../lib/adminCommand.js';
@@ -14,18 +14,16 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
   const risk = planRiskLevel(plan.steps);
   const decided = message?.meta?.decided === true;
   return (
-    <div className="glass-card" style={{ marginTop: 4, borderColor: risk === 'risky' ? 'rgba(255, 158, 174, 0.45)' : 'rgba(126, 226, 168, 0.3)' }}>
-      <h4 style={{ margin: 0, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div className={`chat-plan ${risk === 'risky' ? 'risky' : ''}`}>
+      <h4 className="chat-plan-title">
         {risk === 'risky' && <ShieldAlert size={16} color="#ff9eae" />}
         {message.meta?.requires_approval === false ? 'Read-only check' : 'Review this plan before anything changes'}
       </h4>
-      {plan.steps.map((s, i) => (
-        <p key={i} style={{ margin: '8px 0 0', fontSize: 13, color: '#c4cbe4' }}>
-          {i + 1}. {s.label || describeStep(s)}
-        </p>
-      ))}
+      <ol className="chat-plan-steps">
+        {plan.steps.map((s, i) => (<li key={i}>{s.label || describeStep(s)}</li>))}
+      </ol>
       {message.meta?.requires_approval !== false && !decided && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+        <div className="btn-row">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onApprove(message)}>
             {busy ? 'Running...' : 'Approve and run'}
           </button>
@@ -38,35 +36,43 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
 
 function Bubble({ message, busy, onApprove, onReject }) {
   const mine = message.role === 'user';
+  const [copied, setCopied] = useState(false);
   if (message.kind === 'plan') {
     return (
-      <div style={{ alignSelf: 'stretch' }}>
+      <div className="msg-row plan">
         <PlanMessage message={message} busy={busy} onApprove={onApprove} onReject={onReject} />
       </div>
     );
   }
+  const text = message.kind === 'result' && message.meta?.steps?.length
+    ? formatCommandOutcome({ status: message.meta.status, steps: message.meta.steps })
+    : message.content;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(String(text || '')); setCopied(true); setTimeout(() => setCopied(false), 1400); } catch { /* clipboard unavailable */ }
+  };
   return (
-    <div style={{
-      alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%',
-      background: mine ? 'linear-gradient(135deg, #7c5cff, #5a8bff)' : 'rgba(255,255,255,0.06)',
-      borderRadius: mine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-      padding: '10px 14px', fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-      opacity: message.pending ? 0.65 : 1,
-    }}>
-      {message.kind === 'result' && (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 6 }}>
-          {message.meta?.status === 'done' ? <CheckCircle2 size={14} color="#7ee2a8" /> : <XCircle size={14} color="#ff9eae" />}
-        </span>
-      )}
-      {message.kind === 'result' && message.meta?.steps?.length ? formatCommandOutcome({status: message.meta.status, steps: message.meta.steps}) : message.content}
-      <div style={{ fontSize: 10, opacity: 0.55, marginTop: 4, textAlign: 'right' }}>
-        {message.pending ? 'Sending...' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+    <div className={`msg-row ${mine ? 'mine' : 'theirs'}`}>
+      <div className={`bubble ${mine ? 'bubble-mine' : 'bubble-theirs'} ${message.pending ? 'pending' : ''}`}>
+        {message.kind === 'result' && (
+          <span className="bubble-status">
+            {message.meta?.status === 'done' ? <CheckCircle2 size={14} color="#7ee2a8" /> : <XCircle size={14} color="#ff9eae" />}
+          </span>
+        )}
+        {text}
+        <div className="bubble-meta">
+          <span>{message.pending ? 'Sending...' : new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          {!mine && !message.pending && (
+            <button type="button" className="copy-btn" aria-label="Copy message" onClick={copy}>
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-export default function AdminCommand({ supabaseConfig, onSessionChange, showNotification, insights }) {
+export default function AdminCommand({ supabaseConfig, onSessionChange, showNotification, insights, counts }) {
   const adminId = useMemo(() => adminIdFromConfig(supabaseConfig), [supabaseConfig]);
   const cacheKey = `admin-command-thread-${adminId}`;
   const [messages, setMessages] = useState(() => {
@@ -80,13 +86,30 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   const scrollRef = useRef(null);
   const taRef = useRef(null);
   const chips = useMemo(() => buildLocalSuggestions(insights || {}), [insights]);
+  // Today's brief: only things that are true right now, each one tap from a read-only question.
+  const brief = useMemo(() => {
+    const rows = [];
+    const c = counts || {};
+    if ((c.safety_open ?? 0) > 0) rows.push({ label: `${c.safety_open} safety ${c.safety_open === 1 ? 'event is' : 'events are'} open`, prompt: 'Show me the open safety events' });
+    if ((c.flagged_open ?? 0) > 0) rows.push({ label: `${c.flagged_open} flagged ${c.flagged_open === 1 ? 'message needs' : 'messages need'} review`, prompt: 'Show me the flagged messages waiting for review' });
+    if ((c.signups_7d ?? 0) > 0) rows.push({ label: `${c.signups_7d} ${c.signups_7d === 1 ? 'person' : 'people'} joined this week`, prompt: 'Show me the newest users' });
+    return rows;
+  }, [counts]);
+  const starters = useMemo(() => {
+    const seen = new Set(brief.map((r) => r.prompt));
+    return [...brief, ...chips.filter((c) => !seen.has(c.prompt)).map((c) => ({ label: c.label, prompt: c.prompt }))].slice(0, 4);
+  }, [brief, chips]);
 
   const persist = useCallback((next) => {
     setMessages(next);
     try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* cache is best-effort */ }
   }, [cacheKey]);
 
-  const scrollDown = () => { requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }); };
+  const scrollDown = () => {
+    const go = () => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; };
+    requestAnimationFrame(go);
+    setTimeout(go, 320); // once message rise-in and fonts have settled
+  };
 
   // Preload: paint from cache (already done via initial state), then sync the
   // server thread silently and keep it fresh with realtime or a minute-based silent sync.
@@ -234,55 +257,47 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
   };
 
   return (
-    <div ref={frameRef} className="glass-card" style={{ display: 'flex', flexDirection: 'column', height: viewportHeight || '78dvh', minHeight: 180 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px 12px' }}>
-        <Sparkles size={18} color="#b7a6ff" />
-        <h3 style={{ margin: 0, fontSize: 16 }}>Admin Command</h3>
-      </div>
-
-      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}>
+    <section ref={frameRef} className="chat-shell" style={viewportHeight ? { height: viewportHeight } : undefined} aria-label="Admin Command">
+      <div ref={scrollRef} className="chat-scroll">
         {messages.length === 0 && !thinking && (
-          <div style={{ margin: 'auto', textAlign: 'center', color: '#9aa4c0', maxWidth: 460 }}>
-            <p style={{ fontSize: 14 }}>Ask for insights, or tell me what to change. Anything risky waits for your approval.</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 12 }}>
-              {chips.map((c) => (
-                <button key={c.label} type="button" className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => send(c.prompt)}>
-                  {c.label}
-                </button>
+          <div className="chat-empty">
+            <p className="chat-empty-lead">Ask, or tell me what to change. Anything that changes data waits for your approval.</p>
+            <ul className="starter-list">
+              {starters.map((r) => (
+                <li key={r.prompt}>
+                  <button type="button" className="starter" onClick={() => send(r.prompt)}>
+                    <span>{r.label}</span><ArrowUpRight size={15} />
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         )}
         {messages.map((m) => (
           <Bubble key={m.id} message={m} busy={busy} onApprove={approve} onReject={reject} />
         ))}
         {thinking && (
-          <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.06)', borderRadius: '16px 16px 16px 4px', padding: '10px 14px', fontSize: 13, color: '#9aa4c0' }}>
-            Thinking...
+          <div className="msg-row theirs" aria-live="polite" aria-label="Working on it">
+            <div className="bubble bubble-theirs typing"><span /><span /><span /></div>
           </div>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div className="composer">
         <textarea
           ref={taRef}
           value={prompt}
           rows={1}
           onChange={(e) => { setPrompt(e.target.value); autoGrow(); }}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="Message Admin Command..."
-          style={{
-            flex: 1, resize: 'none', borderRadius: 14, border: '1px solid rgba(255,255,255,0.12)',
-            background: 'rgba(255,255,255,0.05)', color: 'inherit', padding: '10px 14px', fontSize: 14,
-            fontFamily: 'inherit', outline: 'none', maxHeight: 140,
-          }}
+          placeholder="Message Admin Command"
+          aria-label="Message Admin Command"
         />
-        <button type="button" className="btn btn-primary" onClick={() => send()} disabled={busy || !prompt.trim()}
-          style={{ borderRadius: 14, padding: '10px 14px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <Send size={16} />
+        <button type="button" className="send-btn" aria-label="Send" onClick={() => send()} disabled={busy || !prompt.trim()}>
+          <ArrowUp size={18} />
         </button>
       </div>
-    </div>
+    </section>
   );
 }
 

@@ -63,7 +63,10 @@ export default function SignalsDashboard({ controlData, dataLoadState }) {
           </div>
           <p className="meta-text">target {String(row.target_user_id || '').slice(0, 18)} · by {String(row.admin_user_id || '').slice(0, 8)}…</p>
           {row.details && Object.keys(row.details).length > 0 && (
-            <p className="meta-text audit-details">{JSON.stringify(row.details).slice(0, 180)}</p>
+            <details className="audit-more">
+              <summary>Details</summary>
+              <p className="meta-text audit-details">{JSON.stringify(row.details).slice(0, 180)}</p>
+            </details>
           )}
         </div>
       ))}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart3, ChevronLeft, ChevronRight, Cloud, Coins, CreditCard, Gem, Lock, LogOut,
-  Menu, Radio, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Users, X
+  Menu, Radio, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Users, X, Activity, Check
 } from 'lucide-react';
 import UserManagement from './components/UserManagement';
 import InHouseMessaging from './components/InHouseMessaging';
@@ -52,7 +52,18 @@ const MORE_SCREENS = [
   { id: 'sync_health', label: 'Sync Health', icon: Cloud, hint: 'Protocol and sync status' }
 ];
 
-const TAB_IDS = ['home', 'users', 'pricing', 'community', 'more', ...MORE_SCREENS.map((s) => s.id)];
+const ACTIVITY_SCREEN = { id: 'activity', label: 'Activity', icon: Activity, hint: 'Safety signals and admin actions' };
+
+// Every screen stays reachable; the grouping only decides where it sits.
+const NAV_GROUPS = [
+  { label: null, items: [PRIMARY_TABS[0], ACTIVITY_SCREEN] },
+  { label: 'Members', items: [PRIMARY_TABS[1], PRIMARY_TABS[3], MORE_SCREENS[5], MORE_SCREENS[2]] },
+  { label: 'Money', items: [PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[0]] },
+  { label: 'System', items: [MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]] }
+];
+const ALL_SCREENS = NAV_GROUPS.flatMap((g) => g.items);
+
+const TAB_IDS = ['more', ...ALL_SCREENS.map((s) => s.id)];
 const initialTab = () => {
   const hash = window.location.hash.replace('#', '');
   return TAB_IDS.includes(hash) ? hash : 'home';
@@ -93,6 +104,7 @@ export default function App() {
   const [aiConfig, setAiConfig] = useState({ provider: '' });
   const [paymentConfig, setPaymentConfig] = useState({ activeMpesaProvider: '' });
   const [providerStatus, setProviderStatus] = useState({ ai: {}, mpesa: {}, active: {} });
+  const [openGroup, setOpenGroup] = useState(null);
 
   const showNotification = (msg) => {
     setNotification(msg);
@@ -388,40 +400,44 @@ export default function App() {
     );
   }
 
-  const inMoreFlow = MORE_SCREENS.some((s) => s.id === activeTab);
-  const activePrimary = inMoreFlow ? 'more' : activeTab;
-
-  const navButton = (item, layout) => {
-    const isActive = activePrimary === item.id;
-    return (
-      <button
-        key={item.id}
-        type="button"
-        className={layout === 'bottom' ? `bottom-tab ${isActive ? 'active' : ''}` : `side-tab ${isActive ? 'active' : ''}`}
-        aria-current={isActive ? 'page' : undefined}
-        onClick={() => setActiveTab(item.id)}
-      >
-        <item.icon size={layout === 'bottom' ? 22 : 18} />
-        <span>{item.label}</span>
-      </button>
-    );
-  };
-
-  const drawerItem = (item) => {
-    const isActive = activeTab === item.id || (item.id === 'more' && inMoreFlow);
+  const navItem = (item, afterClick) => {
+    const isActive = activeTab === item.id || (item.id === 'home' && activeTab === 'more');
     return (
       <button
         key={item.id}
         type="button"
         className={`side-tab ${isActive ? 'active' : ''}`}
         aria-current={isActive ? 'page' : undefined}
-        onClick={() => { setActiveTab(item.id); setDrawerOpen(false); }}
+        onClick={() => { setActiveTab(item.id); afterClick?.(); }}
       >
         <item.icon size={18} />
         <span>{item.label}</span>
       </button>
     );
   };
+
+  // Progressive disclosure: Home and Activity are always visible, each group opens
+  // on demand, and the group holding the current screen is open automatically.
+  const groupOf = (id) => NAV_GROUPS.find((g) => g.label && g.items.some((i) => i.id === id))?.label || null;
+  const expanded = openGroup || groupOf(activeTab);
+  const navGroups = (afterClick) => NAV_GROUPS.map((group, i) => {
+    if (!group.label) return <div className="nav-group" key={`g${i}`}>{group.items.map((item) => navItem(item, afterClick))}</div>;
+    const isOpen = expanded === group.label;
+    const holdsCurrent = groupOf(activeTab) === group.label;
+    return (
+      <div className={`nav-group ${isOpen ? 'open' : ''}`} key={group.label}>
+        <button type="button" className={`nav-head ${holdsCurrent ? 'has-current' : ''}`} aria-expanded={isOpen}
+          onClick={() => setOpenGroup(isOpen ? '' : group.label)}>
+          <span>{group.label}</span>
+          <ChevronRight size={15} className="nav-chev" />
+        </button>
+        <div className="nav-items" hidden={!isOpen}>{group.items.map((item) => navItem(item, afterClick))}</div>
+      </div>
+    );
+  });
+
+  const currentScreen = ALL_SCREENS.find((x) => x.id === activeTab) || ALL_SCREENS[0];
+  const inMoreFlow = activeTab !== 'home' && activeTab !== 'more';
 
   return (
     <div className="app-container">
@@ -435,8 +451,7 @@ export default function App() {
           <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>{adminEmail}</p>
         </div>
         <nav aria-label="Main navigation" className="side-nav">
-          {PRIMARY_TABS.map((item) => navButton(item, 'side'))}
-          {MORE_SCREENS.map((item) => navButton(item, 'side'))}
+          {navGroups()}
         </nav>
         <div style={{ padding: 14 }}>
           <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}>
@@ -451,14 +466,9 @@ export default function App() {
             <button type="button" className="icon-btn drawer-toggle" aria-label="Open menu" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
               <Menu size={20} />
             </button>
-            {inMoreFlow && (
-              <button type="button" className="icon-btn" aria-label="Back" onClick={() => setActiveTab('more')}>
-                <ChevronLeft size={20} />
-              </button>
-            )}
             <div style={{ minWidth: 0 }}>
               <h2 className="font-editorial" style={{ fontSize: 18, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {MORE_SCREENS.find((s) => s.id === activeTab)?.label || PRIMARY_TABS.find((t) => t.id === activeTab)?.label || 'Home'}
+                {currentScreen.label}
               </h2>
               <p style={{ fontSize: 11, color: dbStatus.lastChecked ? '#4EBA88' : 'var(--text-muted)' }}>
                 {isRefreshing ? 'Refreshing…' : dbStatus.lastChecked ? `Synced ${dbStatus.lastChecked}` : 'Connecting…'}
@@ -470,7 +480,7 @@ export default function App() {
           </button>
         </header>
 
-        <div className="content-body">
+        <div className={`content-body ${activeTab === 'home' || activeTab === 'more' ? 'content-home' : ''}`} key={activeTab}>
           {dataLoadState === 'error' && (
             <div className="glass-card" role="alert" style={{ borderColor: 'rgba(255, 158, 174, 0.4)' }}>
               <p style={{ color: '#ff9eae', fontSize: 13 }}>{dataLoadError}</p>
@@ -478,16 +488,17 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'home' && (
+                    {(activeTab === 'home' || activeTab === 'more') && (
             <AdminCommand
               supabaseConfig={SUPABASE_CONFIG}
               onSessionChange={onAdminSessionChange}
               showNotification={showNotification}
               insights={controlData?.member_insights}
+              counts={controlData?.counts}
             />
           )}
 
-          {activeTab === 'home' && <SignalsDashboard controlData={controlData} dataLoadState={dataLoadState} />}
+          {activeTab === 'activity' && <SignalsDashboard controlData={controlData} dataLoadState={dataLoadState} />}
 
           {activeTab === 'users' && (
             <UserManagement
@@ -522,81 +533,68 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'more' && (
-            <div className="stack">
-              {MORE_SCREENS.map((screen) => (
-                <button key={screen.id} type="button" className="glass-card more-row" onClick={() => setActiveTab(screen.id)}>
-                  <screen.icon size={20} color="var(--rose-pink)" />
-                  <div style={{ textAlign: 'left', flex: 1 }}>
-                    <strong>{screen.label}</strong>
-                    <p className="meta-text">{screen.hint}</p>
-                  </div>
-                  <ChevronRight size={18} color="var(--text-muted)" />
-                </button>
-              ))}
-              <button type="button" className="glass-card more-row" onClick={resetSignedOutState}>
-                <LogOut size={20} color="var(--text-muted)" />
-                <div style={{ textAlign: 'left', flex: 1 }}>
-                  <strong>Sign out</strong>
-                  <p className="meta-text">{adminEmail}</p>
-                </div>
-              </button>
-            </div>
-          )}
-
           {activeTab === 'providers' && (
             <div className="stack">
-              <div className="glass-card">
-                <h4 className="section-title"><Smartphone size={18} /> M-Pesa provider</h4>
-                <p className="section-sub" style={{ marginBottom: 12 }}>Loaded from server runtime configuration.</p>
-                <button type="button" className="provider-card" aria-pressed={paymentConfig.activeMpesaProvider === 'PAYHERO'}
-                  onClick={() => saveRuntimeConfig({ mpesaProvider: 'PAYHERO' })}
-                  disabled={isSaving || paymentConfig.activeMpesaProvider === 'PAYHERO'}>
-                  <div className="row-between">
-                    <strong>PayHero</strong>
-                    {paymentConfig.activeMpesaProvider === 'PAYHERO' && <span className="badge badge-emerald">ACTIVE</span>}
-                  </div>
-                  <p className="section-sub" style={{ marginTop: 6 }}>
-                    {providerStatusLoaded ? (providerStatus.mpesa?.PAYHERO?.configured ? 'Configured and reachable.' : 'Not configured yet.') : 'Availability not verified.'}
-                  </p>
-                </button>
-              </div>
-
-              <div className="glass-card">
-                <h4 className="section-title"><Sparkles size={18} /> AI provider</h4>
-                <p className="section-sub" style={{ marginBottom: 12 }}>Active: {aiConfig.provider || 'Unconfigured'}</p>
-                {[HYBRID_PROVIDER_OPTION, ...AI_PROVIDER_CATALOG].map((provider) => (
-                  <button key={provider.id} type="button" className="provider-card" style={{ marginBottom: 8 }}
-                    aria-pressed={aiConfig.provider === provider.id}
-                    onClick={() => saveRuntimeConfig({ aiProvider: provider.id })}
-                    disabled={isSaving || aiConfig.provider === provider.id}>
-                    <div className="row-between">
-                      <strong>{provider.label || provider.id}</strong>
-                      {aiConfig.provider === provider.id && <span className="badge badge-emerald">ACTIVE</span>}
-                    </div>
-                    <p className="section-sub" style={{ marginTop: 6 }}>
-                      {providerStatusLoaded
-                        ? (providerStatus.ai?.[provider.id]?.key_present ? 'Key configured.' : provider.id === 'HYBRID' ? 'Uses the hybrid contract.' : 'Key not configured.')
-                        : 'Availability not verified.'}
-                    </p>
+              <section className="panel">
+                <header className="panel-head">
+                  <h4 className="section-title"><Smartphone size={18} /> M-Pesa</h4>
+                  <p className="section-sub">Which service takes M-Pesa payments.</p>
+                </header>
+                <div className="option-list">
+                  <button type="button" className={`option-row ${paymentConfig.activeMpesaProvider === 'PAYHERO' ? 'selected' : ''}`} aria-pressed={paymentConfig.activeMpesaProvider === 'PAYHERO'}
+                    onClick={() => saveRuntimeConfig({ mpesaProvider: 'PAYHERO' })}
+                    disabled={isSaving || paymentConfig.activeMpesaProvider === 'PAYHERO'}>
+                    <span className={`status-dot ${providerStatusLoaded ? (providerStatus.mpesa?.PAYHERO?.configured ? 'key' : 'off') : 'unknown'}`} />
+                    <span className="option-name">PayHero</span>
+                    <span className="option-note">{providerStatusLoaded ? (providerStatus.mpesa?.PAYHERO?.configured ? 'Set up' : 'Not set up yet') : 'Checking'}</span>
+                    {paymentConfig.activeMpesaProvider === 'PAYHERO' && <span className="badge badge-emerald"><Check size={11} /> In use</span>}
                   </button>
-                ))}
-              </div>
+                </div>
+              </section>
 
-              <div className="glass-card">
-                <h4 className="section-title"><CreditCard size={18} /> Recent transactions</h4>
-                <p className="section-sub" style={{ marginBottom: 12 }}>{limitedResponseLabel('transactions', realTransactions.length)}</p>
-                {realTransactions.length === 0 && <p className="section-sub">No transactions returned.</p>}
-                {realTransactions.map((tx) => (
-                  <div key={tx.id} className="row-between" style={{ padding: '10px 0', borderTop: '1px solid var(--border-subtle)' }}>
-                    <div>
-                      <strong style={{ fontSize: 14 }}>{tx.currency} {tx.amount}</strong>
-                      <p className="meta-text">{tx.provider} · {tx.status}</p>
+              <section className="panel">
+                <header className="panel-head">
+                  <h4 className="section-title"><Sparkles size={18} /> Assistant provider</h4>
+                  <p className="section-sub">In use: {aiConfig.provider || 'Not set'}</p>
+                </header>
+                <div className="option-list">
+                  {[HYBRID_PROVIDER_OPTION, ...AI_PROVIDER_CATALOG].map((provider) => {
+                    const inUse = aiConfig.provider === provider.id;
+                    const keyAdded = providerStatus.ai?.[provider.id]?.key_present === true;
+                    return (
+                      <button key={provider.id} type="button" className={`option-row ${inUse ? 'selected' : ''}`}
+                        aria-pressed={inUse}
+                        onClick={() => saveRuntimeConfig({ aiProvider: provider.id })}
+                        disabled={isSaving || inUse}>
+                        <span className={`status-dot ${providerStatusLoaded && provider.id !== 'HYBRID' ? (keyAdded ? 'key' : 'off') : 'unknown'}`} />
+                        <span className="option-name">{provider.label || provider.id}</span>
+                        <span className="option-note">{providerStatusLoaded ? (provider.id === 'HYBRID' ? 'Uses the hybrid contract' : keyAdded ? 'Key added' : 'No key') : 'Checking'}</span>
+                        {inUse && <span className="badge badge-emerald"><Check size={11} /> In use</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="meta-text panel-foot">Key added does not mean the provider is approved or available for members.</p>
+              </section>
+
+              <section className="panel">
+                <header className="panel-head">
+                  <h4 className="section-title"><CreditCard size={18} /> Recent payments</h4>
+                  <p className="section-sub">{limitedResponseLabel('transactions', realTransactions.length)}</p>
+                </header>
+                {realTransactions.length === 0 && <p className="section-sub">No payments yet.</p>}
+                <div className="tx-list">
+                  {realTransactions.map((tx) => (
+                    <div key={tx.id} className="tx-row">
+                      <div>
+                        <strong>{tx.currency} {tx.amount}</strong>
+                        <p className="meta-text">{tx.provider} · {tx.status}</p>
+                      </div>
+                      <span className="meta-text">{tx.created_at ? new Date(tx.created_at).toLocaleDateString() : ''}</span>
                     </div>
-                    <span className="meta-text">{tx.created_at ? new Date(tx.created_at).toLocaleDateString() : ''}</span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </section>
             </div>
           )}
 
@@ -631,8 +629,7 @@ export default function App() {
               </button>
             </div>
             <nav className="side-nav" aria-label="All screens">
-              {PRIMARY_TABS.map(drawerItem)}
-              {MORE_SCREENS.map(drawerItem)}
+              {navGroups(() => setDrawerOpen(false))}
             </nav>
             <div style={{ padding: 14 }}>
               <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}>

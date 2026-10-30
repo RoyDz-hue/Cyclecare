@@ -237,10 +237,10 @@ export function UserManagement({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h3 className="font-editorial" style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Users size={22} color="#F48FB1" /> User Account Management & Controls
+              <Users size={22} color="#F48FB1" /> Members
             </h3>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              Manage member account states (Ban, Suspend, Activate), credit/debit coins, gift 3D artifacts, or dispatch official in-house notices. No coin deductions are tied to inactivity.
+              Account status, coins, gifts and official notices. No coins are deducted for inactivity.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
