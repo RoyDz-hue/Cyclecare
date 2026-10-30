@@ -408,8 +408,9 @@ export function UserManagement({
                         <div className="row-actions" role="group" aria-label={`Actions for ${idDisplay}`}>
                           <button
                             className="btn btn-outline act-btn"
-                            title="Ban or Suspend User"
-                            aria-label="Ban or Suspend User"
+                            title={user.status === 'ACTIVE' ? 'Ban or suspend this member' : 'Change this member\'s status'}
+                            aria-label={user.status === 'ACTIVE' ? 'Ban or suspend this member' : 'Change this member\'s status'}
+                            data-tip={user.status === 'ACTIVE' ? 'Ban or suspend' : 'Change status'}
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
@@ -428,6 +429,7 @@ export function UserManagement({
                             className="btn btn-outline act-btn"
                             title="Credit or Debit Coins"
                             aria-label="Credit or Debit Coins"
+                            data-tip="Credit or debit coins"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
@@ -447,6 +449,7 @@ export function UserManagement({
                             className="btn btn-outline act-btn"
                             title="Gift 3D Artifact"
                             aria-label="Gift 3D Artifact"
+                            data-tip="Gift a 3D item"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({ ...modalForm, artifactName: '' });
@@ -462,6 +465,7 @@ export function UserManagement({
                             className="btn btn-outline act-btn"
                             title="Push Custom Official In-House Message"
                             aria-label="Push Custom Official In-House Message"
+                            data-tip="Send an official notice"
                             onClick={() => {
                               setSelectedUser(user);
                               setModalForm({
