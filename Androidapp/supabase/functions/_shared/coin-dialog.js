@@ -5,7 +5,7 @@ export function parseCoinRequest(text) {
   if(m)return {scope:'all',delta:-Number(m[2]),query:null,reason:m[3]?.trim()||null};
   m=t.match(/^(deduct|remove|take)\s+(\d+)\s*(?:coins?\s*)?from\s+(.+?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:-Number(m[2]),query:m[3].trim().replace(/(?:['’]s)?\s+(?:ledger|wallet|account)\s*$/i,''),reason:m[4]?.trim()||null};
-  m=t.match(/^(give|grant|gift|credit|award)\s+(?:(\d+)\s+coins?\s+to\s+(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member))\s*(?:each)?|(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member))\s+(\d+)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
+  m=t.match(/^(give|grant|gift|credit|award|send)\s+(?:(\d+)\s+coins?\s+to\s+(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\s*(?:each)?|(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\s+(\d+)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {scope:'all',delta:Number(m[2]||m[3]),query:null,reason:m[4]?.trim()||null};
   m=t.match(/^(give|grant|gift|credit|award)\s+(?:(\d+)\s+coins?\s+to\s+(.+?)|(.+?)\s+(\d+)\s*(?:coins?)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:Number(m[2]||m[5]),query:(m[3]||m[4]).trim(),reason:m[6]?.trim()||null};

@@ -23,3 +23,8 @@ test('named gifts stay single-member',()=>{
  assert.deepEqual(parseCoinRequest('Gift 2 coins to Sarah'),{delta:2,query:'Sarah',reason:null});
  assert.deepEqual(parseCoinRequest('Give 200 coins to Kevin'),{delta:200,query:'Kevin',reason:null});
 });
+
+test('send and whole-community group phrasings parse as all-member scope',()=>{
+ assert.deepEqual(parseCoinRequest('Send everyone 2 coins'),{scope:'all',delta:2,query:null,reason:null});
+ assert.deepEqual(parseCoinRequest('Give the whole community 5 coins each'),{scope:'all',delta:5,query:null,reason:null});
+});

@@ -129,9 +129,9 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
      return {success:true,type:"chat",message:"Choose a whole gift between 1 and 10,000 coins for each member. No change has been made."};
    }
-   const {count,error:countError}=await admin.from("profiles").select("id",{count:"exact",head:true});
-   if(countError||count===null||count<1)return {success:true,type:"chat",message:"I couldn't count the members just now. No change was made."};
    if(!gst.reason){
+     const {count,error:countError}=await admin.from("profiles").select("id",{count:"exact",head:true});
+     if(countError||count===null||count<1)return {success:true,type:"chat",message:"I couldn't count the members just now. No change was made."};
      gst.awaiting="reason";
      const {error:gsaveError}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:gst,updated_at:new Date().toISOString()});
      if(gsaveError)throw new Error("Pending request could not be saved");
@@ -139,8 +139,12 @@ async function coinDialog(admin:any,userClient:any,adminId:string,text:string):P
      await persistMessage(admin,adminId,"assistant","chat",msg);
      return {success:true,type:"clarify",message:msg};
    }
-   const total=gst.delta*count;
-   const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${count} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID()}}];
+   const {data:profs,error:profErr}=await admin.from("profiles").select("user_id,device_id,id");
+   if(profErr||!Array.isArray(profs))return {success:true,type:"chat",message:"I couldn't list the members just now. No change was made."};
+   const snapshot=profs.map((p:any)=>String(p.user_id||p.device_id||p.id));
+   if(!snapshot.length||snapshot.length>5000)return {success:true,type:"chat",message:"I couldn't prepare the member list safely. No change was made."};
+   const total=gst.delta*snapshot.length;
+   const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
    const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:steps[0].label,p_plan:{steps}});
    if(proposeError){const msg="I couldn't prepare the gift safely. Nothing was changed; please try again or say cancel.";await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
@@ -328,7 +332,8 @@ async function executeStep(userClient: any, tool: string, args: any, includeGuid
         const { data, error } = await rpc("admin_gift_all_coins", {
           p_delta: Math.trunc(Number(args?.delta) || 0),
           p_reason: String(args?.reason ?? ""),
-          p_run_key: String(args?.run_key ?? "") });
+          p_run_key: String(args?.run_key ?? ""),
+          p_recipients: Array.isArray(args?.recipients) && args.recipients.length ? args.recipients.map(String) : null });
         return error ? { ok: false, error: error.message } : { ok: true, result: data };
       }
       case "send_notice": {
