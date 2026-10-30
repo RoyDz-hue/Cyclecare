@@ -380,8 +380,8 @@ export default function App() {
           {signedIn ? 'Open ACI' : 'Sign in'}
         </button>
         <figure className="mkt-artwrap">
-          <img className="mkt-art" src="/assets/home-hero-photo.jpg" alt="A woman smiling in warm light by an open window" />
-          <figcaption className="mkt-credit">Photo by Paul Uchechukwu on Pexels</figcaption>
+          <img className="mkt-art" src="/assets/home-hero-photo.jpg" alt="A warm cup of tea and flowers in morning sunlight" />
+          <figcaption className="mkt-credit">Photo by Rahime Gül on Pexels</figcaption>
         </figure>
       </section>
       <section className="mkt-grid">
