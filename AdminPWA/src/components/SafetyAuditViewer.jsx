@@ -90,7 +90,7 @@ export default function SafetyAuditViewer({ supabaseConfig, onNotification }) {
                         {evt.level}
                       </span>
                     </td>
-                    <td data-label="Trigger" style={{ padding: '16px 18px', fontFamily: 'monospace', color: '#FFF' }}>
+                    <td data-label="Trigger" style={{ padding: '16px 18px', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                       {evt.trigger_key}
                     </td>
                     <td data-label="Member" style={{ padding: '16px 18px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>

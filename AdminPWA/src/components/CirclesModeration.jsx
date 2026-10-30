@@ -130,7 +130,7 @@ export default function CirclesModeration({ supabaseConfig, onNotification }) {
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <span style={{ fontWeight: 600, fontSize: 13, color: '#FFF' }}>{t.title}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{t.title}</span>
                     <span className={`badge ${t.is_active ? 'badge-gold' : 'badge-rose'}`} style={{ fontSize: 9 }}>
                       {t.is_active ? 'ACTIVE' : 'ARCHIVED'}
                     </span>
@@ -186,7 +186,7 @@ export default function CirclesModeration({ supabaseConfig, onNotification }) {
                       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{new Date(m.created_at).toLocaleTimeString()}</span>
                       {m.is_flagged && <span className="badge badge-rose" style={{ fontSize: 9 }}>FLAGGED</span>}
                     </div>
-                    <p style={{ fontSize: 13, color: '#FFF' }}>{m.content}</p>
+                    <p style={{ fontSize: 13, color: 'var(--text-primary)' }}>{m.content}</p>
                   </div>
                   <button
                     onClick={() => toggleFlagMessage(m.id, m.is_flagged)}

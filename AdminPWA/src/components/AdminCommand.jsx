@@ -17,7 +17,7 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
   return (
     <div className={`chat-plan ${risk === 'risky' ? 'risky' : ''}`}>
       <h4 className="chat-plan-title">
-        {risk === 'risky' && <ShieldAlert size={16} color="#ff9eae" />}
+        {risk === 'risky' && <ShieldAlert size={16} color="var(--rose-pink)" />}
         {message.meta?.requires_approval === false ? 'Read-only check' : 'Review this plan before anything changes'}
       </h4>
       <ol className="chat-plan-steps">
@@ -56,7 +56,7 @@ function Bubble({ message, busy, onApprove, onReject }) {
       <div className={`bubble ${mine ? 'bubble-mine' : 'bubble-theirs'} ${message.pending ? 'pending' : ''}`}>
         {message.kind === 'result' && (
           <span className="bubble-status">
-            {message.meta?.status === 'done' ? <CheckCircle2 size={14} color="#7ee2a8" /> : <XCircle size={14} color="#ff9eae" />}
+            {message.meta?.status === 'done' ? <CheckCircle2 size={14} color="var(--emerald-accent)" /> : <XCircle size={14} color="var(--rose-pink)" />}
           </span>
         )}
         {text}
@@ -259,9 +259,11 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
 
   return (
     <section ref={frameRef} className="chat-shell" style={viewportHeight ? { height: viewportHeight } : undefined} aria-label="Admin Command">
+      <div className="chat-heading"><strong>Conversation</strong><span>ASK · REVIEW · ACT</span></div>
       <div ref={scrollRef} className="chat-scroll">
         {messages.length === 0 && !thinking && (
           <div className="chat-empty">
+            <h3>What needs your attention?</h3>
             <p className="chat-empty-lead">Ask, or tell me what to change. Anything that changes data waits for your approval.</p>
             <ul className="starter-list">
               {starters.map((r) => (
@@ -291,8 +293,8 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
           rows={1}
           onChange={(e) => { setPrompt(e.target.value); autoGrow(); }}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="Message Admin Command"
-          aria-label="Message Admin Command"
+          placeholder="Ask or make a change…"
+          aria-label="Ask or make a change"
         />
         <button type="button" className="send-btn" aria-label="Send" onClick={() => send()} disabled={busy || !prompt.trim()}>
           <ArrowUp size={18} />

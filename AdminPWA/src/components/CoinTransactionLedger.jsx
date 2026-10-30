@@ -85,7 +85,7 @@ export default function CoinTransactionLedger({ supabaseConfig, onNotification }
                 const isEarn = t.delta > 0;
                 return (
                   <tr key={t.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td data-label="Action" style={{ padding: '16px 18px', fontWeight: 600, color: '#FFF' }}>
+                    <td data-label="Action" style={{ padding: '16px 18px', fontWeight: 600, color: 'var(--text-primary)' }}>
                       {t.action}
                     </td>
                     <td data-label="Change" style={{ padding: '16px 18px', fontWeight: 700, color: isEarn ? '#4EBA88' : '#F48FB1' }}>

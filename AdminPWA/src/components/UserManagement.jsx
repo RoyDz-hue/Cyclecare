@@ -237,14 +237,14 @@ export function UserManagement({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h3 className="font-editorial" style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Users size={22} color="#F48FB1" /> Members
+              <Users size={22} color="var(--rose-pink)" /> Members
             </h3>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               Account status, coins, gifts and official notices. No coins are deducted for inactivity.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className={`badge ${dataLoadState === 'success' ? 'badge-emerald' : 'badge-gold'}`}>{dataLoadState === 'success' ? limitedResponseLabel('profiles', filteredUsers.length, { noun: 'accounts shown' }) : 'Unverified'}</span>
+            <span className={`badge ${dataLoadState === 'success' ? 'badge-emerald' : 'badge-gold'}`}>{dataLoadState === 'success' ? limitedResponseLabel('profiles', filteredUsers.length, { noun: filteredUsers.length === 1 ? 'account shown' : 'accounts shown' }) : 'Unverified'}</span>
             <span className="badge badge-gold">
               {dataLoadState === 'success' ? mergedUsers.filter((u) => u.status === 'BANNED' || u.status === 'SUSPENDED').length : '—'} Restricted
             </span>
@@ -258,7 +258,7 @@ export function UserManagement({
             <input
               type="text"
               aria-label="Search users by ID or device ID"
-              placeholder="Search by User ID / Device ID..."
+              placeholder="Find a member by ID…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="text-input"
@@ -305,7 +305,7 @@ export function UserManagement({
         <div style={{ overflowX: 'auto' }}>
           <table className="users-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
-              <tr style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
+              <tr style={{ background: 'var(--bg-surface-elevated)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
                 <th style={{ padding: '12px 16px' }}>User ID / Identity</th>
                 <th style={{ padding: '12px 16px' }}>Status</th>
                 <th style={{ padding: '12px 16px' }}>Tier & Rank</th>
@@ -342,7 +342,7 @@ export function UserManagement({
                     >
                       <td style={{ padding: '14px 16px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#FFF' }}>
+                          <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
                             {idDisplay.length > 20 ? `${idDisplay.slice(0, 18)}...` : idDisplay}
                           </span>
                           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -357,7 +357,7 @@ export function UserManagement({
                           <span className="badge badge-gold" title={user.suspension_reason || 'Suspended'}>SUSPENDED</span>
                         )}
                         {user.status === 'BANNED' && (
-                          <span className="badge" style={{ background: '#EF4444', color: '#FFF' }} title={user.suspension_reason || 'Banned'}>
+                          <span className="badge" style={{ background: '#b53431', color: '#FFF' }} title={user.suspension_reason || 'Banned'}>
                             BANNED
                           </span>
                         )}
@@ -368,16 +368,16 @@ export function UserManagement({
 
                       <td style={{ padding: '14px 16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Crown size={14} color="#E5C378" />
-                          <span style={{ fontWeight: 600, color: '#E5C378' }}>{user.supporter_tier}</span>
+                          <Crown size={14} color="var(--gold-accent)" />
+                          <span style={{ fontWeight: 600, color: 'var(--gold-accent)' }}>{user.supporter_tier}</span>
                           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({user.identity_rank})</span>
                         </div>
                       </td>
 
                       <td style={{ padding: '14px 16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <Coins size={14} color="#F48FB1" />
-                          <strong style={{ color: '#F48FB1', fontSize: 14 }}>{user.coin_balance ?? 'Not reported'}</strong>
+                          <Coins size={14} color="var(--rose-pink)" />
+                          <strong style={{ color: 'var(--rose-pink)', fontSize: 14 }}>{user.coin_balance ?? 'Not reported'}</strong>
                         </div>
                       </td>
 
@@ -441,7 +441,7 @@ export function UserManagement({
                               setActionModal('COINS');
                             }}
                           >
-                            <Coins size={13} color="#E5C378" />
+                            <Coins size={13} color="var(--gold-accent)" />
                             <span>Coins</span>
                           </button>
 
@@ -456,7 +456,7 @@ export function UserManagement({
                               setActionModal('GIFT');
                             }}
                           >
-                            <Gift size={13} color="#F48FB1" />
+                            <Gift size={13} color="var(--rose-pink)" />
                             <span>Gift</span>
                           </button>
 
@@ -517,10 +517,10 @@ export function UserManagement({
             aria-labelledby="user-action-title"
             tabIndex={-1}
             className="glass-card"
-            style={{ maxWidth: 520, width: '100%', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto', background: '#190B14', border: '1px solid rgba(244,143,177,0.3)' }}
+            style={{ maxWidth: 520, width: '100%', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid rgba(244,143,177,0.3)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 id="user-action-title" className="font-editorial" style={{ fontSize: 18, color: '#FFF' }}>
+              <h3 id="user-action-title" className="font-editorial" style={{ fontSize: 18, color: 'var(--text-primary)' }}>
                 {actionModal === 'STATUS' && 'Change Account Access Status'}
                 {actionModal === 'COINS' && 'Credit or Debit Cycle Coins'}
                 {actionModal === 'GIFT' && 'Gift 3D Collectible Artifact'}
@@ -536,8 +536,8 @@ export function UserManagement({
               </button>
             </div>
 
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, background: 'rgba(0,0,0,0.25)', padding: 10, borderRadius: 8 }}>
-              Target user: <strong style={{ color: '#FFF' }}>{selectedUser.user_id || selectedUser.device_id || selectedUser.id || 'ID unavailable'}</strong>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, background: 'var(--bg-surface-elevated)', padding: 10, borderRadius: 8 }}>
+              Target user: <strong style={{ color: 'var(--text-primary)' }}>{selectedUser.user_id || selectedUser.device_id || selectedUser.id || 'ID unavailable'}</strong>
               <div style={{ marginTop: 4 }}>
                 Balance: <strong>{selectedUser.coin_balance == null ? 'Not reported' : `${selectedUser.coin_balance} Coins`}</strong> | Status: <strong>{selectedUser.status || 'Unknown'}</strong>
               </div>
@@ -670,7 +670,7 @@ export function UserManagement({
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: 18 }}>{art.icon}</span>
                           <div>
-                            <strong style={{ fontSize: 13, color: '#FFF', display: 'block' }}>{art.name}</strong>
+                            <strong style={{ fontSize: 13, color: 'var(--text-primary)', display: 'block' }}>{art.name}</strong>
                             <code style={{ fontSize: 10, color: 'var(--text-muted)' }}>{art.id} • source price: {art.cost} CC</code>
                           </div>
                         </div>

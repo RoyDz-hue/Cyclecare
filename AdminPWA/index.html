@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CycleCare Admin — Economy & Layered AI Hub</title>
+    <title>CycleCare Care Desk</title>
     
     <!-- PWA & Meta tags -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#2D1420" />
+    <meta name="theme-color" content="#1f302a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CycleCare Admin" />
@@ -17,12 +17,12 @@
     <!-- Google Fonts for luxury and clean editorial feel -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="root">
-      <div id="boot-splash" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#F5E6EC;">
-        <div style="font-family:Cinzel,serif;font-size:26px;letter-spacing:1px;">CYCLECARE ADMIN</div>
+      <div id="boot-splash" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#232d2b;">
+        <div style="font-family:system-ui,sans-serif;font-size:26px;letter-spacing:1px;">CYCLECARE ADMIN</div>
         <div style="width:34px;height:34px;border:3px solid rgba(244,143,177,.25);border-top-color:#F48FB1;border-radius:50%;animation:bootspin 0.9s linear infinite;"></div>
         <div id="boot-note" style="font-size:13px;color:#B89AA8;">Loading…</div>
       </div>
@@ -40,7 +40,7 @@
         var actions = document.createElement('div');
         actions.style.cssText = 'display:flex;gap:10px;margin-top:6px;';
         actions.innerHTML = '<button onclick="window.location.reload()" style="padding:10px 18px;border-radius:10px;border:none;background:#E8B4B8;color:#2D1420;font-weight:600;cursor:pointer;">Retry</button>'
-          + '<button onclick="try{sessionStorage.clear();localStorage.clear();if(window.caches){caches.keys().then(function(k){k.forEach(function(n){caches.delete(n)})})}}catch(e){};window.location.href=window.location.pathname" style="padding:10px 18px;border-radius:10px;border:1px solid rgba(244,143,177,.4);background:transparent;color:#F5E6EC;font-weight:600;cursor:pointer;">Reset app data</button>';
+          + '<button onclick="try{sessionStorage.clear();localStorage.clear();if(window.caches){caches.keys().then(function(k){k.forEach(function(n){caches.delete(n)})})}}catch(e){};window.location.href=window.location.pathname" style="padding:10px 18px;border-radius:10px;border:1px solid rgba(244,143,177,.4);background:transparent;color:#232d2b;font-weight:600;cursor:pointer;">Reset app data</button>';
         note.parentNode.appendChild(actions);
       }, 9000);
     </script>

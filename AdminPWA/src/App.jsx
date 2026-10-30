@@ -35,21 +35,21 @@ const SUPABASE_CONFIG = resolveSupabaseConfig({
 });
 
 const PRIMARY_TABS = [
-  { id: 'home', label: 'Home', icon: BarChart3 },
-  { id: 'users', label: 'Users', icon: Users },
+  { id: 'home', label: 'Workspace', icon: BarChart3 },
+  { id: 'users', label: 'Members', icon: Users },
   { id: 'pricing', label: 'Pricing', icon: Coins },
   { id: 'community', label: 'Community', icon: ShieldAlert },
   { id: 'more', label: 'More', icon: Sparkles }
 ];
 
 const MORE_SCREENS = [
-  { id: 'providers', label: 'Providers & Payments', icon: CreditCard, hint: 'AI provider, M-Pesa switch, transactions' },
-  { id: 'feature_flags', label: 'Feature Flags', icon: Lock, hint: 'Runtime feature governance' },
-  { id: 'messaging', label: 'In-House Messenger', icon: Radio, hint: 'Official member messages' },
-  { id: 'coin_ledger', label: 'Coin Ledger', icon: Coins, hint: 'Every coin movement' },
-  { id: 'safety_audit', label: 'Safety Audit Log', icon: ShieldCheck, hint: 'Clinical safety trail' },
-  { id: 'circles_moderation', label: 'Circles Moderation', icon: Users, hint: 'Topics and membership' },
-  { id: 'sync_health', label: 'Sync Health', icon: Cloud, hint: 'Protocol and sync status' }
+  { id: 'providers', label: 'Providers & payments', icon: CreditCard, hint: 'Assistant provider, M-Pesa switch, transactions' },
+  { id: 'feature_flags', label: 'Feature controls', icon: Lock, hint: 'Runtime feature governance' },
+  { id: 'messaging', label: 'Messages', icon: Radio, hint: 'Official member messages' },
+  { id: 'coin_ledger', label: 'Coin ledger', icon: Coins, hint: 'Every coin movement' },
+  { id: 'safety_audit', label: 'Safety review', icon: ShieldCheck, hint: 'Clinical safety trail' },
+  { id: 'circles_moderation', label: 'Circles', icon: Users, hint: 'Topics and membership' },
+  { id: 'sync_health', label: 'Sync health', icon: Cloud, hint: 'Protocol and sync status' }
 ];
 
 const ACTIVITY_SCREEN = { id: 'activity', label: 'Activity', icon: Activity, hint: 'Safety signals and admin actions' };
@@ -79,6 +79,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dataLoadState, setDataLoadState] = useState('idle');
   const [dataLoadError, setDataLoadError] = useState('');
+  useEffect(() => { const frame = requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); return () => cancelAnimationFrame(frame); }, [dataLoadState, activeTab]);
   const [providerStatusLoaded, setProviderStatusLoaded] = useState(false);
   const [notification, setNotification] = useState(null);
   const [adminAccessToken, setAdminAccessToken] = useState(() => getAdminSession()?.access_token || '');
@@ -446,18 +447,12 @@ export default function App() {
       )}
 
       <aside className="sidebar" aria-label="CycleCare administration">
-        <div style={{ padding: '20px 18px 12px' }}>
-          <h1 className="font-editorial gold-gradient-text" style={{ fontSize: 22 }}>CycleCare Admin</h1>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>{adminEmail}</p>
-        </div>
+        <div className="desk-brand"><i className="cycle-mark" aria-hidden="true" /><span><strong>CycleCare</strong><small>Care desk</small></span></div>
         <nav aria-label="Main navigation" className="side-nav">
           {navGroups()}
         </nav>
-        <div style={{ padding: 14 }}>
-          <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}>
-            <LogOut size={15} /> Sign out
-          </button>
-        </div>
+        <div className="desk-account"><div className="avatar" aria-hidden="true">{(adminEmail || 'R')[0].toUpperCase()}</div><span><strong>Administrator</strong><small>{adminEmail}</small></span></div>
+        <button type="button" className="btn btn-outline btn-block" onClick={resetSignedOutState}><LogOut size={15} /> Sign out</button>
       </aside>
 
       <main className="main-content">
@@ -466,15 +461,8 @@ export default function App() {
             <button type="button" className="icon-btn drawer-toggle" aria-label="Open menu" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
               <Menu size={20} />
             </button>
-            <div style={{ minWidth: 0 }}>
-              <h2 className="font-editorial" style={{ fontSize: 18, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {currentScreen.label}
-              </h2>
-              <p style={{ fontSize: 11, color: dbStatus.lastChecked ? '#4EBA88' : 'var(--text-muted)' }}>
-                {isRefreshing ? 'Refreshing…' : dbStatus.lastChecked ? `Synced ${dbStatus.lastChecked}` : 'Connecting…'}
-              </p>
-            </div>
-          </div>
+            <div className="desk-breadcrumb"><span>CycleCare</span><ChevronRight size={11} /><strong>{currentScreen.label}</strong></div>
+         </div>
           <button type="button" className="icon-btn" aria-label="Refresh data" onClick={fetchSupabaseData} disabled={isRefreshing}>
             <RefreshCw size={18} className={isRefreshing ? 'spin' : ''} />
           </button>
@@ -488,14 +476,15 @@ export default function App() {
             </div>
           )}
 
-                    {(activeTab === 'home' || activeTab === 'more') && (
-            <AdminCommand
-              supabaseConfig={SUPABASE_CONFIG}
-              onSessionChange={onAdminSessionChange}
-              showNotification={showNotification}
-              insights={controlData?.member_insights}
-              counts={controlData?.counts}
-            />
+          {(activeTab === 'home' || activeTab === 'more') && (
+            <>
+              <div className="desk-intro"><div><span className="desk-eyebrow">YOUR CARE DESK</span><h1>Workspace</h1><p>Your conversation. Your next step.</p></div><i className="cycle-mark" aria-hidden="true" /></div>
+              <details className="mobile-brief" onToggle={() => window.dispatchEvent(new Event('resize'))}><summary>At a glance<span>Current workspace</span></summary><DeskBrief counts={controlData?.counts}  /></details>
+              <div className="desk-workspace">
+                <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} />
+                <aside className="desk-context" aria-label="Workspace context"><h2 className="context-heading">At a glance</h2><DeskBrief counts={controlData?.counts}  /><p className="context-note">Changes wait for your approval. Review the details before you run a plan.</p><div className="context-links"><h2 className="context-heading">Go deeper</h2><button type="button" onClick={() => setActiveTab('users')}>Member directory<ChevronRight size={13} /></button><button type="button" onClick={() => setActiveTab('safety_audit')}>Safety review<ChevronRight size={13} /></button><button type="button" onClick={() => setActiveTab('coin_ledger')}>Coin ledger<ChevronRight size={13} /></button></div></aside>
+              </div>
+            </>
           )}
 
           {activeTab === 'activity' && <SignalsDashboard controlData={controlData} dataLoadState={dataLoadState} />}
@@ -641,4 +630,9 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function DeskBrief({ counts }) {
+  const rows = [['New members · 7 days', counts?.signups_7d], ['Open safety events', counts?.safety_open], ['Flagged messages', counts?.flagged_open]];
+  return <div>{rows.map(([label, value]) => <div className="context-row" key={label}><span>{label}</span><strong data-empty={!Number.isFinite(value)}>{Number.isFinite(value) ? value : 'Not loaded'}</strong></div>)}</div>;
 }

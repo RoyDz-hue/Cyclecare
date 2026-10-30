@@ -90,7 +90,7 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
                 const isSpecialGate = flag.key === 'v3_sync_enabled';
                 return (
                   <tr key={flag.key} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td data-label="Flag" style={{ padding: '16px 18px', fontFamily: 'monospace', fontWeight: 600, color: '#FFF' }}>
+                    <td data-label="Flag" style={{ padding: '16px 18px', fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
                       {flag.key}
                       {isSpecialGate && (
                         <span className="badge badge-gold" style={{ marginLeft: 8, fontSize: 10 }}>

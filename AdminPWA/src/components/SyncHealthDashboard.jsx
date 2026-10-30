@@ -87,7 +87,7 @@ export default function SyncHealthDashboard({ supabaseConfig, onNotification }) 
             <Database size={20} color="#F48FB1" />
             <h3 style={{ fontSize: 14, fontWeight: 600 }}>Synced Daily Logs</h3>
           </div>
-          <p style={{ fontSize: 22, fontWeight: 700, color: '#FFF' }}>
+          <p style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>
             {syncStatus.dailyLogsCount}
           </p>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>

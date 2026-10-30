@@ -342,7 +342,7 @@ export function InHouseMessaging({
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span className="badge badge-emerald" style={{ fontSize: 10 }}>OFFICIAL</span>
-                        <strong style={{ fontSize: 14, color: '#FFF' }}>{msg.title || 'Untitled message'}</strong>
+                        <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>{msg.title || 'Untitled message'}</strong>
                       </div>
                       <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         Target: <span style={{ color: '#E5C378' }}>{msg.target_audience || 'Not reported'}</span> ● {msg.created_at && !Number.isNaN(new Date(msg.created_at).getTime()) ? new Date(msg.created_at).toLocaleString() : 'Timestamp unavailable'}
@@ -384,7 +384,7 @@ export function InHouseMessaging({
             aria-modal="true"
             aria-labelledby="broadcast-review-title"
             className="glass-card"
-            style={{ width: 'min(620px, 100%)', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto', background: '#190B14', borderColor: 'rgba(244,143,177,0.45)' }}
+            style={{ width: 'min(620px, 100%)', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto', background: 'var(--bg-surface)', borderColor: 'rgba(244,143,177,0.45)' }}
           >
             <h3 id="broadcast-review-title" className="font-editorial" style={{ fontSize: 20, marginBottom: 8 }}>Review broadcast before sending</h3>
             <p style={{ fontSize: 13, color: '#FBBF24', marginBottom: 16 }}>
