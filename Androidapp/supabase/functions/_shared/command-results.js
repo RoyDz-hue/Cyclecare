@@ -15,6 +15,7 @@ export function formatCommandStep(step) {
       const balances = step.balances || [];
       return 'Coin change confirmed.' + (balances.length ? '\n' + balances.map(x => `• Updated balance: ${number(x.balance)} coins.`).join('\n') : ' The updated balance was checked.');
     }
+    case 'get_member_count': return typeof r?.total === 'number' ? `You have ${number(r.total)} members.` : 'The member count is unavailable right now.';
     case 'get_user_insights': {
       if (!r || typeof r !== 'object') return 'Member insights are unavailable right now.';
       const sections = [r.guides_excluded === false ? 'Community Guides are included in these results.' : 'Community Guides are excluded from member rankings.'];

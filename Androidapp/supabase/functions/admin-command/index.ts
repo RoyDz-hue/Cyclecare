@@ -1,4 +1,5 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
+import { asksMemberCount } from "../_shared/command-intents.js";
 import { formatCommandOutcome } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -15,6 +16,7 @@ type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
 const TOOL_CATALOG = `
 Available tools (use only these, with only these args):
 - get_user_insights {focus?: "richest"|"newest"|"most_active"|"inactive"|"tier_split"|"all"} - ranked member analytics.
+- get_member_count {} - the total number of members only; prefer this over get_user_insights for count questions.
 - get_flagged_messages {} - open moderation queue.
 - get_safety_signals {} - app-detected safety events.
 - get_pricing {} - coin packages, multipliers, cosmetics.
@@ -273,6 +275,10 @@ async function executeStep(userClient: any, tool: string, args: any, includeGuid
   const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
   try {
     switch (tool) {
+      case "get_member_count": {
+        const { data, error } = await rpc("admin_member_count", {});
+        return error ? { ok: false, error: error.message } : { ok: true, result: data };
+      }
       case "get_user_insights": {
         const { data, error } = await rpc("admin_member_insights_scoped", {p_include_guides:includeGuides});
         if (error) return { ok: false, error: error.message };
@@ -571,6 +577,12 @@ serve(async (req: Request) => {
       const dialog=await coinDialog(admin,userClient,userId,chatPrompt);
       if(dialog)return jsonResponse(dialog);
     } catch {return jsonResponse({error:"I couldn't save the pending request. No change was made."},503);}
+    if (asksMemberCount(chatPrompt)) {
+      const { data: mc, error: mcErr } = await userClient.rpc("admin_member_count", {});
+      const msg = mcErr || typeof (mc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `You have ${(mc as any).total} members.`;
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
     const nameCheck = await checkNamedRecipient(userClient, chatPrompt);
     if (nameCheck.clarification) {
       await persistMessage(admin,userId,"assistant","chat",nameCheck.clarification);
