@@ -1,6 +1,6 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
-import { coinDialog, executeStep, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -293,6 +293,7 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
       }
       (out as any).balances = balances;
     }
+    if (out.ok && step.tool === "gift_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
     indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "WRITE", verified, ...out };
   }
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);

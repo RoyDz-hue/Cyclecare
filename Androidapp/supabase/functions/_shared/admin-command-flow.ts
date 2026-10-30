@@ -101,6 +101,14 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  return {success:true,type:"plan",run_id:st.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
 }
 
+export function giftAllVerified(result: any, args: any): boolean {
+  const gifted = typeof result?.recipients === "number" ? result.recipients : null;
+  const snapshot = Array.isArray(args?.recipients) ? args.recipients.length : null;
+  const delta = Math.trunc(Number(args?.delta) || 0);
+  const total = typeof result?.total_coins === "number" ? result.total_coins : null;
+  return gifted !== null && total === gifted * delta && (snapshot === null ? gifted > 0 : gifted === snapshot);
+}
+
 export async function executeStep(userClient: any, tool: string, args: any, includeGuides = false): Promise<{ ok: boolean; result?: unknown; error?: string }> {
   const rpc = (name: string, params: Record<string, unknown>) => userClient.rpc(name, params);
   const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
