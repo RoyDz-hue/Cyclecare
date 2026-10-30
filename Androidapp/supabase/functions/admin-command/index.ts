@@ -1,6 +1,6 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
-import { coinDialog, executeStep, persistMessage } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -459,8 +459,7 @@ serve(async (req: Request) => {
       tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} }));
     // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
     // never proposed, so a single approval can never silently execute several changes.
-    const writeSteps = (await Promise.all(steps.map((st) => toolKind(admin, st.tool)))).filter((kind) => kind !== "READ").length;
-    if (writeSteps > 1) {
+    if (await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
       const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
       await persistMessage(admin, userId, "assistant", "chat", msg);

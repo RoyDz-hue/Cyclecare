@@ -1,6 +1,6 @@
 // Mocked end-to-end conversation tests: no network, no model calls, no real member rows.
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
-import { coinDialog, executeStep } from "./admin-command-flow.ts";
+import { coinDialog, executeStep, planHasMultipleWrites } from "./admin-command-flow.ts";
 
 const PROFILES = [{ user_id: "u-1" }, { user_id: "u-2" }, { user_id: "u-3" }];
 
@@ -109,4 +109,36 @@ Deno.test("a new group gift after a proposal starts a fresh dialog", async () =>
   const r = await coinDialog(admin, userClient, "admin-1", "Gift everyone 5 coins");
   assertEquals(r.type, "clarify");
   assertStringIncludes(r.message, "15 coins in total");
+});
+
+// Planner-level multi-write guard, with the registry lookup mocked. Fail-closed:
+// unknown tools arrive as RISKY (the real lookup's default) and count as writes.
+const KINDS: Record<string, string> = {
+  get_user_insights: "READ",
+  get_member_count: "READ",
+  adjust_coins: "WRITE",
+  set_user_status: "WRITE",
+  send_notice: "WRITE",
+};
+const kindOf = async (tool: string) => KINDS[tool] ?? "RISKY";
+
+Deno.test("guard clarifies two same-category writes", async () => {
+  const steps = [{ tool: "set_user_status" }, { tool: "set_user_status" }];
+  assertEquals(await planHasMultipleWrites(steps, kindOf), true);
+});
+
+Deno.test("guard clarifies cross-category writes", async () => {
+  const steps = [{ tool: "adjust_coins" }, { tool: "set_user_status" }];
+  assertEquals(await planHasMultipleWrites(steps, kindOf), true);
+});
+
+Deno.test("guard fails closed on unknown tools", async () => {
+  assertEquals(await planHasMultipleWrites([{ tool: "drop_everything" }, { tool: "adjust_coins" }], kindOf), true);
+  assertEquals(await planHasMultipleWrites([{ tool: "drop_everything" }, { tool: "get_user_insights" }], kindOf), false);
+});
+
+Deno.test("guard permits a single write and read-plus-write", async () => {
+  assertEquals(await planHasMultipleWrites([{ tool: "adjust_coins" }], kindOf), false);
+  assertEquals(await planHasMultipleWrites([{ tool: "get_user_insights" }, { tool: "set_user_status" }], kindOf), false);
+  assertEquals(await planHasMultipleWrites([], kindOf), false);
 });

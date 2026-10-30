@@ -196,3 +196,11 @@ export async function persistMessage(admin: any, adminId: string, role: string, 
       admin_user_id: adminId, role, kind, content, run_id: runId ?? null, meta: meta ?? {} });
   } catch { /* history must never break the reply path */ }
 }
+
+// One change at a time: a plan bundling more than one WRITE/RISKY step must be
+// clarified, never proposed, so a single approval can never execute several changes.
+// kindOf is the registry lookup; unknown tools fail closed as RISKY there.
+export async function planHasMultipleWrites(steps: any[], kindOf: (tool: string) => Promise<string>): Promise<boolean> {
+  const kinds = await Promise.all((steps ?? []).map((st) => kindOf(String(st?.tool ?? ""))));
+  return kinds.filter((k) => k !== "READ").length > 1;
+}
