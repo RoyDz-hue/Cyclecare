@@ -371,25 +371,27 @@ export default function App() {
   const marketingHome = (signedIn) => (
     <div className="mkt">
       <section className="mkt-hero">
-        <p className="mkt-eyebrow">CycleCare Admin</p>
-        <h1 className="font-editorial mkt-title">Every member's cycle, cared for in one calm place.</h1>
+        <p className="mkt-eyebrow">CycleCare</p>
+        <h1 className="font-editorial mkt-title">Every cycle, cared for in one calm place.</h1>
         <p className="mkt-sub">
-          CycleCare is a private, offline-first cycle companion: members track their health on their own phones,
-          safety signals reach your review queue early, and Circles keep everyone supported. This is where you look after all of it.
+          CycleCare helps members track their cycles privately, notice important changes early, and feel supported.
         </p>
         <button type="button" className="btn btn-gold mkt-cta" onClick={() => setActiveTab(signedIn ? 'aci' : 'signin')}>
           {signedIn ? 'Open ACI' : 'Sign in'}
         </button>
-        <img className="mkt-art" src="/assets/home-hero.png" alt="The phases of a cycle shown as moons along an arc" />
+        <figure className="mkt-artwrap">
+          <img className="mkt-art" src="/assets/home-hero-photo.jpg" alt="A woman smiling in warm light by an open window" />
+          <figcaption className="mkt-credit">Photo by Paul Uchechukwu on Pexels</figcaption>
+        </figure>
       </section>
       <section className="mkt-grid">
         <article className="mkt-card">
           <h3>Private by design</h3>
-          <p>Cycle logs and pattern analysis stay on the member's own phone, in an encrypted local database.</p>
+          <p>Members track on their own phone; cloud sync runs only with their explicit consent.</p>
         </article>
         <article className="mkt-card">
-          <h3>Safety boundaries</h3>
-          <p>Clinical rules watch for concerning signals and bring them to your safety review queue.</p>
+          <h3>Safety built in</h3>
+          <p>Clear rules flag patterns that need attention, so they reach a human review.</p>
         </article>
         <article className="mkt-card">
           <h3>Community support</h3>
