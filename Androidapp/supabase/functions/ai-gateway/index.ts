@@ -190,7 +190,7 @@ async function requestProvider(
     }
 
     if (provider === "LAJIWA") {
-      // Contract verified from Lajiwa source (main 514642a / Worker 705ff256):
+      // Contract verified from Lajiwa source and deployed Worker (main 8107229 / aa54ec9d):
       // POST /api/chat, Bearer ljw_ key, body {"message": string <= 2000 unicode scalars},
       // 200 {"reply": string, ...optional stats}; reply may carry a trailing
       // <!--LAJIWA_SOURCES:{...}--> comment that must be stripped. No JSON mode, no
@@ -208,7 +208,7 @@ async function requestProvider(
       }
       if ([...lajiwaMessage].length > 2000) return { status: 413 };
       const baseUrl = (Deno.env.get("LAJIWA_API_URL") || "https://lajiwa.roydeburgs.workers.dev").replace(/\/+$/, "");
-      response = await fetch(`${baseUrl}/api/chat`, {
+      response = await fetch(`${baseUrl}/api/chat/private`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         signal: externalSignal ?? controller.signal,
