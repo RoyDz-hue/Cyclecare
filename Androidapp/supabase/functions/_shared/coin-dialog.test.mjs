@@ -28,3 +28,13 @@ test('send and whole-community group phrasings parse as all-member scope',()=>{
  assert.deepEqual(parseCoinRequest('Send everyone 2 coins'),{scope:'all',delta:2,query:null,reason:null});
  assert.deepEqual(parseCoinRequest('Give the whole community 5 coins each'),{scope:'all',delta:5,query:null,reason:null});
 });
+
+test('gift typo Git still parses as an all-member grant',()=>{
+ assert.deepEqual(parseCoinRequest('Git all users 3 coins each'),{scope:'all',delta:3,query:null,reason:null});
+});
+test('bare Yes while awaiting a reason defaults to Admin adjustment, keeps it a single gift',()=>{
+ const s=applyCoinReply({scope:'all',delta:3,awaiting:'reason'},'Yes');
+ assert.equal(s.reason,'Admin adjustment');
+ assert.equal(s.scope,'all');
+ assert.equal(s.delta,3);
+});

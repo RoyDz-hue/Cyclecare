@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {formatCommandOutcome, formatTopBalanceReply} from './command-results.js';
+import {formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply} from './command-results.js';
 test('expired cards say to ask again',()=>assert.match(formatCommandOutcome({status:'expired'}),/expired.*Ask again/));
 test('unconfirmed writes never claim completed',()=>{const text=formatCommandOutcome({status:'unconfirmed',steps:[{tool:'set_user_status',kind:'WRITE',ok:true,verified:false}]});assert.match(text,/accepted but not confirmed/);assert.doesNotMatch(text,/completed successfully/);assert.match(text,/Do not repeat/);});
 
@@ -18,4 +18,18 @@ test('top balance reply fails safe on empty or malformed rows',()=>{
  assert.equal(formatTopBalanceReply([]),"I couldn't check the balances just now.");
  assert.equal(formatTopBalanceReply(null),"I couldn't check the balances just now.");
  assert.equal(formatTopBalanceReply([{user_id:'ana'}]),"I couldn't check the balances just now.");
+});
+
+test('joined-list reply names members with join dates',()=>{
+ const out=formatJoinedListReply({total:2,members:[{display_name:'Neema',email:'neema@example.com',created_at:'2026-10-30T07:12:00Z',status:'ACTIVE'},{display_name:'',email:'tab@example.com',created_at:'2026-10-30T06:00:00Z',status:'ACTIVE'}]},'today');
+ assert.match(out,/2 new members joined today/);
+ assert.match(out,/Neema \(neema@example\.com\): joined 2026-10-30/);
+ assert.doesNotMatch(out,/Unnamed member/);
+});
+test('joined-list reply is honest when empty or truncated',()=>{
+ assert.match(formatJoinedListReply({total:0,members:[]},'today'),/No new members joined today/);
+ const out=formatJoinedListReply({total:55,members:[{display_name:'A',created_at:'2026-10-01T00:00:00Z'}]},'this month');
+ assert.match(out,/55 new members joined this month/);
+ assert.match(out,/and 54 more/);
+ assert.match(formatJoinedListReply(null,'today'),/unavailable right now/);
 });

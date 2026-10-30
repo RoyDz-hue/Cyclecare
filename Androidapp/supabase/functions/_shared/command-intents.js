@@ -40,6 +40,18 @@ export const mixesWriteActions = (text) => {
   return hits >= 2;
 };
 
+// Member LIST questions for a joined window: "any person who created an account today",
+// "who joined this week", "show me new members this month". Answers come from the
+// filtered member list, never from unfiltered insights.
+export const asksJoinedList = (text) => {
+  const t = String(text ?? '').trim();
+  const win = t.match(/\b(today|this week|this month)\b\s*[?]?$/i);
+  if (!win) return null;
+  if (!/\b(?:joined|signed up|(?:has |have )?(?:created|made) (?:an?|their) account|new (?:users?|members?|accounts?))\b/i.test(t)) return null;
+  if (/^how many\b/i.test(t)) return null; // counts stay with asksJoinedCount
+  return win[1].toLowerCase();
+};
+
 // Calendar boundaries in Africa/Nairobi (fixed +03:00): today, this week (Monday), this month.
 export const joinedWindowBoundary = (win, nowMs = Date.now()) => {
   const EAT = 3 * 3600_000;

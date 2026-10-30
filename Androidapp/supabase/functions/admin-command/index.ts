@@ -1,7 +1,7 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
-import { asksMemberCount, mixesWriteActions, asksJoinedCount, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
+import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
-import { formatCommandOutcome, formatTopBalanceReply } from "../_shared/command-results.js";
+import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
 // (DB policy gate: tools, kinds, limits) -> admin approval for WRITE/RISKY ->
@@ -408,6 +408,14 @@ serve(async (req: Request) => {
       const { since, span } = joinedWindowBoundary(joinedWindow);
       const { data: jc, error: jcErr } = await userClient.rpc("admin_member_count", { p_since: since });
       const msg = jcErr || typeof (jc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `${(jc as any).total} members joined ${span}.`;
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    const joinedListWindow = asksJoinedList(chatPrompt);
+    if (joinedListWindow) {
+      const { since, span } = joinedWindowBoundary(joinedListWindow);
+      const { data: jl, error: jlErr } = await userClient.rpc("admin_members_joined", { p_since: since, p_limit: 50 });
+      const msg = jlErr ? "I couldn't fetch the new member list just now. No change was made." : formatJoinedListReply(jl, span);
       await persistMessage(admin, userId, "assistant", "chat", msg);
       return jsonResponse({ success: true, type: "chat", message: msg });
     }

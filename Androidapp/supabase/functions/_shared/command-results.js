@@ -75,3 +75,15 @@ export const formatTopBalanceReply = (rows) => {
   if (winners.length < list.length) return `${winners.length} members tie for the most coins at ${top} each: ${winners.join(', ')}.`;
   return `At least ${winners.length} members tie for the most coins at ${top} each: ${winners.slice(0, 5).join(', ')}${winners.length > 5 ? ` and ${winners.length - 5} more` : ''}.`;
 };
+
+// Filtered joined-window member list: exact members, exact count, no invention.
+export function formatJoinedListReply(result, span) {
+  const total = typeof result?.total === 'number' ? result.total : null;
+  const rows = Array.isArray(result?.members) ? result.members : [];
+  if (total === null) return 'The new member list is unavailable right now.';
+  if (total === 0) return `No new members joined ${span}.`;
+  const nameOf = (x) => x?.display_name || (x?.email ? String(x.email).split('@')[0] : null) || member(x);
+  const lines = rows.map(x => `\u2022 ${nameOf(x)}${x?.email ? ` (${x.email})` : ''}: joined ${date(x?.created_at)}${x?.status ? `, ${words(x.status)}` : ''}`);
+  const extra = total > rows.length ? [`\u2026and ${number(total - rows.length)} more.`] : [];
+  return `${number(total)} new member${total === 1 ? '' : 's'} joined ${span}:\n` + [...lines, ...extra].join('\n');
+}

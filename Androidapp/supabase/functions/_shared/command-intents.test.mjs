@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import{asksMemberCount,mixesCoinWithOtherAction,asksJoinedCount,asksTierCount,asksTopBalance,mixesWriteActions,joinedWindowBoundary}from './command-intents.js';
+import test from 'node:test';import assert from 'node:assert/strict';import{asksMemberCount,mixesCoinWithOtherAction,asksJoinedCount,asksJoinedList,asksTierCount,asksTopBalance,mixesWriteActions,joinedWindowBoundary}from './command-intents.js';
 test('plain member-count questions are recognized',()=>{
  for(const t of ['How many users do we have','how many members','How many users are there?','What is the total number of users','total member count','user count','How many users'])assert.ok(asksMemberCount(t),t);
 });
@@ -46,4 +46,19 @@ test('joined windows are calendar boundaries in Nairobi time',()=>{
  // Sunday belongs to the week that started the previous Monday.
  const sun = Date.UTC(2026,10,1,8,0,0);
  assert.equal(joinedWindowBoundary('this week',sun).since,'2026-10-25T21:00:00.000Z');
+});
+
+test('joined-list questions are recognized with their window',()=>{
+ assert.equal(asksJoinedList('Any person who has created an account today'),'today');
+ assert.equal(asksJoinedList('Who joined today?'),'today');
+ assert.equal(asksJoinedList('show me new members this week'),'this week');
+ assert.equal(asksJoinedList('which users signed up this month'),'this month');
+ assert.equal(asksJoinedList('list members who created an account today'),'today');
+});
+test('joined-list intent never steals counts or unrelated asks',()=>{
+ assert.equal(asksJoinedList('How many members joined today'),null);
+ assert.equal(asksJoinedList('How many users signed up this week'),null);
+ assert.equal(asksJoinedList('How many premium members'),null);
+ assert.equal(asksJoinedList('show me the newest users and their tier split'),null);
+ assert.equal(asksJoinedList('gift all users 2 coins each'),null);
 });

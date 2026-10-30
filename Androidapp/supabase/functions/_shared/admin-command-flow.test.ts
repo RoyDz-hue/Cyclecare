@@ -142,3 +142,25 @@ Deno.test("guard permits a single write and read-plus-write", async () => {
   assertEquals(await planHasMultipleWrites([{ tool: "get_user_insights" }, { tool: "set_user_status" }], kindOf), false);
   assertEquals(await planHasMultipleWrites([], kindOf), false);
 });
+
+Deno.test("gift typo then bare Yes: one approval plan, nothing executes", async () => {
+  const { admin, userClient, state, rpcCalls } = makeClients();
+
+  const r1 = await coinDialog(admin, userClient, "admin-1", "Git all users 3 coins each");
+  assertEquals(r1.type, "clarify", "typo gift still enters the deterministic coin dialog");
+  assertStringIncludes(r1.message, "3 members");
+  assertStringIncludes(r1.message, "9 coins in total");
+  assertEquals(state.row?.state?.awaiting, "reason");
+  assertEquals(rpcCalls.length, 0, "no execution during preview");
+
+  const r2 = await coinDialog(admin, userClient, "admin-1", "Yes");
+  assertEquals(r2.type, "plan", "Yes confirms with the default reason, exactly one plan");
+  assertEquals(r2.requires_approval, true);
+  assertEquals(r2.plan.steps.length, 1, "single write step only");
+  const step = r2.plan.steps[0];
+  assertEquals(step.tool, "gift_all_coins");
+  assertEquals(step.args.delta, 3);
+  assertEquals(step.args.reason, "Admin adjustment");
+  assertEquals(step.args.recipients, ["u-1", "u-2", "u-3"]);
+  assertEquals(rpcCalls.filter((c: any) => c.name === "admin_gift_all_coins").length, 0, "proposal never executes");
+});
