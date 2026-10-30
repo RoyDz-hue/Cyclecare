@@ -37,7 +37,7 @@ export default function SafetyAuditViewer({ supabaseConfig, onNotification }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Clinical Safety Audit Log</h2>
+          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Safety review log</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
             Immutable server audit of acute and high-priority red-flag evaluations (no raw health contents).
           </p>

@@ -56,7 +56,7 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Feature Flags & Runtime Governance</h2>
+          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Feature switches</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
             Control app capabilities and release gates instantly without releasing a new APK.
           </p>
@@ -72,7 +72,7 @@ export default function FeatureFlagsManager({ supabaseConfig, onNotification }) 
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
               <th style={{ padding: '14px 18px', fontWeight: 600 }}>Flag Key</th>
-              <th style={{ padding: '14px 18px', fontWeight: 600 }}>Description & Governance</th>
+              <th style={{ padding: '14px 18px', fontWeight: 600 }}>What it does</th>
               <th style={{ padding: '14px 18px', fontWeight: 600 }}>Status</th>
               <th style={{ padding: '14px 18px', fontWeight: 600, textAlign: 'right' }}>Action</th>
             </tr>

@@ -259,7 +259,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
 
   return (
     <section ref={frameRef} className="chat-shell" style={viewportHeight ? { height: viewportHeight } : undefined} aria-label="Admin Command">
-      <div className="chat-heading"><strong>Conversation</strong><span>ASK · REVIEW · ACT</span></div>
+      <div className="chat-heading"><strong>Admin Command</strong><span>ASK · REVIEW · ACT</span></div>
       <div ref={scrollRef} className="chat-scroll">
         {messages.length === 0 && !thinking && (
           <div className="chat-empty">

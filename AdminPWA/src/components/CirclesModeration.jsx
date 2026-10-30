@@ -97,7 +97,7 @@ export default function CirclesModeration({ supabaseConfig, onNotification }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Community Circles Moderation</h2>
+          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Circles</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
             Monitor and govern peer guided chat topics, enforce safety rules, and flag abusive content.
           </p>

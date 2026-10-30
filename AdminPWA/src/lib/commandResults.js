@@ -44,7 +44,7 @@ export function formatCommandStep(step) {
     case 'get_safety_signals': return list(r, x => `• ${member(x)}: ${words(x.level) || 'safety'} signal, ${words(x.trigger_key) || 'reason not recorded'}; ${x.resolved_at ? 'resolved' : 'awaiting review'} (${date(x.created_at)}).`, 'No safety signals have been recorded.');
     case 'get_audit_log': return list(r, x => `• ${words(x.admin_action) || 'Admin action'} on ${date(x.created_at)}.`, 'No admin activity has been recorded.');
     default: {
-      const labels = {adjust_coins:'Coin balance changes',set_user_status:'Account status changes',set_user_tier:'Membership changes',gift_artifact:'Artifact gifts',send_notice:'The team notice',set_coin_packages:'The coin packages',set_cosmetic_price:'The cosmetic price',set_guides_enabled:'The Community Guides setting',update_guide:'The Community Guide update',moderate_message:'The moderation changes'};
+      const labels = {adjust_coins:'Coin balance changes',gift_all_coins:'The gift to every member',set_user_status:'Account status changes',set_user_tier:'Membership changes',gift_artifact:'Artifact gifts',send_notice:'The team notice',set_coin_packages:'The coin packages',set_cosmetic_price:'The cosmetic price',set_guides_enabled:'The Community Guides setting',update_guide:'The Community Guide update',moderate_message:'The moderation changes'};
       let text = `${labels[step.tool] || 'The requested change'} completed successfully.`;
       if (Array.isArray(r)) text += ` ${r.filter(x => x?.ok === true).length} of ${r.length} targets completed.`;
       if (step.verified === true) text += ' Checked afterwards and confirmed.';

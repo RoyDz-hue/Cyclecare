@@ -14,6 +14,8 @@ import PricingManager from './components/PricingManager';
 import CommunityControl from './components/CommunityControl';
 import SignalsDashboard from './components/SignalsDashboard';
 import AdminCommand from './components/AdminCommand.jsx';
+import HomeScene from './components/HomeScene.jsx';
+import { deriveTiers } from './lib/homeScene.js';
 import { preloadCommandThread } from './lib/adminCommand.js';
 import {
   adminJson, adminResultMessage, clearAdminSession, finishGoogleOAuth, getAdminSession,
@@ -35,33 +37,41 @@ const SUPABASE_CONFIG = resolveSupabaseConfig({
 });
 
 const PRIMARY_TABS = [
-  { id: 'home', label: 'Workspace', icon: BarChart3 },
+  { id: 'home', label: 'Home', icon: BarChart3 },
   { id: 'users', label: 'Members', icon: Users },
-  { id: 'pricing', label: 'Pricing', icon: Coins },
-  { id: 'community', label: 'Community', icon: ShieldAlert },
+  { id: 'pricing', label: 'Coin packages & prices', icon: Coins },
+  { id: 'community', label: 'Community moderation', icon: ShieldAlert },
   { id: 'more', label: 'More', icon: Sparkles }
 ];
 
 const MORE_SCREENS = [
-  { id: 'providers', label: 'Providers & payments', icon: CreditCard, hint: 'Assistant provider, M-Pesa switch, transactions' },
-  { id: 'feature_flags', label: 'Feature controls', icon: Lock, hint: 'Runtime feature governance' },
-  { id: 'messaging', label: 'Messages', icon: Radio, hint: 'Official member messages' },
-  { id: 'coin_ledger', label: 'Coin ledger', icon: Coins, hint: 'Every coin movement' },
-  { id: 'safety_audit', label: 'Safety review', icon: ShieldCheck, hint: 'Clinical safety trail' },
+  { id: 'providers', label: 'Payment & assistant providers', icon: CreditCard, hint: 'Assistant provider and M-Pesa switch' },
+  { id: 'feature_flags', label: 'Feature switches', icon: Lock, hint: 'Runtime feature governance' },
+  { id: 'messaging', label: 'Broadcast messages', icon: Radio, hint: 'Official member messages' },
+  { id: 'coin_ledger', label: 'Coin transactions', icon: Coins, hint: 'Every coin movement' },
+  { id: 'safety_audit', label: 'Safety review log', icon: ShieldCheck, hint: 'Clinical safety trail' },
   { id: 'circles_moderation', label: 'Circles', icon: Users, hint: 'Topics and membership' },
-  { id: 'sync_health', label: 'Sync health', icon: Cloud, hint: 'Protocol and sync status' }
+  { id: 'sync_health', label: 'Sync status', icon: Cloud, hint: 'Protocol and sync status' }
 ];
 
-const ACTIVITY_SCREEN = { id: 'activity', label: 'Activity', icon: Activity, hint: 'Safety signals and admin actions' };
+const ACTIVITY_SCREEN = { id: 'activity', label: 'Alerts & admin actions', icon: Activity, hint: 'Safety signals and what admins changed' };
 
 // Every screen stays reachable; the grouping only decides where it sits.
 const NAV_GROUPS = [
   { label: null, items: [PRIMARY_TABS[0], ACTIVITY_SCREEN] },
-  { label: 'Members', items: [PRIMARY_TABS[1], PRIMARY_TABS[3], MORE_SCREENS[5], MORE_SCREENS[2]] },
-  { label: 'Money', items: [PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[0]] },
-  { label: 'System', items: [MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]] }
+  { label: 'Members & community', items: [PRIMARY_TABS[1], PRIMARY_TABS[3], MORE_SCREENS[5], MORE_SCREENS[2]] },
+  { label: 'Coins & payments', items: [PRIMARY_TABS[2], MORE_SCREENS[3], MORE_SCREENS[0]] },
+  { label: 'Safety & system', items: [MORE_SCREENS[1], MORE_SCREENS[4], MORE_SCREENS[6]] }
 ];
 const ALL_SCREENS = NAV_GROUPS.flatMap((g) => g.items);
+
+// Home shows the real hierarchy: the same groups as the menu, each with its screens.
+const HOME_ROUTES = [
+  { title: NAV_GROUPS[1].label, color: '#d4ff58', clip: 'circle(50%)', items: NAV_GROUPS[1].items },
+  { title: NAV_GROUPS[2].label, color: '#ff6b4a', clip: 'polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%)', items: NAV_GROUPS[2].items },
+  { title: NAV_GROUPS[3].label, color: '#8f7cff', clip: 'polygon(50% 0,100% 50%,50% 100%,0 50%)', items: NAV_GROUPS[3].items },
+  { title: ACTIVITY_SCREEN.label, color: '#f3efe4', clip: 'none', items: [{ ...ACTIVITY_SCREEN, short: 'Safety signals and admin log' }] }
+];
 
 const TAB_IDS = ['more', ...ALL_SCREENS.map((s) => s.id)];
 const initialTab = () => {
@@ -447,7 +457,7 @@ export default function App() {
       )}
 
       <aside className="sidebar" aria-label="CycleCare administration">
-        <div className="desk-brand"><i className="cycle-mark" aria-hidden="true" /><span><strong>CycleCare</strong><small>Care desk</small></span></div>
+        <div className="desk-brand"><i className="cycle-mark" aria-hidden="true" /><span><strong>CycleCare</strong><small>Admin</small></span></div>
         <nav aria-label="Main navigation" className="side-nav">
           {navGroups()}
         </nav>
@@ -468,6 +478,14 @@ export default function App() {
           </button>
         </header>
 
+        <HomeScene
+          summary={deriveTiers(controlData)}
+          mode={activeTab === 'home' || activeTab === 'more' ? 'home' : 'strip'}
+          loadState={dataLoadState}
+          onOpenPlan={() => setActiveTab('users')}
+          onHome={() => setActiveTab('home')}
+        />
+
         <div className={`content-body ${activeTab === 'home' || activeTab === 'more' ? 'content-home' : ''}`} key={activeTab}>
           {dataLoadState === 'error' && (
             <div className="glass-card" role="alert" style={{ borderColor: 'rgba(255, 158, 174, 0.4)' }}>
@@ -478,11 +496,18 @@ export default function App() {
 
           {(activeTab === 'home' || activeTab === 'more') && (
             <>
-              <div className="desk-intro"><div><span className="desk-eyebrow">YOUR CARE DESK</span><h1>Workspace</h1><p>Your conversation. Your next step.</p></div><i className="cycle-mark" aria-hidden="true" /></div>
-              <details className="mobile-brief" onToggle={() => window.dispatchEvent(new Event('resize'))}><summary>At a glance<span>Current workspace</span></summary><DeskBrief counts={controlData?.counts}  /></details>
+              <h2 className="home-command-head">Admin Command</h2>
               <div className="desk-workspace">
                 <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} />
-                <aside className="desk-context" aria-label="Workspace context"><h2 className="context-heading">At a glance</h2><DeskBrief counts={controlData?.counts}  /><p className="context-note">Changes wait for your approval. Review the details before you run a plan.</p><div className="context-links"><h2 className="context-heading">Go deeper</h2><button type="button" onClick={() => setActiveTab('users')}>Member directory<ChevronRight size={13} /></button><button type="button" onClick={() => setActiveTab('safety_audit')}>Safety review<ChevronRight size={13} /></button><button type="button" onClick={() => setActiveTab('coin_ledger')}>Coin ledger<ChevronRight size={13} /></button></div></aside>
+              </div>
+              <p className="home-command-note">Changes always wait for your Approve tap.</p>
+              <div className="home-routes">
+                {HOME_ROUTES.map((route) => (
+                  <section className="home-route" key={route.title} style={{ '--c': route.color }}>
+                    <h2><s aria-hidden="true" style={{ clipPath: route.clip }} />{route.title}</h2>
+                    <ul>{route.items.map((item) => <li key={item.id}><button type="button" onClick={() => setActiveTab(item.id)}>{item.short || item.label}</button></li>)}</ul>
+                  </section>
+                ))}
               </div>
             </>
           )}
@@ -630,9 +655,4 @@ export default function App() {
       )}
     </div>
   );
-}
-
-function DeskBrief({ counts }) {
-  const rows = [['New members · 7 days', counts?.signups_7d], ['Open safety events', counts?.safety_open], ['Flagged messages', counts?.flagged_open]];
-  return <div>{rows.map(([label, value]) => <div className="context-row" key={label}><span>{label}</span><strong data-empty={!Number.isFinite(value)}>{Number.isFinite(value) ? value : 'Not loaded'}</strong></div>)}</div>;
 }

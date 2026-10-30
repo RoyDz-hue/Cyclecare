@@ -134,7 +134,7 @@ export function InHouseMessaging({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h3 className="font-editorial" style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Radio size={22} color="#4EBA88" /> Official In-House Messenger & Push Broadcast
+              <Radio size={22} color="#4EBA88" /> Broadcast messages
             </h3>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               The repository’s dispatch RPC records messages and stamps queued notifications with <strong>CYCLECARE_OFFICIAL</strong>. This interface does not confirm device delivery, and deployed server behavior has not been checked here.

@@ -57,7 +57,7 @@ export default function SyncHealthDashboard({ supabaseConfig, onNotification }) 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Client Sync Health & V3 Protocol</h2>
+          <h2 className="font-editorial" style={{ fontSize: 22, fontWeight: 700 }}>Sync status</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
             Monitor client outbox telemetry, revision vectors, and conflict-safe CAS resolution.
           </p>
