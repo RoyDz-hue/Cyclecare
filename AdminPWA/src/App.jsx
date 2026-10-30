@@ -368,6 +368,38 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
 
+  const marketingHome = (signedIn) => (
+    <div className="mkt">
+      <section className="mkt-hero">
+        <p className="mkt-eyebrow">CycleCare Admin</p>
+        <h1 className="font-editorial mkt-title">Every member's cycle, cared for in one calm place.</h1>
+        <p className="mkt-sub">
+          CycleCare is a private, offline-first cycle companion: members track their health on their own phones,
+          safety signals reach your review queue early, and Circles keep everyone supported. This is where you look after all of it.
+        </p>
+        <button type="button" className="btn btn-gold mkt-cta" onClick={() => setActiveTab(signedIn ? 'aci' : 'signin')}>
+          {signedIn ? 'Open ACI' : 'Sign in'}
+        </button>
+        <img className="mkt-art" src="/assets/home-hero.png" alt="The phases of a cycle shown as moons along an arc" />
+      </section>
+      <section className="mkt-grid">
+        <article className="mkt-card">
+          <h3>Private by design</h3>
+          <p>Cycle logs and pattern analysis stay on the member's own phone, in an encrypted local database.</p>
+        </article>
+        <article className="mkt-card">
+          <h3>Safety boundaries</h3>
+          <p>Clinical rules watch for concerning signals and bring them to your safety review queue.</p>
+        </article>
+        <article className="mkt-card">
+          <h3>Community support</h3>
+          <p>Circles and Community Guides keep members encouraged between check-ins.</p>
+        </article>
+      </section>
+    </div>
+  );
+
+
   if (!SUPABASE_CONFIG.url || !SUPABASE_CONFIG.anonKey) {
     return (
       <main className="auth-screen">
@@ -437,13 +469,7 @@ export default function App() {
       </main>
           ) : (
             <div className="content-body">
-              <section className="glass-card welcome-card">
-                <h1 className="font-editorial" style={{ fontSize: 28 }}>CycleCare Admin</h1>
-                <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                  One place to look after members, coins and safety. Sign in with an administrator account to continue.
-                </p>
-                <button type="button" className="btn btn-gold btn-block" onClick={() => setActiveTab('signin')}>Sign in</button>
-              </section>
+              {marketingHome(false)}
             </div>
           )}
         </main>
@@ -533,10 +559,10 @@ export default function App() {
           </button>
         </header>
 
-        {activeTab !== 'aci' && (
+        {activeTab !== 'aci' && activeTab !== 'home' && (
           <HomeScene
             summary={deriveTiers(controlData)}
-            mode={activeTab === 'home' ? 'home' : 'strip'}
+            mode={'strip'}
             loadState={dataLoadState}
             onOpenPlan={() => setActiveTab('users')}
             onHome={() => setActiveTab('home')}
@@ -550,6 +576,8 @@ export default function App() {
               <button type="button" className="btn btn-outline" style={{ marginTop: 10 }} onClick={fetchSupabaseData}>Retry</button>
             </div>
           )}
+
+          {activeTab === 'home' && marketingHome(true)}
 
           {activeTab === 'aci' && (
             <AdminCommand supabaseConfig={SUPABASE_CONFIG} onSessionChange={onAdminSessionChange} showNotification={showNotification} insights={controlData?.member_insights} counts={controlData?.counts} title="ACI" bare />
