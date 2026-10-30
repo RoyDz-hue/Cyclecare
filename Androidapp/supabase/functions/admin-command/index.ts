@@ -413,7 +413,8 @@ serve(async (req: Request) => {
     const tierAsk = asksTierCount(chatPrompt);
     if (tierAsk) {
       const { data: tc, error: tcErr } = await userClient.rpc("admin_member_count", { p_tier: tierAsk });
-      const msg = tcErr || typeof (tc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `You have ${(tc as any).total} ${tierAsk} members.`;
+      const unknown = typeof (tc as any)?.unknown === "number" ? (tc as any).unknown : 0;
+      const msg = tcErr || typeof (tc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `You have ${(tc as any).total} ${tierAsk} members.${unknown > 0 ? ` ${unknown} members have unclear wallet records and are not counted in any tier.` : ""}`;
       await persistMessage(admin, userId, "assistant", "chat", msg);
       return jsonResponse({ success: true, type: "chat", message: msg });
     }
@@ -456,6 +457,15 @@ serve(async (req: Request) => {
     // Action/analysis plan: run it through the same policy-gated propose flow.
     const steps = (planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
       tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} }));
+    // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
+    // never proposed, so a single approval can never silently execute several changes.
+    const writeSteps = (await Promise.all(steps.map((st) => toolKind(admin, st.tool)))).filter((kind) => kind !== "READ").length;
+    if (writeSteps > 1) {
+      const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
     let resolvedEmails: string[] = [];
     try { resolvedEmails = await bindRecipients(userClient, steps, chatPrompt + "\n" + recipientText, true); }
     catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
