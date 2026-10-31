@@ -97,10 +97,21 @@ function formatReviewValue(key, value, args) {
 // not offer Confirm. Plain wording, no internals, no blind retry advice.
 export function stepReviewBlocker(step) {
   const spec = SPEC_BY_NAME.get(step?.tool || '');
-  if (!spec) return 'I could not prepare a clear review of this change, so nothing was done and it cannot be approved.';
+  if (!spec) return 'I could not prepare a clear review of this change. This plan was not run and cannot be approved.';
   if (spec.kind === 'READ') return null;
   const lines = stepContentLines(step);
   const rendered = new Set(lines.map((l) => l.k));
+  const args = step?.args || {};
+  // Named recipients are part of informed approval: a member-targeted change
+  // needs resolved identities, never raw IDs or a bare count. (Message
+  // moderation targets have no member identity; their count is the content.)
+  const MEMBER_TARGET_TOOLS = new Set(['adjust_coins', 'set_user_status', 'set_user_tier', 'gift_artifact', 'send_notice']);
+  if (MEMBER_TARGET_TOOLS.has(step?.tool) && Array.isArray(args.targets) && args.targets.length > 0) {
+    const names = Array.isArray(args.target_names) ? args.target_names : [];
+    if (names.length !== args.targets.length) {
+      return 'I could not prepare a clear review of this change - the exact members are not named. This plan was not run and cannot be approved.';
+    }
+  }
   // Every label group covering an essential arg must render a real value.
   for (const arg of spec.essentialArgs) {
     const fields = spec.reviewFields.filter((f) => f.key === arg || (arg === 'targets' && f.key === 'target_names'));
@@ -108,7 +119,7 @@ export function stepReviewBlocker(step) {
     const covered = fields.some((f) => rendered.has(f.label));
     if (!covered) {
       const gap = fields[0].label.toLowerCase();
-      return `I could not prepare a clear review of this change - ${gap} is missing - so nothing was done and it cannot be approved.`;
+      return `I could not prepare a clear review of this change - ${gap} is missing. This plan was not run and cannot be approved.`;
     }
   }
   return null;

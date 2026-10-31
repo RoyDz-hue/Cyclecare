@@ -90,14 +90,55 @@ Deno.test("unknown tools fail closed: no verifier, unknown-tool executor error",
 
 Deno.test("validation: presence alone is not enough - values, enums, ranges, cross-field", () => {
   const P = (tool: string, args: unknown) => validateSteps([{ tool, args }]).map((p) => p.problem);
-  assert(P("adjust_coins", { targets: ["u1"] }).includes("missing delta"));
+  assert(P("adjust_coins", { targets: ["u1"] }).includes("I need the exact amount"));
   assert(P("adjust_coins", { targets: ["u1"], delta: 0 }).some((p) => p.includes("non-zero")));
   assert(P("adjust_coins", { targets: ["u1"], delta: 1.2345 }).some((p) => p.includes("decimal")));
   assert(P("adjust_coins", { targets: ["u1", "u2", "u3", "u4", "u5", "u6"], delta: 5 }).some((p) => p.includes("at most 5")));
-  assert(P("set_user_tier", { targets: ["u1"], tier: "GOLD" }).some((p) => p.includes("FREE/SUPPORTER/PREMIUM")));
+  assert(P("set_user_tier", { targets: ["u1"], tier: "GOLD" }).some((p) => p.includes("FREE, SUPPORTER, PREMIUM")));
   assert(P("send_notice", { title: "t", body: "b", audience: "ALL", targets: ["u1"] }).some((p) => p.includes("not both")));
-  assert(P("gift_all_coins", { delta: 0.5 }).some((p) => p.includes("1-10000")));
+  assert(P("gift_all_coins", { delta: 0.5 }).some((p) => p.includes("between 1 and 10,000 coins")));
   assert(P("made_up_tool", {}).some((p) => p.includes("unknown tool")));
   assertEquals(validateSteps([{ tool: "adjust_coins", args: { targets: ["u1"], delta: -50, reason: "r" } }]).length, 0);
   assertEquals(validateSteps([{ tool: "send_notice", args: { title: "t", body: "b", audience: "ALL" } }]).length, 0);
+});
+
+// Boundary matrix: the proposal stage and the executor MUST agree on every
+// combination. The executor calls use a mock backend; an accepted invalid
+// plan or a rejected valid one fails here.
+Deno.test("proposal validation and executor enforcement agree on every boundary case", async () => {
+  const rpc = () => Promise.resolve({ data: { message_id: "m1", success: true, details: { new_balance: 0 }, recipients: 1, total_coins: 1 }, error: null });
+  const cases: [string, Record<string, unknown>][] = [
+    ["adjust_coins", { targets: ["u1"], delta: -50, reason: "r" }],
+    ["adjust_coins", { targets: ["u1"], delta: 0 }],
+    ["adjust_coins", { targets: ["u1"], delta: 1.2345 }],
+    ["adjust_coins", { targets: [], delta: 5 }],
+    ["adjust_coins", { targets: ["u1", "u2", "u3", "u4", "u5", "u6"], delta: 5 }],
+    ["adjust_coins", { targets: ["u1"], delta: 10001 }],
+    ["gift_all_coins", { delta: 2, reason: "r" }],
+    ["gift_all_coins", { delta: 0.5 }],
+    ["gift_all_coins", { delta: -3 }],
+    ["deduct_all_coins", { delta: 4.1, reason: "r" }],
+    ["deduct_all_coins", { delta: 10001 }],
+    ["set_user_tier", { targets: ["u1"], tier: "PREMIUM" }],
+    ["set_user_tier", { targets: ["u1"], tier: "GOLD" }],
+    ["set_user_status", { targets: ["u1"], status: "SUSPENDED", duration_hours: 24 }],
+    ["set_user_status", { targets: ["u1"], status: "ASLEEP" }],
+    ["send_notice", { title: "t", body: "b", audience: "ALL" }],
+    ["send_notice", { title: "t", body: "b", audience: "ALL", targets: ["u1"] }],
+    ["send_notice", { body: "b", audience: "ALL" }],
+    ["moderate_message", { targets: ["m1"], action: "REMOVE" }],
+    ["moderate_message", { targets: ["m1"], action: "SHRED" }],
+    ["set_coin_packages", { packages: [{ id: "p1" }] }],
+    ["set_coin_packages", { packages: [] }],
+    ["set_guides_enabled", { enabled: true }],
+    ["set_guides_enabled", { enabled: "yes" }],
+    ["gift_artifact", { targets: ["u1"], artifact_name: "Rose Obelisk" }],
+    ["gift_artifact", { targets: ["u1"], artifact_name: "Invisible Crown" }],
+  ];
+  for (const [tool, args] of cases) {
+    const proposalOk = validateSteps([{ tool, args }]).length === 0;
+    const out = await executeStep({ rpc }, tool, args);
+    const executorOk = out.ok === true;
+    assertEquals(executorOk, proposalOk, `${tool} ${JSON.stringify(args)}: proposal ${proposalOk} vs executor ${executorOk}`);
+  }
 });

@@ -114,3 +114,12 @@ test('unknown or contentless writes fail closed: no Confirm path, plain wording'
   assert.equal(planReviewBlocker([{ tool: 'get_user_insights', args: {} }]), null); // reads never block
   assert.equal(planReviewBlocker([{ tool: 'adjust_coins', args: { delta: -5, targets: ['u1'], target_names: ['Amina'], reason: 'r' } }]), null);
 });
+
+test('named-recipient changes require resolved identities, never a bare count', () => {
+  const blocked = planReviewBlocker([{ tool: 'adjust_coins', args: { delta: 5, targets: ['u1', 'u2'], reason: 'r' } }]);
+  assert.ok(blocked && blocked.includes('exact members are not named') && blocked.includes('not run'));
+  assert.equal(planReviewBlocker([{ tool: 'adjust_coins', args: { delta: 5, targets: ['u1', 'u2'], target_names: ['Amina', 'Brian'], reason: 'r' } }]), null);
+  assert.ok(planReviewBlocker([{ tool: 'send_notice', args: { title: 't', body: 'b', targets: ['u1'] } }]));
+  // Moderation acts on messages, not members: a count is the exact content.
+  assert.equal(planReviewBlocker([{ tool: 'moderate_message', args: { action: 'REMOVE', targets: ['m1'] } }]), null);
+});

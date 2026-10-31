@@ -181,9 +181,18 @@ export function giftAllVerified(result: any, args: any): boolean {
   return Math.round(total * 1000) === Math.round(delta * 1000) * gifted && (snapshot === null ? gifted > 0 : gifted === snapshot);
 }
 
+import { specFor, validateStep } from "./admin-tool-spec.ts";
+
 export async function executeStep(userClient: any, tool: string, args: any, includeGuides = false): Promise<{ ok: boolean; result?: unknown; error?: string }> {
   const rpc = (name: string, params: Record<string, unknown>) => userClient.rpc(name, params);
   const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
+  // One rule set: the same spec argRules that gate proposals also gate
+  // execution, so review and execution can never disagree on validity.
+  const spec = specFor(tool);
+  if (spec && spec.kind !== "READ") {
+    const problems = validateStep(spec, args ?? {});
+    if (problems.length > 0) return { ok: false, error: problems.map((p) => p.problem).join("; ") };
+  }
   try {
     switch (tool) {
       case "get_member_count": {
@@ -228,7 +237,6 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
           let out;
           if (tool === "adjust_coins") {
             const delta = Number(args?.delta);
-            if (!Number.isFinite(delta) || delta === 0 || coinDecimals(delta) > 3) { results.push({ target, ok: false, error: "coin delta must be a non-zero amount with up to 3 decimal places" }); continue; }
             out = await rpc("admin_apply_action", { p_action: "COINS", p_target_user_id: target, p_payload: { delta, reason: String(args?.reason ?? "Admin Command") } });
           }
           else if (tool === "set_user_status") out = await rpc("admin_apply_action", { p_action: "STATUS", p_target_user_id: target, p_payload: { status: String(args?.status ?? ""), reason: args?.reason ?? null, duration_hours: args?.duration_hours ?? null } });
@@ -245,7 +253,6 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
       case "deduct_all_coins": {
         const deduct = tool === "deduct_all_coins";
         const delta = Number(args?.delta);
-        if (!Number.isFinite(delta) || delta < 1 || delta > 10000 || coinDecimals(delta) > 3) return { ok: false, error: `${deduct ? "deduction" : "gift"} delta must be 1-10,000 coins with up to 3 decimal places` };
         const { data, error } = await rpc(deduct ? "admin_deduct_all_coins" : "admin_gift_all_coins", {
           p_delta: delta,
           p_reason: String(args?.reason ?? ""),
