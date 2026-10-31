@@ -127,6 +127,19 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  return {success:true,type:"plan",run_id:st.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
 }
 
+// Planner-emitted gift_all_coins steps carry only {delta, reason}. Fill the
+// idempotency run key here and leave recipients absent so the SQL function
+// snapshots the membership atomically at execution time.
+export function normalizeSteps(steps: any[]): any[] {
+  return (steps ?? []).map((st: any) => {
+    if (String(st?.tool ?? "") !== "gift_all_coins") return st;
+    const args = (st?.args && typeof st.args === "object") ? { ...st.args } : {};
+    if (typeof args.run_key !== "string" || !args.run_key.trim()) args.run_key = crypto.randomUUID();
+    if (!Array.isArray(args.recipients) || !args.recipients.length) delete args.recipients;
+    return { ...st, args };
+  });
+}
+
 export function giftAllVerified(result: any, args: any): boolean {
   const gifted = typeof result?.recipients === "number" ? result.recipients : null;
   const snapshot = Array.isArray(args?.recipients) ? args.recipients.length : null;

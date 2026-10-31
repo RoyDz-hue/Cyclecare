@@ -1,6 +1,6 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
-import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, giftAllVerified, normalizeSteps, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -25,6 +25,7 @@ Available tools (use only these, with only these args):
 - set_coin_packages {packages: [{id, title, coins, bonus_coins, price_kes, price_usd, tag?}]} - REPLACE the price list (psychological pricing rules apply).
 - set_cosmetic_price {item_id, price_coins?, is_active?} - change one cosmetic.
 - adjust_coins {targets: [user_id,...], delta: number (up to 3 decimal places), reason} - grant (positive) or deduct (negative) coins; max 10000 per step, max 5 targets.
+- gift_all_coins {delta: number (up to 3 decimal places), reason} - gift coins to EVERY member at once; always use this for an all-users gift, never adjust_coins; no targets needed.
 - set_user_status {targets: [user_id,...], status: "ACTIVE"|"SUSPENDED"|"BANNED", reason?, duration_hours?} - max 5 targets.
 - set_user_tier {targets: [user_id,...], tier: "FREE"|"SUPPORTER"|"PREMIUM"} - max 5 targets.
 - gift_artifact {targets: [user_id,...], artifact_name: "Luminescent Moon"|"Golden Blossom"|"Rose Obelisk"|"Dual Eclipse"|"Celestial Tiara", artifact_rarity?}
@@ -476,8 +477,8 @@ serve(async (req: Request) => {
       return jsonResponse({ success: true, type: planned.kind, message: planned.text });
     }
     // Action/analysis plan: run it through the same policy-gated propose flow.
-    const steps = (planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
-      tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} }));
+    const steps = normalizeSteps((planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
+      tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} })));
     // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
     // never proposed, so a single approval can never silently execute several changes.
     if (await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
@@ -529,8 +530,8 @@ serve(async (req: Request) => {
     await persistMessage(admin, userId, "assistant", "chat", planned.text);
     return jsonResponse({ success: true, type: planned.kind, message: planned.text });
   }
-  const steps = (planned.plan.steps as any[]).slice(0, 15).map((s: any) => ({
-    tool: String(s?.tool ?? ""), label: String(s?.label ?? s?.tool ?? "").slice(0, 140), args: (s?.args && typeof s.args === "object") ? s.args : {} }));
+  const steps = normalizeSteps((planned.plan.steps as any[]).slice(0, 15).map((s: any) => ({
+    tool: String(s?.tool ?? ""), label: String(s?.label ?? s?.tool ?? "").slice(0, 140), args: (s?.args && typeof s.args === "object") ? s.args : {} })));
   let resolvedEmails: string[] = [];
   try { resolvedEmails = await bindRecipients(userClient, steps, prompt, true); }
   catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }

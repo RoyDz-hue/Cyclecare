@@ -273,3 +273,39 @@ Deno.test("executeStep refuses more than 3 decimals instead of rounding", async 
   assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins" || c.name === "admin_apply_action").length, 0, "no RPC left the edge");
   assertEquals(rpcCalls.length, before, "no RPC calls at all");
 });
+
+Deno.test("verbose all-users directive (hyphenated amount, per-user, noun verbs) proposes a plan, not a typed question", async () => {
+  const { admin, userClient } = makeClients();
+  const out = await coinDialog(admin, userClient, "admin-1",
+    "Broo, I hereby issue an unequivocal directive for the deterministic, atomic, and globally scoped orchestration of a 4.6-coin per-user entitlement allocation, requiring immediate propagation across the complete eligible-user cardinality, with idempotent execution, transactional integrity, invariant preservation, and zero tolerance for partial, duplicated, or semantically divergent settlement states.");
+  assertEquals(out?.type, "plan", "the whole directive becomes one review card");
+  assertEquals(out?.plan?.steps?.[0]?.tool, "gift_all_coins");
+  assertEquals(out?.plan?.steps?.[0]?.args?.delta, 4.6, "4.6 preserved exactly");
+});
+
+Deno.test("per-user / each user / hyphenated amount phrasings parse as all-scope gifts", async () => {
+  const { parseCoinRequest } = await import("./coin-dialog.js");
+  assertEquals(parseCoinRequest("Disburse 1.5 coins per user")?.scope, "all");
+  assertEquals(parseCoinRequest("Disburse 1.5 coins per user")?.delta, 1.5);
+  assertEquals(parseCoinRequest("Gift 2 coins to each user")?.scope, "all");
+  assertEquals(parseCoinRequest("Allocation of a 3.25-coin grant to all eligible members")?.delta, 3.25);
+  assertEquals(parseCoinRequest("Credit 10 coins across all our users")?.scope, "all");
+});
+
+Deno.test("questions about coins are never parsed as gift directives", async () => {
+  const { parseCoinRequest } = await import("./coin-dialog.js");
+  assertEquals(parseCoinRequest("Did you give all users 5 coins?"), null);
+  assertEquals(parseCoinRequest("How many coins does Kevin have?"), null);
+  assertEquals(parseCoinRequest("What is the price of 100 coins?"), null);
+  assertEquals(parseCoinRequest("Can you gift everyone 2 coins?"), null, "a request phrased as a question is not a directive");
+});
+
+Deno.test("normalizeSteps fills the gift run key and lets SQL snapshot recipients", async () => {
+  const { normalizeSteps } = await import("./admin-command-flow.ts");
+  const [st] = normalizeSteps([{ tool: "gift_all_coins", label: "Gift 4.6 coins to every member", args: { delta: 4.6, reason: "Test" } }]);
+  assertEquals(typeof st.args.run_key, "string");
+  assertEquals(st.args.run_key.length > 0, true, "idempotency key is never empty");
+  assertEquals("recipients" in st.args, false, "absent recipients lets SQL snapshot atomically");
+  const other = normalizeSteps([{ tool: "adjust_coins", label: "x", args: { targets: ["u"], delta: 1 } }]);
+  assertEquals(other[0].args.run_key, undefined, "other tools untouched");
+});

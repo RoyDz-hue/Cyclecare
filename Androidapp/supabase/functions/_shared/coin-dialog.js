@@ -5,7 +5,7 @@ export function parseCoinRequest(text) {
   if(m)return {scope:'all',delta:-Number(m[2]),query:null,reason:m[3]?.trim()||null};
   m=t.match(/^(deduct|remove|take)\s+(\d+(?:\.\d+)?)\s*(?:coins?\s*)?from\s+(.+?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:-Number(m[2]),query:m[3].trim().replace(/(?:['’]s)?\s+(?:ledger|wallet|account)\s*$/i,''),reason:m[4]?.trim()||null};
-  m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\s*(?:each)?|(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\s+(\d+(?:\.\d+)?)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
+  m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s*(?:each)?|(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s+(\d+(?:\.\d+)?)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {scope:'all',delta:Number(m[2]||m[3]),query:null,reason:m[4]?.trim()||null};
   m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:any\s+|a\s+)?random\s+(?:user|member|person)|(?:any\s+|a\s+)?random\s+(?:user|member|person)\s+(\d+(?:\.\d+)?)\s*coins?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:Number(m[2]||m[3]),query:null,random:true,reason:m[4]?.trim()||null};
@@ -14,11 +14,14 @@ export function parseCoinRequest(text) {
   // Natural-language fallback: a coin amount plus a clear scope or verb anywhere
   // in the sentence, however it is phrased. Decimals stay exact; the flow
   // enforces the 3-decimal limit without rounding.
-  const amt=t.match(/(\d+(?:\.\d+)?)\s*coins?\b/i);
-  const allScope=/\b(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\b/i.test(t);
-  const deduct=/\b(?:deduct|remove|take\s+back|take|claw\s*back)\b/i.test(t);
-  const giveVerb=/\b(?:give|grant|gift|git|credit|award|send|disburse|distribute|pay|drop|allocate)\b/i.test(t);
-  if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t))){
+  // Questions are never directives: "did you give all users 5 coins?" asks
+  // about the past, it does not order a gift. Skip the fallback for them.
+  if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|can|could|will|would|should|has|have|had|am)\b/i.test(t))return null;
+  const amt=t.match(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i);
+  const allScope=/\b(?:all\s+(?:[\w-]+\s+){0,3}(?:users?|members?)|everyone|everybody|every\s+(?:[\w-]+\s+){0,2}(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|the\s+whole\s+(?:community|team)|across\s+(?:[\w-]+\s+){0,4}(?:users?|members?))\b/i.test(t);
+  const deduct=/\b(?:deduct|deduction|debit|remove|take\s+back|take|claw\s*back)\b/i.test(t);
+  const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits)\b/i.test(t);
+  if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
     return {scope:'all',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
   }
   if(amt&&giveVerb&&/\b(?:any\s+|a\s+)?random\s+(?:user|member|person)\b/i.test(t)){
