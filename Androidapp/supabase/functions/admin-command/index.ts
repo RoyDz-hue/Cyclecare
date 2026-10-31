@@ -3,6 +3,7 @@ import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, is
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, validateSteps } from "../_shared/admin-tool-spec.ts";
+import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -500,6 +501,21 @@ serve(async (req: Request) => {
       const msg = "I cannot prepare that safely: " + argProblems.map((p) => p.problem).join("; ") + ". No change was made.";
       await persistMessage(admin, userId, "assistant", "chat", msg);
       return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
+    // Amount-source hygiene: the planner picked a number, but the admin's own
+    // words decide whether that number is really a coin amount. A date,
+    // ordinal, fiat figure or identifier is never an amount; clarify instead
+    // of proposing. Same rule family as the deterministic parser.
+    for (const step of steps) {
+      const amountArgs = [step?.args?.amount, step?.args?.delta].filter((v) => typeof v === "number");
+      for (const value of amountArgs) {
+        const problem = amountSourceProblem(amountSourceFlags(chatPrompt, value as number));
+        if (problem) {
+          const msg = `I am not sure the number ${value} is the coin amount you meant: ${problem}. Please restate the exact coin amount - nothing was changed.`;
+          await persistMessage(admin, userId, "assistant", "chat", msg);
+          return jsonResponse({ success: true, type: "clarify", message: msg });
+        }
+      }
     }
     const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
     if (proposeError) {
