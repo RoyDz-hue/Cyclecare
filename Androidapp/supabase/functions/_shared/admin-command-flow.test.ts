@@ -1,6 +1,7 @@
 // Mocked end-to-end conversation tests: no network, no model calls, no real member rows.
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
-import { coinDialog, executeStep, planHasMultipleWrites, runWritesSequential } from "./admin-command-flow.ts";
+import { classifyIntent, coinDialog, executeStep, planHasMultipleWrites, resolveWorkflowGate, runWritesSequential } from "./admin-command-flow.ts";
+import { matchWorkflow } from "./admin-tool-spec.ts";
 
 const PROFILES = [{ user_id: "u-1" }, { user_id: "u-2" }, { user_id: "u-3" }];
 
@@ -457,4 +458,53 @@ Deno.test("runWritesSequential: UNCONFIRMED first write (verified null) halts ch
   assertEquals(order, ["gift_all_coins"]);
   assertEquals(res[0].verified, null);
   assertEquals(res[1].skipped, true);
+});
+
+// Workflow gate against the REAL spec matcher: the same function the entry
+// path calls, with mocked steps (no network, no inference).
+const WF_STEPS = () => ([
+  { tool: "gift_all_coins", args: { delta: 5, reason: "thank-you" } },
+  { tool: "send_notice", args: { audience: "ALL", title: "Gift", body: "We gifted you 5 coins." } },
+]);
+
+Deno.test("workflow gate: explicit both-intent is allowed", () => {
+  const g = resolveWorkflowGate("gift everyone 5 coins and announce it to all members", WF_STEPS(), matchWorkflow);
+  assertEquals(g.kind, "allow");
+  assertEquals(g.kind === "allow" && g.workflow, "gift_all_with_notice");
+  assertEquals(resolveWorkflowGate("gift everyone 5 coins and let them know", WF_STEPS(), matchWorkflow).kind, "allow");
+});
+Deno.test("workflow gate: unrequested notice invented by planner is DROPPED, gift proceeds alone", () => {
+  const g = resolveWorkflowGate("gift everyone 5 coins as a loyalty thank-you", WF_STEPS(), matchWorkflow);
+  assertEquals(g.kind, "drop");
+  assertEquals(g.kind === "drop" && g.steps.map((s: any) => s.tool), ["gift_all_coins"]);
+});
+Deno.test("workflow gate: negated notice ('don't notify anyone') drops the notice, never clarifies", () => {
+  const g = resolveWorkflowGate("gift everyone 5 coins but don't notify anyone", WF_STEPS(), matchWorkflow);
+  assertEquals(g.kind, "drop");
+  assertEquals(g.kind === "drop" && g.steps.length, 1);
+});
+Deno.test("workflow gate: quoted tell-word and capability question are NOT broadcast approval", () => {
+  assertEquals(resolveWorkflowGate("say 'tell them good morning' and gift everyone 5 coins", WF_STEPS(), matchWorkflow).kind, "clarify");
+  assertEquals(resolveWorkflowGate("can you gift everyone 5 coins and announce it?", WF_STEPS(), matchWorkflow).kind, "clarify");
+});
+Deno.test("workflow gate: negated gift never proceeds, fail closed", () => {
+  assertEquals(resolveWorkflowGate("don't gift anyone, just send the announcement", WF_STEPS(), matchWorkflow).kind, "clarify");
+});
+Deno.test("workflow gate: off-constraint or non-workflow plans fall through to normal guards", () => {
+  const offConstraint = [
+    { tool: "gift_all_coins", args: { delta: 5 } },
+    { tool: "send_notice", args: { audience: "FREE", title: "t", body: "b" } },
+  ];
+  assertEquals(resolveWorkflowGate("gift everyone 5 coins and announce it", offConstraint, matchWorkflow).kind, "none");
+  const nonWorkflow = [
+    { tool: "adjust_coins", args: { targets: ["u1"], delta: 5, reason: "r" } },
+    { tool: "send_notice", args: { audience: "ALL", title: "t", body: "b" } },
+  ];
+  assertEquals(resolveWorkflowGate("give u1 5 coins and announce it", nonWorkflow, matchWorkflow).kind, "none");
+});
+Deno.test("classifyIntent: negation, quotes and questions per write", () => {
+  assertEquals(classifyIntent("announce it to everyone", /\bannounce\b/), "requested");
+  assertEquals(classifyIntent("don't announce anything", /\bannounce\b/), "forbidden");
+  assertEquals(classifyIntent("what does announce mean?", /\bannounce\b/), "ambiguous");
+  assertEquals(classifyIntent("gift 5 coins", /\bannounce\b/), "absent");
 });

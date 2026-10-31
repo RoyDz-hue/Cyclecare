@@ -21,6 +21,7 @@ export function PlanMessage({ message, busy, onApprove, onReject }) {
         {risk === 'risky' && <ShieldAlert size={16} color="var(--rose-pink)" />}
         {message.meta?.requires_approval === false ? 'Read-only check' : 'Review this plan before anything changes'}
       </h4>
+      {message.meta?.note && <p className="chat-plan-note">{message.meta.note}</p>}
       <ol className="chat-plan-steps">
         {plan.steps.map((s, i) => (
           <li key={i}>
@@ -224,7 +225,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
       } else if (res?.type === 'plan' || res?.run_id) {
         const planMsg = {
           id: `p-${res.run_id}`, echo: true, role: 'assistant', kind: 'plan', content: res.summary || '', run_id: res.run_id,
-          meta: { steps: res.plan?.steps || res.steps || [], requires_approval: res.requires_approval !== false },
+          meta: { steps: res.plan?.steps || res.steps || [], requires_approval: res.requires_approval !== false, ...(res.note ? { note: res.note } : {}) },
           created_at: new Date().toISOString(),
         };
         const next = [...base, planMsg];

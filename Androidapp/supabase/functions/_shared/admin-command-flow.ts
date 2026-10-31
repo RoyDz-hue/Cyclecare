@@ -330,3 +330,76 @@ export async function runWritesSequential(
   }
   return indexed;
 }
+
+// Workflow intent gate. A registered workflow (fixed multi-write sequence) is
+// only proposed when the administrator's own words explicitly request EVERY
+// write in it. Intent classification is per-write and fail-closed:
+//   requested  - the intent word appears unnegated, unquoted, in a directive
+//   forbidden  - the intent word appears negated ("but don't notify anyone")
+//   ambiguous  - the word appears only quoted, or the whole message is a
+//                question/capability probe ("can you gift and announce?")
+//   absent     - no intent word at all
+// forbidden/absent means the planner INVENTED that write: drop it and proceed
+// with the rest (the plan then matches exactly what was asked). ambiguous is
+// the only case that asks. A dropped write is never executed.
+export type IntentClass = "requested" | "forbidden" | "ambiguous" | "absent";
+
+const NEGATION_RX = /(?:don't|do\s+not|didn't|doesn't|never|no\s+need|without|skip|avoid|refrain|not)\W{0,12}$/i;
+const QUESTION_START_RX = /^(?:can|could|would|should|will|shall|is|are|do|does|did|what|what's|how|who|when|why|which)\b/i;
+
+export function classifyIntent(prompt: string, keywords: RegExp): IntentClass {
+  const t = prompt.trim();
+  const rx = new RegExp(keywords.source, "ig");
+  let sawNegated = false, sawWeak = false;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(t)) !== null) {
+    const before = t.slice(0, m.index);
+    // Quoted words are reported speech, not the admin's instruction.
+    // Apostrophes inside words ("don't") are not quotes; only a quote that
+    // opens a span (start/whitespace/paren before it) counts.
+    const quotesBefore = (before.match(/["“”`]|(?:^|[\s(])'/g) ?? []).length;
+    if (quotesBefore % 2 === 1) { sawWeak = true; continue; }
+    if (NEGATION_RX.test(before.slice(-40))) { sawNegated = true; continue; }
+    // A message phrased as a question is a probe, never an approval.
+    if (QUESTION_START_RX.test(t) || /\?\s*$/.test(t)) { sawWeak = true; continue; }
+    return "requested";
+  }
+  if (sawNegated) return "forbidden";
+  if (sawWeak) return "ambiguous";
+  return "absent";
+}
+
+const GIFT_INTENT_RX = /\b(?:gift|gifts|give|grant|credit|award|top\s*up|bonus|coins?)\b/;
+const NOTIFY_INTENT_RX = /\b(?:announce|announcement|announcements|notify|notification|notice|notices|tell|inform|let\s+them\s+know|broadcast)\b/;
+
+export type WorkflowGate =
+  | { kind: "none" }
+  | { kind: "allow"; workflow: string }
+  | { kind: "drop"; steps: any[] }
+  | { kind: "clarify"; message: string };
+
+// Dependencies on matchWorkflow are injected to keep this module free of the
+// spec import cycle; index.ts passes the real matcher.
+export function resolveWorkflowGate(
+  prompt: string,
+  steps: any[],
+  match: (steps: any[]) => string | null,
+): WorkflowGate {
+  const wf = match(steps);
+  if (!wf) return { kind: "none" };
+  if (wf === "gift_all_with_notice") {
+    const gift = classifyIntent(prompt, GIFT_INTENT_RX);
+    const notice = classifyIntent(prompt, NOTIFY_INTENT_RX);
+    if (gift !== "requested") {
+      // The gift half itself is not an explicit directive: never proceed.
+      return { kind: "clarify", message: "I could not tell whether you actually want me to gift coins. Please say exactly what you want - nothing was done." };
+    }
+    if (notice === "requested") return { kind: "allow", workflow: wf };
+    if (notice === "ambiguous") {
+      return { kind: "clarify", message: "Do you also want me to send everyone an announcement about the gift, or just make the gift? Nothing was done." };
+    }
+    // forbidden or absent: the notice was never requested - drop it, keep the gift.
+    return { kind: "drop", steps: (steps ?? []).filter((st) => String(st?.tool) !== "send_notice") };
+  }
+  return { kind: "none" }; // unknown workflow: fail closed to normal guards
+}
