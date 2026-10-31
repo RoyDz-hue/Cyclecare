@@ -14,6 +14,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
 import { isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
 import { AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2, loadAgentPrompt, recordAiRun } from "../_shared/ai-core.ts";
+import { capConversation, extractUsage, TokenUsage } from "../_shared/ai-cost.ts";
 
 type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
 
@@ -25,7 +26,7 @@ function fnv1a(input: string): number {
   return hash >>> 0;
 }
 
-type ProviderOutcome = { text: string | null; errorKind: string | null };
+type ProviderOutcome = { text: string | null; errorKind: string | null; usage: TokenUsage | null };
 
 function httpErrorKind(status: number): string {
   return status === 429 ? "http_429" : status >= 500 ? "http_5xx" : "http_4xx";
@@ -41,10 +42,10 @@ async function callProvider(provider: ProviderId, apiKey: string, system: string
         method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, signal: controller.signal,
         body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1500 } }),
       });
-      if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status) };
+      if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: unknown }) => typeof p?.text === "string" ? p.text : "").join("")?.trim() || null;
-      return { text, errorKind: text ? null : "empty" };
+      return { text, errorKind: text ? null : "empty", usage: extractUsage("GEMINI", data) };
     }
     const endpoint = provider === "COHERE" ? "https://api.cohere.com/v2/chat" : "https://openrouter.ai/api/v1/chat/completions";
     const model = provider === "COHERE" ? "command-a-03-2025" : "openai/gpt-4.1-mini";
@@ -53,39 +54,45 @@ async function callProvider(provider: ProviderId, apiKey: string, system: string
       body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 1500,
         ...(provider === "OPENROUTER" ? { provider: { only: ["openai"], allow_fallbacks: false, data_collection: "deny", zdr: true } } : {}) }),
     });
-    if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status) };
+    if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
     const data = await res.json();
     const raw = provider === "COHERE" ? data?.message?.content : data?.choices?.[0]?.message?.content;
     const joined = Array.isArray(raw) ? raw.map((c: { text?: unknown }) => typeof c?.text === "string" ? c.text : "").join("") : raw;
     const text = typeof joined === "string" && joined.trim() ? joined.trim() : null;
-    return { text, errorKind: text ? null : "empty" };
-  } catch { return { text: null, errorKind: "network" }; } finally { clearTimeout(timer); }
+    return { text, errorKind: text ? null : "empty", usage: extractUsage(provider, data) };
+  } catch { return { text: null, errorKind: "network", usage: null }; } finally { clearTimeout(timer); }
 }
 
 type PlannerResult =
-  | { kind: "steps"; plan: any; provider: string }
-  | { kind: "chat" | "clarify"; text: string; provider: string };
+  | { kind: "steps"; plan: any; provider: string; usage: TokenUsage | null; attempts: number }
+  | { kind: "chat" | "clarify"; text: string; provider: string; usage: TokenUsage | null; attempts: number };
 
 async function planWithProviders(admin: any, userId: string, system: string, user: string, promptVersion: string): Promise<PlannerResult | null> {
   const keys: Record<ProviderId, string | undefined> = { GEMINI: Deno.env.get("GEMINI_API_KEY"), COHERE: Deno.env.get("COHERE_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY") };
   const configured = (Object.keys(keys) as ProviderId[]).filter((p) => isConfiguredSecret(keys[p]));
   if (configured.length === 0) return null;
   const start = (fnv1a(userId) + Math.floor(Date.now() / 600_000)) % configured.length;
+  // Hard per-request budget: each configured provider is tried at most ONCE,
+  // so one admin message can never cost more than `configured.length` calls
+  // (max 3), each capped at 1,500 output tokens and a 25s timeout.
+  let attempts = 0;
   for (const provider of configured.map((_, i) => configured[(start + i) % configured.length])) {
+    attempts++;
     const attemptStart = Date.now();
-    const { text, errorKind } = await callProvider(provider, keys[provider]!, system, user);
+    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user);
     const logFailure = (kind: string) => void recordAiRun(admin, {
       agent: AGENT_ADMIN_COMMAND, userId, provider, promptVersion, status: "failed",
-      errorKind: kind, latencyMs: Date.now() - attemptStart });
+      errorKind: kind, latencyMs: Date.now() - attemptStart,
+      meta: { attempts, usage } }); // schema failures still burned tokens - account for them
     if (!text) { logFailure(errorKind ?? "empty"); continue; }
     const cleaned = text.replace(/```[a-z]*\n?/gi, "").trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) { logFailure("invalid_schema"); continue; }
     try {
       const parsed = JSON.parse(match[0]);
-      if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return { kind: "steps", plan: parsed, provider };
-      if (parsed && typeof parsed.chat === "string" && parsed.chat.trim()) return { kind: "chat", text: parsed.chat.trim(), provider };
-      if (parsed && typeof parsed.clarify === "string" && parsed.clarify.trim()) return { kind: "clarify", text: parsed.clarify.trim(), provider };
+      if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return { kind: "steps", plan: parsed, provider, usage, attempts };
+      if (parsed && typeof parsed.chat === "string" && parsed.chat.trim()) return { kind: "chat", text: parsed.chat.trim(), provider, usage, attempts };
+      if (parsed && typeof parsed.clarify === "string" && parsed.clarify.trim()) return { kind: "clarify", text: parsed.clarify.trim(), provider, usage, attempts };
     } catch { /* fall through to schema failure */ }
     logFailure("invalid_schema");
   }
@@ -429,8 +436,8 @@ serve(async (req: Request) => {
     const { data: recent } = await admin.from("admin_command_messages")
       .select("role,content").eq("admin_user_id", userId)
       .order("created_at", { ascending: false }).limit(24);
-    const convo = (recent ?? []).reverse()
-      .map((m: any) => `${m.role === "user" ? "Admin" : "Assistant"}: ${String(m.content ?? "").slice(0, 800)}`).join("\n");
+    const convo = capConversation((recent ?? []).reverse()
+      .map((m: any) => `${m.role === "user" ? "Admin" : "Assistant"}: ${String(m.content ?? "").slice(0, 800)}`), 4000).join("\n");
     const recipientText = (recent ?? []).filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n") + "\n" + chatPrompt;
     const recipients = await recipientContext(userClient, recipientText);
     const nameCandidates = JSON.stringify(nameCheck.candidates);
@@ -446,7 +453,7 @@ serve(async (req: Request) => {
       return jsonResponse({ success: false, type: "chat", message: sorry }, 503);
     }
     if (planned.kind === "chat" || planned.kind === "clarify") {
-      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started });
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
       await persistMessage(admin, userId, "assistant", "chat", planned.text);
       return jsonResponse({ success: true, type: planned.kind, message: planned.text });
     }
@@ -495,7 +502,7 @@ serve(async (req: Request) => {
       await persistMessage(admin, userId, "assistant", "chat", `I couldn't prepare that safely: ${proposeError.message}`);
       return jsonResponse({ error: proposeError.message, plan_rejected: true }, 422);
     }
-    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length } });
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length, usage: planned.usage, attempts: planned.attempts } });
     const runId = (proposed as any)?.run_id;
     const summary = summarizePlan({ steps });
     const needsApproval = (proposed as any)?.requires_approval !== false;
@@ -524,7 +531,7 @@ serve(async (req: Request) => {
     return jsonResponse({ error: "The planner is temporarily unavailable. Try again in a moment." }, 503);
   }
   if (planned.kind !== "steps") {
-    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started });
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
     await persistMessage(admin, userId, "user", "chat", prompt);
     await persistMessage(admin, userId, "assistant", "chat", planned.text);
     return jsonResponse({ success: true, type: planned.kind, message: planned.text });
@@ -555,7 +562,7 @@ serve(async (req: Request) => {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
     return jsonResponse({ error: proposeError.message, plan_rejected: true }, 422);
   }
-  void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length } });
+  void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length, usage: planned.usage, attempts: planned.attempts } });
   const runId = (proposed as any)?.run_id;
   if ((proposed as any)?.requires_approval === false) {
     const outcome = await executeRun(admin, userClient, runId, userId);
