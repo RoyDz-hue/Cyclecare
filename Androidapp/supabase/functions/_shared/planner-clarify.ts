@@ -16,6 +16,8 @@ export function sanitizeClarifyText(text: string): { text: string; sanitized: bo
   return { text: trimmed, sanitized: false };
 }
 
+import { amountCandidates } from "./amount-hygiene.js";
+
 // Structured clarify: the planner reports WHICH essentials are missing using
 // plain field names; the response is composed here from canonical asks, never
 // from the model's free text. This is the resolution mechanism - the sanitizer
@@ -52,4 +54,20 @@ export function composeMissingClarify(missing: unknown): string | null {
   }
   if (asks.length === 0) return null;
   return asks.join(" ") + " Nothing was changed.";
+}
+
+// Server-side truth check on the planner's missing list: a field the admin
+// ALREADY supplied is never asked for again, whatever the model claimed. Only
+// verifiable fields are filtered (amount, recipient); the rest pass through.
+export function filterActuallyMissing(missing: unknown, prompt: string, hasResolvedRecipient: boolean): unknown {
+  if (!Array.isArray(missing)) return missing;
+  return missing.filter((m) => {
+    const f = String(m).toLowerCase().trim();
+    if (f === "amount") {
+      if (/\d+(?:\.\d+)?\s*coins?\b/i.test(prompt)) return false; // "5 coins" written
+      if (amountCandidates(prompt).length === 1) return false; // one plausible amount present
+    }
+    if (f === "recipient" && hasResolvedRecipient) return false;
+    return true;
+  });
 }

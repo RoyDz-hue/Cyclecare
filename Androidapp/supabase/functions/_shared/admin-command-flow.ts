@@ -301,3 +301,32 @@ export async function planHasMultipleWrites(steps: any[], kindOf: (tool: string)
   const kinds = await Promise.all((steps ?? []).map((st) => kindOf(String(st?.tool ?? ""))));
   return kinds.filter((k) => k !== "READ").length > 1;
 }
+
+// Sequential WRITE execution with dependency semantics: steps run in declared
+// plan order, and the FIRST failed or unconfirmed write stops the chain -
+// later writes are marked skipped, never attempted, so a dependent step (for
+// example a notice announcing a gift) can never run when its prerequisite did
+// not complete confirmed. Recovery is a NEW reviewed plan, never a replay:
+// the caller's claim guard makes each run execute at most once.
+export type WriteExecResult = { ok: boolean; result?: unknown; error?: string; verified?: boolean | null; skipped?: boolean };
+
+export async function runWritesSequential(
+  writes: { index: number; step: any }[],
+  exec: (tool: string, args: any) => Promise<{ ok: boolean; result?: unknown; error?: string }>,
+  verify: (tool: string, args: any, result: unknown) => Promise<boolean | null>,
+): Promise<Record<number, WriteExecResult & { tool: string; label: string; kind: string }>> {
+  const indexed: Record<number, WriteExecResult & { tool: string; label: string; kind: string }> = {};
+  let halted = false;
+  for (const { index, step } of writes) {
+    const tool = String(step?.tool ?? "");
+    if (halted) {
+      indexed[index] = { tool, label: step?.label ?? tool, kind: "WRITE", ok: false, skipped: true, error: "Skipped: an earlier step did not complete confirmed" };
+      continue;
+    }
+    const out = await exec(tool, step?.args ?? {});
+    const verified = out.ok ? await verify(tool, step?.args ?? {}, out.result) : null;
+    indexed[index] = { tool, label: step?.label ?? tool, kind: "WRITE", verified, ...out };
+    if (!out.ok || verified !== true) halted = true;
+  }
+  return indexed;
+}

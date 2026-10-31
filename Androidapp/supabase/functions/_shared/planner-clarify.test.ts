@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { composeMissingClarify, sanitizeClarifyText } from "./planner-clarify.ts";
+import { composeMissingClarify, filterActuallyMissing, sanitizeClarifyText } from "./planner-clarify.ts";
 
 Deno.test("plain clarify passes through untouched", () => {
   const r = sanitizeClarifyText("Which member should this go to?");
@@ -46,4 +46,15 @@ Deno.test("composeMissingClarify: at most three asks, deduped", () => {
   assertEquals(msg.split("Nothing was changed.").length, 2);
   assertEquals((msg.match(/\?/g) || []).length + (msg.match(/\./g) || []).length - 1 >= 3, true);
   assertEquals(msg.includes("Which tier"), false); // 4th ask dropped
+});
+
+Deno.test("filterActuallyMissing: supplied amount is never re-asked", () => {
+  assertEquals(filterActuallyMissing(["amount", "recipient"], "gift 5 coins to Sarah", true), []);
+  assertEquals(filterActuallyMissing(["amount"], "gift coins to Sarah", true), ["amount"]);
+  assertEquals(filterActuallyMissing(["amount"], "top up by 4.1 each, coins for all", false), []);
+});
+Deno.test("filterActuallyMissing: resolved recipient is never re-asked; unresolvable fields pass through", () => {
+  assertEquals(filterActuallyMissing(["recipient"], "gift sam@x.com 5 coins", true), []);
+  assertEquals(filterActuallyMissing(["recipient"], "gift someone 5 coins", false), ["recipient"]);
+  assertEquals(filterActuallyMissing(["title"], "gift 5 coins", true), ["title"]);
 });

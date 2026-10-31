@@ -1,6 +1,6 @@
 // Mocked end-to-end conversation tests: no network, no model calls, no real member rows.
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
-import { coinDialog, executeStep, planHasMultipleWrites } from "./admin-command-flow.ts";
+import { coinDialog, executeStep, planHasMultipleWrites, runWritesSequential } from "./admin-command-flow.ts";
 
 const PROFILES = [{ user_id: "u-1" }, { user_id: "u-2" }, { user_id: "u-3" }];
 
@@ -422,4 +422,39 @@ Deno.test("a subset directive clarifies and never proposes a plan", async () => 
   assertEquals(out?.type, "clarify");
   assertStringIncludes(out?.message, "specific group");
   assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0, "no proposal for a guessed audience");
+});
+
+Deno.test("runWritesSequential: order preserved, all confirmed -> all run", async () => {
+  const order: string[] = [];
+  const res = await runWritesSequential(
+    [{ index: 0, step: { tool: "gift_all_coins", args: { delta: 5 } } }, { index: 1, step: { tool: "send_notice", args: { audience: "ALL" } } }],
+    async (tool) => { order.push(tool); return { ok: true, result: { tool } }; },
+    async () => true,
+  );
+  assertEquals(order, ["gift_all_coins", "send_notice"]);
+  assertEquals(res[0].ok && res[1].ok, true);
+  assertEquals(res[1].skipped ?? false, false);
+});
+Deno.test("runWritesSequential: failed first write halts chain, second skipped never attempted", async () => {
+  const order: string[] = [];
+  const res = await runWritesSequential(
+    [{ index: 0, step: { tool: "gift_all_coins", args: {} } }, { index: 1, step: { tool: "send_notice", args: {} } }],
+    async (tool) => { order.push(tool); return { ok: false, error: "boom" }; },
+    async () => true,
+  );
+  assertEquals(order, ["gift_all_coins"]);
+  assertEquals(res[0].ok, false);
+  assertEquals(res[1].skipped, true);
+  assertEquals(res[1].ok, false);
+});
+Deno.test("runWritesSequential: UNCONFIRMED first write (verified null) halts chain too", async () => {
+  const order: string[] = [];
+  const res = await runWritesSequential(
+    [{ index: 0, step: { tool: "gift_all_coins", args: {} } }, { index: 1, step: { tool: "send_notice", args: {} } }],
+    async (tool) => { order.push(tool); return { ok: true, result: {} }; },
+    async () => null, // fail-closed: no verifier, not confirmed
+  );
+  assertEquals(order, ["gift_all_coins"]);
+  assertEquals(res[0].verified, null);
+  assertEquals(res[1].skipped, true);
 });

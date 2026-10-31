@@ -1,11 +1,11 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
-import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps, runWritesSequential } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, matchWorkflow, validateSteps } from "../_shared/admin-tool-spec.ts";
 import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.js";
 import { nextAttemptGrant, REQUEST_BUDGET } from "../_shared/ai-cost.ts";
-import { composeMissingClarify, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
+import { composeMissingClarify, filterActuallyMissing, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -35,9 +35,9 @@ function httpErrorKind(status: number): string {
   return status === 429 ? "http_429" : status >= 500 ? "http_5xx" : "http_4xx";
 }
 
-async function callProvider(provider: ProviderId, apiKey: string, system: string, user: string, maxTokens: number): Promise<ProviderOutcome> {
+async function callProvider(provider: ProviderId, apiKey: string, system: string, user: string, maxTokens: number, timeoutMs: number): Promise<ProviderOutcome> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_BUDGET.perAttemptTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     if (provider === "GEMINI") {
       const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
@@ -70,6 +70,20 @@ type PlannerResult =
   | { kind: "steps"; plan: any; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number }
   | { kind: "chat" | "clarify"; text: string; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number; missing: unknown };
 
+// Each registered workflow declares the intent keywords that must BOTH appear
+// in the administrator's own words before that composition may be proposed.
+const WORKFLOW_INTENTS: Record<string, RegExp[]> = {
+  gift_all_with_notice: [
+    /\b(?:gift|give|grant|credit|award|top\s*up|bonus|coins?)\b/i,
+    /\b(?:announce|announcement|notify|notification|notice|tell|inform|let\s+them\s+know|message|broadcast)\b/i,
+  ],
+};
+function workflowIntentExplicit(prompt: string, workflowId: string): boolean {
+  const intents = WORKFLOW_INTENTS[workflowId];
+  if (!intents) return false; // unknown workflow: fail closed
+  return intents.every((rx) => rx.test(prompt));
+}
+
 async function planWithProviders(admin: any, userId: string, system: string, user: string, promptVersion: string): Promise<PlannerResult | null> {
   const keys: Record<ProviderId, string | undefined> = { GEMINI: Deno.env.get("GEMINI_API_KEY"), COHERE: Deno.env.get("COHERE_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY") };
   const configured = (Object.keys(keys) as ProviderId[]).filter((p) => isConfiguredSecret(keys[p]));
@@ -85,15 +99,20 @@ async function planWithProviders(admin: any, userId: string, system: string, use
   let reservedOutput = 0;
   const requestStart = Date.now();
   for (const provider of configured.map((_, i) => configured[(start + i) % configured.length])) {
-    const grant = nextAttemptGrant(attempts, reservedOutput, Date.now() - requestStart);
-    if (grant === null) {
+    const elapsed = Date.now() - requestStart;
+    const grant = nextAttemptGrant(attempts, reservedOutput, elapsed);
+    // The in-flight attempt's own timeout is bounded by the REMAINING
+    // wall-clock budget, not just checked between attempts: a slow final
+    // attempt can never push the request past 60s.
+    const remainingMs = REQUEST_BUDGET.maxTotalMs - elapsed;
+    if (grant === null || remainingMs <= 0) {
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, promptVersion, status: "failed", errorKind: "budget_exhausted", latencyMs: Date.now() - requestStart, meta: { attempts, reservedOutput } });
       break;
     }
     attempts++;
     reservedOutput += grant;
     const attemptStart = Date.now();
-    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user, grant);
+    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user, grant, Math.min(REQUEST_BUDGET.perAttemptTimeoutMs, remainingMs));
     const logFailure = (kind: string) => void recordAiRun(admin, {
       agent: AGENT_ADMIN_COMMAND, userId, provider, promptVersion, status: "failed",
       errorKind: kind, latencyMs: Date.now() - attemptStart,
@@ -270,12 +289,14 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
   }
   const indexed: Record<number, unknown> = {};
   reads.forEach(({ index, step }, i) => { indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "READ", ...readResults[i] }; });
-  for (const { index, step } of writes) {
-    const out = await executeStep(userClient, String(step.tool), step.args ?? {});
-    const verified = out.ok ? await runVerifier(admin, String(step.tool), step.args ?? {}, out.result) : null;
-    if (out.ok && (out.result as any)?.balances) (out as any).balances = (out.result as any).balances;
-    indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "WRITE", verified, ...out };
-  }
+  // Writes run in declared plan order; the first failed or unconfirmed write
+  // halts the chain and later writes are skipped, never attempted.
+  const writeResults = await runWritesSequential(
+    writes,
+    (tool, args) => executeStep(userClient, tool, args),
+    (tool, args, result) => runVerifier(admin, tool, args, result),
+  );
+  for (const k of Object.keys(writeResults)) indexed[Number(k)] = writeResults[Number(k)];
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);
   const failed = (results as any[]).some((r) => r?.ok !== true);
   const unconfirmed = (results as any[]).some((r) => r?.kind === "WRITE" && r?.ok === true && r?.verified !== true);
@@ -472,7 +493,7 @@ serve(async (req: Request) => {
       return jsonResponse({ success: false, type: "chat", message: sorry }, 503);
     }
     if (planned.kind === "chat" || planned.kind === "clarify") {
-      const shown = planned.kind === "clarify" ? (composeMissingClarify(planned.missing) ?? sanitizeClarifyText(planned.text).text) : planned.text;
+      const shown = planned.kind === "clarify" ? (composeMissingClarify(filterActuallyMissing(planned.missing, chatPrompt, chatPrompt.includes("@") || nameCheck.candidates.length > 0)) ?? sanitizeClarifyText(planned.text).text) : planned.text;
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
       await persistMessage(admin, userId, "assistant", "chat", shown);
       return jsonResponse({ success: true, type: planned.kind, message: shown });
@@ -503,6 +524,16 @@ serve(async (req: Request) => {
     // The ONLY exception is an exact match to a registered bounded workflow
     // (fixed tool sequence, constraints satisfied) - never an ad-hoc bundle.
     const matchedWorkflow = matchWorkflow(steps);
+    if (matchedWorkflow && !workflowIntentExplicit(chatPrompt, matchedWorkflow)) {
+      // A registered workflow still requires the administrator to have asked
+      // for BOTH effects in their own words. "Gift them a thank-you" alone
+      // never implies "and announce it" - the notice half is never inferred
+      // from a gift reason.
+      const msg = "I can gift the coins, and I can also send everyone an announcement - but you only asked for the gift. Say \"gift and announce\" (or just \"gift\") and I will prepare exactly that. Nothing was done.";
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "workflow_intent_not_explicit", workflow: matchedWorkflow } });
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
     if (!matchedWorkflow && await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
       const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
@@ -542,7 +573,15 @@ serve(async (req: Request) => {
     }
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length, usage: planned.usage, attempts: planned.attempts } });
     const runId = (proposed as any)?.run_id;
-    const summary = summarizePlan({ steps });
+    let summary = summarizePlan({ steps });
+    if (matchedWorkflow === "gift_all_with_notice") {
+      // Honest audience review: the gift uses the approved member snapshot;
+      // the notice resolves everyone LIVE at send time. Never claim they are
+      // the same people.
+      const gift = steps.find((st: any) => st?.tool === "gift_all_coins");
+      const n = Array.isArray(gift?.args?.recipients) ? gift.args.recipients.length : null;
+      summary += `. Recipient note: the gift goes to the ${n ?? "current"} members on record right now; the announcement reaches everyone at send time, which can include members who join in between.`;
+    }
     const needsApproval = (proposed as any)?.requires_approval !== false;
     await persistMessage(admin, userId, "assistant", "plan", summary, runId, { steps, requires_approval: needsApproval });
     if (!needsApproval) {
@@ -574,7 +613,7 @@ serve(async (req: Request) => {
   if (planned.kind !== "steps") {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
     await persistMessage(admin, userId, "user", "chat", prompt);
-    const shown = planned.kind === "clarify" ? (composeMissingClarify(planned.missing) ?? sanitizeClarifyText(planned.text).text) : planned.text;
+    const shown = planned.kind === "clarify" ? (composeMissingClarify(filterActuallyMissing(planned.missing, prompt, prompt.includes("@") || nameCheck.candidates.length > 0)) ?? sanitizeClarifyText(planned.text).text) : planned.text;
     await persistMessage(admin, userId, "assistant", "chat", shown);
     return jsonResponse({ success: true, type: planned.kind, message: shown });
   }
