@@ -79,3 +79,24 @@ export async function preloadCommandThread(config) {
     try { localStorage.setItem(`admin-command-thread-${id}`, JSON.stringify(res.messages)); } catch { /* best-effort */ }
   }
 }
+
+// Plan card lifecycle: a card is closed when the admin decided it OR when the
+// saved run is no longer waiting for a decision. The saved run status wins
+// over the message meta, so a card can never look actionable when the backend
+// would refuse the click (expired, already decided, or decided out-of-band).
+export const PLAN_OUTCOME = {
+  done: { label: 'Completed', tone: 'ok' },
+  rejected: { label: 'Cancelled - no change was made', tone: 'muted' },
+  failed: { label: 'Failed - no change was completed', tone: 'bad' },
+  approved: { label: 'Approved - working on it...', tone: 'muted' },
+  executing: { label: 'Approved - working on it...', tone: 'muted' },
+  unknown: { label: 'Outcome unclear - ask me to check before trying again', tone: 'bad' },
+};
+
+export function planCardState(meta) {
+  const runStatus = meta?.run_status;
+  const closedByRun = runStatus != null && runStatus !== 'proposed';
+  const decided = meta?.decided === true || closedByRun;
+  const outcome = closedByRun ? (PLAN_OUTCOME[runStatus] || PLAN_OUTCOME.unknown) : null;
+  return { decided, outcome };
+}

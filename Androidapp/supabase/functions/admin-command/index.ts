@@ -381,8 +381,24 @@ serve(async (req: Request) => {
     const { data, error } = await admin.from("admin_command_messages")
       .select("id,role,kind,content,run_id,meta,created_at")
       .eq("admin_user_id", userId).order("created_at", { ascending: false }).limit(60);
-    return error ? jsonResponse({ error: "History is unavailable" }, 500)
-      : jsonResponse({ success: true, messages: (data ?? []).reverse() });
+    if (error) return jsonResponse({ error: "History is unavailable" }, 500);
+    const messages = (data ?? []).reverse();
+    // Ground every plan card in the run's actual saved status: a card whose
+    // run is no longer proposed is closed (completed/cancelled/failed), even
+    // if the message meta was never marked decided (expired runs, direct
+    // status transitions). The card must never look actionable when it is not.
+    const runIds = [...new Set(messages.filter((m: any) => m?.kind === "plan" && m?.run_id).map((m: any) => String(m.run_id)))];
+    if (runIds.length > 0) {
+      const { data: runs } = await admin.from("admin_command_runs").select("id,status,error").in("id", runIds);
+      const byId = new Map((runs ?? []).map((r: any) => [String(r.id), r]));
+      for (const m of messages as any[]) {
+        if (m?.kind !== "plan" || !m?.run_id) continue;
+        const run = byId.get(String(m.run_id));
+        if (!run) continue;
+        m.meta = { ...(m.meta ?? {}), run_status: run.status, ...(run.error ? { run_error: String(run.error).slice(0, 200) } : {}) };
+      }
+    }
+    return jsonResponse({ success: true, messages });
   }
 
   if (action === "message") {

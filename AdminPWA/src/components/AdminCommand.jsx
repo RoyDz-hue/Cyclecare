@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ArrowUpRight, CheckCircle2, XCircle, ShieldAlert, Copy, Check } from 'lucide-react';
 import {
   commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, planRiskLevel, adminIdFromConfig,
+  planCardState,
 } from '../lib/adminCommand.js';
 import { formatCommandOutcome } from '../lib/commandResults.js';
 import { adminResultMessage, getAdminSession } from '../lib/supabaseAdmin.js';
@@ -13,7 +14,7 @@ import { applyRealtimeInsert } from '../lib/commandThread.js';
 function PlanMessage({ message, busy, onApprove, onReject }) {
   const plan = { steps: message?.meta?.steps || [] };
   const risk = planRiskLevel(plan.steps);
-  const decided = message?.meta?.decided === true;
+  const { decided, outcome } = planCardState(message?.meta);
   return (
     <div className={`chat-plan ${risk === 'risky' ? 'risky' : ''}`}>
       <h4 className="chat-plan-title">
@@ -23,6 +24,13 @@ function PlanMessage({ message, busy, onApprove, onReject }) {
       <ol className="chat-plan-steps">
         {plan.steps.map((s, i) => (<li key={i}>{s.label || describeStep(s)}</li>))}
       </ol>
+      {outcome && (
+        <p className={`chat-plan-outcome ${outcome.tone}`}>
+          {outcome.tone === 'ok' && <CheckCircle2 size={14} color="var(--emerald-accent)" />}
+          {outcome.tone === 'bad' && <XCircle size={14} color="var(--rose-pink)" />}
+          {outcome.label}
+        </p>
+      )}
       {message.meta?.requires_approval !== false && !decided && (
         <div className="btn-row">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onApprove(message)}>
@@ -229,14 +237,22 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
     setBusy(true);
     try {
       const res = await commandDecide(supabaseConfig, message.run_id, true, true, onSessionChange);
+      const outcomeStatus = res?.status || (res?.success ? 'done' : 'failed');
       setMessages((cur) => {
-        const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true } } : m));
-        next.push({ id: `r-${message.run_id}`, echo: true, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: res?.status || (res?.success ? 'done' : 'failed'), steps: res.steps || [] }, created_at: new Date().toISOString() });
+        const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true, run_status: outcomeStatus } } : m));
+        next.push({ id: `r-${message.run_id}`, echo: true, role: 'assistant', kind: 'result', content: resultText(res), meta: { status: outcomeStatus, steps: res.steps || [] }, created_at: new Date().toISOString() });
         try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
         return next;
       });
       if (res?.success) showNotification?.('Plan approved and executed'); else showNotification?.('Execution failed. Please try again.', 'error');
     } catch (e) {
+      // The attempt may already have run: close the card as outcome-unclear
+      // rather than leaving a Confirm button that invites a duplicate click.
+      setMessages((cur) => {
+        const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true, run_status: 'unknown' } } : m));
+        try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
+        return next;
+      });
       showNotification?.(adminResultMessage(e?.message, 'The plan could not be executed. Please try again.'), 'error');
     } finally {
       setBusy(false);
@@ -248,7 +264,11 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
     setBusy(true);
     try {
       await commandDecide(supabaseConfig, message.run_id, false, false, onSessionChange);
-      setMessages((cur) => cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true } } : m)));
+      setMessages((cur) => {
+        const next = cur.map((m) => (m.id === message.id ? { ...m, meta: { ...m.meta, decided: true, run_status: 'rejected' } } : m));
+        try { localStorage.setItem(cacheKey, JSON.stringify(next.slice(-80))); } catch { /* best-effort */ }
+        return next;
+      });
       showNotification?.('Plan rejected');
     } catch (e) {
       showNotification?.(adminResultMessage(e?.message, 'Could not reject the plan. Please try again.'), 'error');
