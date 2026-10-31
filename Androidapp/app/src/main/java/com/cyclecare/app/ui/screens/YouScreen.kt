@@ -1,6 +1,5 @@
 package com.cyclecare.app.ui.screens
 
-import com.cyclecare.app.util.CoinFormatter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,7 +119,7 @@ fun YouScreen(
                             }
 
                             Text(
-                                text = "${CoinFormatter.format(uiState.economyProfile.coinBalance)} coins",
+                                text = "${uiState.economyProfile.coinBalance} coins",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

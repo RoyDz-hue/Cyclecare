@@ -11,8 +11,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import com.cyclecare.app.util.CoinFormatter
-import java.math.BigDecimal
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -120,17 +118,14 @@ class SupabaseEconomyService(
             if (obj.optString("user_id").trim() != initial.owner) throw Rejected("Cloud wallet owner mismatch")
             val econStatus = obj.optString("status").trim().uppercase()
             if (econStatus !in VALID_ACCOUNT_STATUSES) throw Rejected("Cloud wallet account status could not be verified")
-            // Decimal Precision Rules: balances may carry up to 3 decimal places.
-            // toString of the parsed JSON number is its exact decimal text, so
-            // BigDecimal keeps the server's value exactly - no binary float.
-            fun verifiedCoinAmount(field: String): BigDecimal {
+            fun verifiedCounter(field: String): Long {
                 val value = obj.opt(field)
-                if (value !is Int && value !is Long && value !is Double) throw Rejected("Cloud wallet $field was not a number")
-                return BigDecimal(value.toString()).takeIf { it.signum() >= 0 } ?: throw Rejected("Cloud wallet $field was negative")
+                if (value !is Int && value !is Long) throw Rejected("Cloud wallet $field was not an exact integer")
+                return (value as Number).toLong().takeIf { it >= 0L } ?: throw Rejected("Cloud wallet $field was negative")
             }
-            val balance = verifiedCoinAmount("coin_balance")
-            val earned = verifiedCoinAmount("lifetime_earned")
-            val spent = verifiedCoinAmount("lifetime_spent")
+            val balance = verifiedCounter("coin_balance")
+            val earned = verifiedCounter("lifetime_earned")
+            val spent = verifiedCounter("lifetime_spent")
 
             if (!stillOwns(initial)) throw Rejected("Session changed before account read")
             val profReq = Request.Builder().url("$restUrl/rpc/my_account_start_state")
@@ -221,8 +216,8 @@ class SupabaseEconomyService(
                     val resObj = JSONObject(body)
                     if (resObj.optBoolean("success", false)) {
                         authPreferences.clearPendingOfflineClaim()
-                        val newBalance = optCoinAmount(resObj, "new_balance", currentProfile.coinBalance)
-                        val newLifetime = optCoinAmount(resObj, "lifetime_earned", currentProfile.lifetimeEarned)
+                        val newBalance = resObj.optLong("new_balance", currentProfile.coinBalance)
+                        val newLifetime = resObj.optLong("lifetime_earned", currentProfile.lifetimeEarned)
                         val rankStr = resObj.optString("new_rank", currentProfile.rank.name)
                         val newRank = IdentityRank.entries.find { it.name.equals(rankStr, true) }
                             ?: calculateRankForLifetimeCoins(newLifetime)
@@ -299,16 +294,16 @@ class SupabaseEconomyService(
                     val resObj = JSONObject(body)
                     if (resObj.optBoolean("success", false)) {
                         authPreferences.clearPendingOfflineClaim()
-                        val newBalance = optCoinAmount(resObj, "new_balance", currentProfile.coinBalance)
-                        val newLifetime = optCoinAmount(resObj, "lifetime_earned", currentProfile.lifetimeEarned)
+                        val newBalance = resObj.optLong("new_balance", currentProfile.coinBalance)
+                        val newLifetime = resObj.optLong("lifetime_earned", currentProfile.lifetimeEarned)
                         val rankStr = resObj.optString("new_rank", currentProfile.rank.name)
                         val newRank = IdentityRank.entries.find { it.name.equals(rankStr, true) }
                             ?: calculateRankForLifetimeCoins(newLifetime)
                         val minedDate = resObj.optString("mined_date", todayStr)
-                        val awarded = optCoinAmount(resObj, "awarded_coins", baseReward.toBigDecimal() * currentProfile.tier.multiplier.toBigDecimal())
+                        val awarded = resObj.optLong("awarded_coins", (baseReward * currentProfile.tier.multiplier).toLong())
                         val msg = UserFacingServerMessage.sanitize(
                             resObj.optString("message"),
-                            "+${CoinFormatter.format(awarded)} Cycle Coins added to your collection!"
+                            "+$awarded Cycle Coins added to your collection!"
                         )
 
                         val updated = currentProfile.copy(
@@ -339,7 +334,7 @@ class SupabaseEconomyService(
             }
 
             val multiplier = currentProfile.tier.multiplier
-            val awardedCoins = baseReward.toBigDecimal() * multiplier.toBigDecimal()
+            val awardedCoins = (baseReward * multiplier).toLong()
             val updatedBalance = currentProfile.coinBalance + awardedCoins
             val updatedEarned = currentProfile.lifetimeEarned + awardedCoins
             val newRank = calculateRankForLifetimeCoins(updatedEarned)
@@ -366,14 +361,11 @@ class SupabaseEconomyService(
     suspend fun transferCoins(
         currentProfile: EconomyProfile,
         recipientEmail: String,
-        amount: BigDecimal
+        amount: Long
     ): EconomyResult<EconomyProfile> = withContext(Dispatchers.IO) {
         try {
-            if (amount.signum() <= 0) {
+            if (amount <= 0) {
                 return@withContext EconomyResult.Error("Enter a valid transfer amount.")
-            }
-            if (amount.stripTrailingZeros().scale() > 3) {
-                return@withContext EconomyResult.Error("Cycle Coins support up to 3 decimal places.")
             }
             if (currentProfile.coinBalance < amount) {
                 return@withContext EconomyResult.Error("Insufficient Cycle Coins balance.")
@@ -409,7 +401,7 @@ class SupabaseEconomyService(
                 if (body.isNotBlank()) {
                     val resObj = JSONObject(body)
                     if (resObj.optBoolean("success", false)) {
-                        val remBalance = optCoinAmount(resObj, "remaining_balance", currentProfile.coinBalance - amount)
+                        val remBalance = resObj.optLong("remaining_balance", currentProfile.coinBalance - amount)
                         val updated = currentProfile.copy(
                             coinBalance = remBalance,
                             lifetimeSpent = currentProfile.lifetimeSpent + amount
@@ -418,7 +410,7 @@ class SupabaseEconomyService(
                             updated,
                             UserFacingServerMessage.sanitize(
                                 resObj.optString("message"),
-                                "Sent ${CoinFormatter.format(amount)} Cycle Coins to $recipientEmail."
+                                "Sent $amount Cycle Coins to $recipientEmail."
                             )
                         )
                     } else {
@@ -485,7 +477,7 @@ class SupabaseEconomyService(
     ): EconomyResult<EconomyProfile> = withContext(Dispatchers.IO) {
         when (val refreshed = fetchVerifiedProfile(currentProfile.userId)) {
             is EconomyResult.Success -> {
-                val expectedMinimum = currentProfile.coinBalance + pkg.coins.toBigDecimal() + pkg.bonusCoins.toBigDecimal()
+                val expectedMinimum = currentProfile.coinBalance + pkg.coins + pkg.bonusCoins
                 if (refreshed.data.coinBalance >= expectedMinimum) {
                     EconomyResult.Success(refreshed.data, "${pkg.title} credit verified in your cloud balance.")
                 } else {
@@ -538,19 +530,13 @@ class SupabaseEconomyService(
         EconomyResult.Error("Top up coins in the Coin Store to unlock ${newTier.title} perks and artifacts.")
     }
 
-    /** Reads an exact decimal coin amount from an RPC JSON response. */
-    private fun optCoinAmount(obj: JSONObject, key: String, fallback: BigDecimal): BigDecimal {
-        val value = obj.opt(key) ?: return fallback
-        return if (value is Number) BigDecimal(value.toString()) else fallback
-    }
-
-    private fun calculateRankForLifetimeCoins(lifetimeCoins: BigDecimal): IdentityRank {
+    private fun calculateRankForLifetimeCoins(lifetimeCoins: Long): IdentityRank {
         return when {
-            lifetimeCoins >= IdentityRank.FOUNDER.minLifetimeCoins.toBigDecimal() -> IdentityRank.FOUNDER
-            lifetimeCoins >= IdentityRank.NOCTURNE.minLifetimeCoins.toBigDecimal() -> IdentityRank.NOCTURNE
-            lifetimeCoins >= IdentityRank.SOLARA.minLifetimeCoins.toBigDecimal() -> IdentityRank.SOLARA
-            lifetimeCoins >= IdentityRank.CELESTIA.minLifetimeCoins.toBigDecimal() -> IdentityRank.CELESTIA
-            lifetimeCoins >= IdentityRank.AURELIA.minLifetimeCoins.toBigDecimal() -> IdentityRank.AURELIA
+            lifetimeCoins >= IdentityRank.FOUNDER.minLifetimeCoins -> IdentityRank.FOUNDER
+            lifetimeCoins >= IdentityRank.NOCTURNE.minLifetimeCoins -> IdentityRank.NOCTURNE
+            lifetimeCoins >= IdentityRank.SOLARA.minLifetimeCoins -> IdentityRank.SOLARA
+            lifetimeCoins >= IdentityRank.CELESTIA.minLifetimeCoins -> IdentityRank.CELESTIA
+            lifetimeCoins >= IdentityRank.AURELIA.minLifetimeCoins -> IdentityRank.AURELIA
             else -> IdentityRank.LUMEN
         }
     }

@@ -1576,7 +1576,7 @@ class CycleCareViewModel(
         claimCoinsManual()
     }
 
-    fun transferCoins(recipientEmail: String, amount: java.math.BigDecimal) {
+    fun transferCoins(recipientEmail: String, amount: Long) {
         if (!com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)) {
             _uiState.value = _uiState.value.copy(
                 economyToastMessage = "Sending coins needs an internet connection. Please reconnect and try again."

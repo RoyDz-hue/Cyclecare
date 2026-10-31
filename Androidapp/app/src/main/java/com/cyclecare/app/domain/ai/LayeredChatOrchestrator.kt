@@ -1,6 +1,5 @@
 package com.cyclecare.app.domain.ai
 
-import com.cyclecare.app.util.CoinFormatter
 import com.cyclecare.app.data.economy.EconomyProfile
 import com.cyclecare.app.data.local.CycleDayLog
 import com.cyclecare.app.data.local.CycleSettings
@@ -186,7 +185,7 @@ object LayeredChatOrchestrator {
 
             val summaryText = buildString {
                 if (economyIntent == EconomyChatIntent.BALANCE_INQUIRY) {
-                    append("You currently have ${CoinFormatter.format(economyProfile.coinBalance)} Cycle Coins in your account. ")
+                    append("You currently have ${economyProfile.coinBalance} Cycle Coins in your account. ")
                 } else if (economyIntent == EconomyChatIntent.ARTIFACT_CATALOG) {
                     append("Our artifacts and charms can be unlocked using your Cycle Coins. ")
                 }
