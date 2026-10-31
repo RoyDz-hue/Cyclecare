@@ -43,20 +43,18 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    return {success:true,type:"clarify",message:msg};
  }
  if(fresh?.scope==="all"||(!fresh&&active?.scope==="all"&&!active?.cancelled)){
-   if(fresh&&fresh.delta<0){
-     await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-     return {success:true,type:"chat",message:"Taking coins from every member at once isn't something I'll do; a deduction has to name each member. To gift every member instead, say the amount, for example: Gift all users 2 coins each. No change was made."};
-   }
    let gst=fresh?{scope:"all",delta:fresh.delta,reason:fresh.reason??null,awaiting:"reason"}:applyCoinReply(active,text);
-   if(typeof gst.delta!=="number"||Number.isNaN(gst.delta)||gst.delta<1||gst.delta>10000){
+   const deduct=typeof gst.delta==="number"&&gst.delta<0;
+   const amount=Math.abs(gst.delta);
+   if(typeof gst.delta!=="number"||Number.isNaN(gst.delta)||amount<1||amount>10000){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-     const msg="Choose a gift between 1 and 10,000 coins for each member. No change has been made.";
+     const msg=`Choose ${deduct?"a deduction":"a gift"} between 1 and 10,000 coins for each member. No change has been made.`;
      await persistMessage(admin,adminId,"assistant","chat",msg);
      return {success:true,type:"chat",message:msg};
    }
-   if(coinDecimals(gst.delta)>3){
+   if(coinDecimals(amount)>3){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-     const msg=`Cycle Coins allow up to 3 decimal places, so I can't gift ${gst.delta} coins to each member. Try 3 decimals or fewer, like ${coinText(gst.delta)}. No change has been made.`;
+     const msg=`Cycle Coins allow up to 3 decimal places, so I can't ${deduct?"deduct":"gift"} ${amount} coins ${deduct?"from":"to"} each member. Try 3 decimals or fewer, like ${coinText(amount)}. No change has been made.`;
      await persistMessage(admin,adminId,"assistant","chat",msg);
      return {success:true,type:"chat",message:msg};
    }
@@ -65,10 +63,14 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    if(profErr||!Array.isArray(profs))return {success:true,type:"chat",message:"I couldn't list the members just now. No change was made."};
    const snapshot=[...new Set(profs.map((p:any)=>String(p.user_id||p.device_id||p.id)))];
    if(!snapshot.length||snapshot.length>5000)return {success:true,type:"chat",message:"I couldn't prepare the member list safely. No change was made."};
-   const total=coinMilli(gst.delta)*snapshot.length/1000; // exact: integer milli-units
-   const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
+   const total=coinMilli(amount)*snapshot.length/1000; // exact: integer milli-units
+   const tool=deduct?"deduct_all_coins":"gift_all_coins";
+   const label=deduct
+     ?`Deduct ${amount} coins from each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`
+     :`Gift ${amount} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`;
+   const steps=[{tool,label,args:{delta:amount,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
    const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:steps[0].label,p_plan:{steps}});
-   if(proposeError){const msg="I couldn't prepare the gift safely. Nothing was changed; please try again or say cancel.";await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
+   if(proposeError){const msg=`I couldn't prepare the ${deduct?"deduction":"gift"} safely. Nothing was changed; please try again or say cancel.`;await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
    await persistMessage(admin,adminId,"assistant","plan",steps[0].label,proposed.run_id,{steps,requires_approval:true});
    return {success:true,type:"plan",run_id:proposed.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
@@ -146,7 +148,8 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
 export async function prepareGiftAllSteps(admin: any, steps: any[]): Promise<any[]> {
   const out: any[] = [];
   for (const st of steps ?? []) {
-    if (String(st?.tool ?? "") !== "gift_all_coins") { out.push(st); continue; }
+    const bulkTool = String(st?.tool ?? "");
+    if (bulkTool !== "gift_all_coins" && bulkTool !== "deduct_all_coins") { out.push(st); continue; }
     const args = (st?.args && typeof st.args === "object") ? { ...st.args } : {};
     if (typeof args.run_key !== "string" || !args.run_key.trim()) args.run_key = crypto.randomUUID();
     const delta = Number(args.delta);
@@ -161,7 +164,10 @@ export async function prepareGiftAllSteps(admin: any, steps: any[]): Promise<any
     const reason = typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : "Admin adjustment";
     args.reason = reason;
     const total = coinMilli(delta) * args.recipients.length / 1000; // exact: integer milli-units
-    out.push({ ...st, label: `Gift ${delta} coins to each of the ${args.recipients.length} members (${total} coins in total). Reason: ${reason}`, args });
+    const label = bulkTool === "deduct_all_coins"
+      ? `Deduct ${delta} coins from each of the ${args.recipients.length} members (${total} coins in total). Reason: ${reason}`
+      : `Gift ${delta} coins to each of the ${args.recipients.length} members (${total} coins in total). Reason: ${reason}`;
+    out.push({ ...st, label, args });
   }
   return out;
 }
@@ -235,10 +241,12 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
         const allOk = results.every((r: any) => r.ok);
         return { ok: allOk, result: results, error: allOk ? undefined : (results.find((r: any) => !r.ok)?.error ?? "step failed") };
       }
-      case "gift_all_coins": {
+      case "gift_all_coins":
+      case "deduct_all_coins": {
+        const deduct = tool === "deduct_all_coins";
         const delta = Number(args?.delta);
-        if (!Number.isFinite(delta) || delta < 1 || delta > 10000 || coinDecimals(delta) > 3) return { ok: false, error: "gift delta must be 1-10,000 coins with up to 3 decimal places" };
-        const { data, error } = await rpc("admin_gift_all_coins", {
+        if (!Number.isFinite(delta) || delta < 1 || delta > 10000 || coinDecimals(delta) > 3) return { ok: false, error: `${deduct ? "deduction" : "gift"} delta must be 1-10,000 coins with up to 3 decimal places` };
+        const { data, error } = await rpc(deduct ? "admin_deduct_all_coins" : "admin_gift_all_coins", {
           p_delta: delta,
           p_reason: String(args?.reason ?? ""),
           p_run_key: String(args?.run_key ?? ""),

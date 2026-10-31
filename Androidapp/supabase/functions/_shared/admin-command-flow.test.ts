@@ -27,7 +27,7 @@ function makeClients(profiles: any[] = PROFILES) {
     rpc: async (name: string, params: any) => {
       rpcCalls.push({ name, params });
       if (name === "admin_command_propose") return { data: { run_id: "run-1" }, error: null };
-      if (name === "admin_gift_all_coins") {
+      if (name === "admin_gift_all_coins" || name === "admin_deduct_all_coins") {
         giftCalls++;
         const n = params.p_recipients?.length ?? 0;
         return { data: { success: true, duplicate: giftCalls > 1, recipients: n, total_coins: n * params.p_delta }, error: null };
@@ -86,17 +86,24 @@ Deno.test("after a group proposal there is no typed-confirm state; approval is o
   assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
 });
 
-Deno.test("mass deduction is refused with a clear boundary", async () => {
+Deno.test("mass deduction proposes a review card like a mass gift (Roy approved bulk deductions 08:53)", async () => {
   const { admin, userClient, state } = makeClients();
   const r = await coinDialog(admin, userClient, "admin-1", "Take 3 coins from everybody");
-  assertStringIncludes(r.message, "deduction has to name each member");
-  assertEquals(state.row, null);
+  assertEquals(r.type, "plan");
+  assertEquals(r.requires_approval, true);
+  assertEquals(r.plan.steps[0].tool, "deduct_all_coins");
+  assertStringIncludes(r.plan.steps[0].label, "Deduct 3 coins from each of the 3 members (9 coins in total)");
+  assertEquals(r.plan.steps[0].args.delta, 3, "stored positive amount; the tool carries the direction");
+  assertEquals(state.row, null, "dialog state cleared after proposing");
 });
 
-Deno.test("Roy's 08:49 'Valued at -4.1 each donate to all users coins' hits the mass-deduction refusal, never an amount re-ask", async () => {
+Deno.test("Roy's 08:49 'Valued at -4.1 each donate to all users coins' proposes the exact deduction, never an amount re-ask", async () => {
   const { admin, userClient, state } = makeClients();
   const r = await coinDialog(admin, userClient, "admin-1", "Valued at -4.1 each donate to all users coins");
-  assertStringIncludes(r.message, "deduction has to name each member");
+  assertEquals(r.type, "plan");
+  assertEquals(r.plan.steps[0].tool, "deduct_all_coins");
+  assertEquals(r.plan.steps[0].args.delta, 4.1, "exact signed amount preserved as a 4.1 deduction");
+  assertStringIncludes(r.plan.steps[0].label, "Deduct 4.1 coins from each of the 3 members (12.3 coins in total)");
   assertEquals(state.row, null);
 });
 
@@ -268,6 +275,17 @@ Deno.test("executeStep passes the exact decimal delta through, never truncates",
   assertEquals(gift.ok, true);
   const giftCall = rpcCalls.find((c) => c.name === "admin_gift_all_coins");
   assertEquals(giftCall.params.p_delta, 3.5, "3.5 reaches the RPC exactly");
+});
+
+Deno.test("executeStep routes deduct_all_coins with the exact delta and run key", async () => {
+  const { userClient, rpcCalls } = makeClients();
+  const r = await executeStep(userClient, "deduct_all_coins", { delta: 4.1, reason: "Test", run_key: "rk-d1", recipients: ["u-1", "u-2"] });
+  assertEquals(r.ok, true);
+  const call = rpcCalls.find((c) => c.name === "admin_deduct_all_coins");
+  assertEquals(call.params.p_delta, 4.1, "4.1 reaches the RPC exactly");
+  assertEquals(call.params.p_run_key, "rk-d1");
+  const bad = await executeStep(userClient, "deduct_all_coins", { delta: 3.4567, reason: "Test", run_key: "rk-d2", recipients: ["u-1"] });
+  assertEquals(bad.ok, false, "more than 3 decimals refused, never rounded");
 });
 
 Deno.test("executeStep refuses more than 3 decimals instead of rounding", async () => {

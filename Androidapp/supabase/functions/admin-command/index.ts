@@ -27,6 +27,7 @@ Available tools (use only these, with only these args):
 - set_cosmetic_price {item_id, price_coins?, is_active?} - change one cosmetic.
 - adjust_coins {targets: [user_id,...], delta: number (up to 3 decimal places), reason} - grant (positive) or deduct (negative) coins; max 10000 per step, max 5 targets.
 - gift_all_coins {delta: number (up to 3 decimal places), reason} - gift coins to EVERY member at once; always use this for an all-users gift, never adjust_coins; no targets needed.
+- deduct_all_coins {delta: number (up to 3 decimal places), reason} - deduct coins from EVERY member at once; always use this for an all-users deduction, never adjust_coins; no targets needed. All-or-nothing: aborts if any member cannot cover the full amount.
 - set_user_status {targets: [user_id,...], status: "ACTIVE"|"SUSPENDED"|"BANNED", reason?, duration_hours?} - max 5 targets.
 - set_user_tier {targets: [user_id,...], tier: "FREE"|"SUPPORTER"|"PREMIUM"} - max 5 targets.
 - gift_artifact {targets: [user_id,...], artifact_name: "Luminescent Moon"|"Golden Blossom"|"Rose Obelisk"|"Dual Eclipse"|"Celestial Tiara", artifact_rarity?}
@@ -301,6 +302,7 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
       (out as any).balances = balances;
     }
     if (out.ok && step.tool === "gift_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
+    if (out.ok && step.tool === "deduct_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
     indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "WRITE", verified, ...out };
   }
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);
