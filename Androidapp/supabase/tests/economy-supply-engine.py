@@ -211,6 +211,85 @@ ta.start(); tb.start(); ta.join(); tb.join()
 check("racing claims: exactly one success", sorted(results) == [False, True], str(results))
 check("racing claims minted exactly one award", q1("SELECT issued FROM public.economy_supply_lines WHERE line_key='claims'") == claims_before + 30)
 
+# reservation consumed exactly once by its fulfillment, and the held coins are drawable
+cur.execute("SELECT set_config('test.role', 'service_role', false)")
+cur.execute("UPDATE public.economy_supply_lines SET issued = 10000000 - 500, reserved = 0 WHERE line_key='paid'")
+r = q1("SELECT public.reserve_paid_coins(%s, 500)", (uid,))
+check("reserve last 500 of paid line", r['success'] is True, str(r))
+resid2 = r['reservation_id']
+cur.execute("INSERT INTO public.transactions(user_id, provider, currency, amount, metadata) VALUES (%s, 'payhero', 'KES', 100, %s) RETURNING id",
+            (uid, '{\"coins_to_credit\": 500, \"reservation_id\": \"' + resid2 + '\"}'))
+tx3 = cur.fetchone()[0]
+r = q1("SELECT public.apply_verified_payment(%s, 'payhero', 100, 'KES', 'ref-3')", (tx3,))
+check("fulfillment draws the reserved coins", r['success'] is True and float(r['coins_credited']) == 500, str(r))
+check("reservation marked fulfilled", q1("SELECT status FROM public.economy_paid_reservations WHERE reservation_id=%s", (resid2,)) == 'FULFILLED')
+check("reserved released after fulfill", q1("SELECT reserved FROM public.economy_supply_lines WHERE line_key='paid'") == 0)
+check("paid line fully issued", q1("SELECT issued FROM public.economy_supply_lines WHERE line_key='paid'") == 10000000)
+# second payment with same reservation id cannot reuse it
+cur.execute("INSERT INTO public.transactions(user_id, provider, currency, amount, metadata) VALUES (%s, 'payhero', 'KES', 100, %s) RETURNING id",
+            (uid, '{\"coins_to_credit\": 100, \"reservation_id\": \"' + resid2 + '\"}'))
+tx4 = cur.fetchone()[0]
+r = q1("SELECT public.apply_verified_payment(%s, 'payhero', 100, 'KES', 'ref-4')", (tx4,))
+check("reservation cannot be reused (credit blocked)", r['success'] is False and r.get('credit_blocked') is True, str(r))
+cur.execute("UPDATE public.economy_supply_lines SET issued = 500 WHERE line_key='paid'")
+
+# concurrent reserves cannot over-book the paid line
+cur.execute("UPDATE public.economy_supply_lines SET reserved = 0, allowance = issued + 1000 WHERE line_key='paid'")
+print("DBG paid line:", q1("SELECT allowance FROM public.economy_supply_lines WHERE line_key='paid'"), q1("SELECT issued FROM public.economy_supply_lines WHERE line_key='paid'"), q1("SELECT reserved FROM public.economy_supply_lines WHERE line_key='paid'"), "HELD:", q1("SELECT count(*) FROM public.economy_paid_reservations WHERE status='HELD'"), q1("SELECT COALESCE(SUM(coins),0) FROM public.economy_paid_reservations WHERE status='HELD'"))
+res_results = []
+def race_reserve(tag):
+    c2 = psycopg2.connect(srv.get_uri()); c2.autocommit = True
+    cur2 = c2.cursor()
+    cur2.execute("SELECT set_config('test.role', 'service_role', false)")
+    cur2.execute("SELECT public.reserve_paid_coins(%s, 1000)", (uid,))
+    res_results.append(cur2.fetchone()[0]['success'])
+    c2.close()
+ta = threading.Thread(target=race_reserve, args=('a',)); tb = threading.Thread(target=race_reserve, args=('b',))
+ta.start(); tb.start(); ta.join(); tb.join()
+check("racing reserves: exactly one succeeds", sorted(res_results) == [False, True], str(res_results))
+cur.execute("UPDATE public.economy_paid_reservations SET status='RELEASED' WHERE status='HELD'")
+cur.execute("UPDATE public.economy_supply_lines SET reserved = 0, allowance = 10000000 WHERE line_key='paid'")
+
+# concurrent purchases of the last coins: never negative balance
+cur.execute("UPDATE public.economy_profiles SET coin_balance = 100 WHERE user_id=%s", (uid,))
+cur.execute("INSERT INTO public.cosmetic_catalog(item_id, kind, name, price_coins, is_active) VALUES ('race_item','FRAME','Race',100,true) ON CONFLICT (item_id) DO UPDATE SET is_active=true")
+pur_results = []
+def race_purchase(tag):
+    c2 = psycopg2.connect(srv.get_uri()); c2.autocommit = True
+    cur2 = c2.cursor()
+    cur2.execute("SELECT set_config('test.uid', %s, false)", (uid,))
+    cur2.execute("SELECT public.purchase_economy_item('race_item')")
+    r2 = cur2.fetchone()[0]
+    pur_results.append(r2['success'])
+    c2.close()
+# second wallet to make it a real race on different rows too
+uid2 = "44444444-4444-4444-4444-444444444444"
+cur.execute("INSERT INTO public.economy_profiles(user_id, coin_balance) VALUES (%s, 100) ON CONFLICT (user_id) DO UPDATE SET coin_balance=100", (uid2,))
+cur.execute("SELECT set_config('test.uid', %s, false)", (uid,))
+pa = threading.Thread(target=race_purchase, args=('a',)); pb = threading.Thread(target=race_purchase, args=('b',))
+pa.start(); pb.start(); pa.join(); pb.join()
+bal = q1("SELECT coin_balance FROM public.economy_profiles WHERE user_id=%s", (uid,))
+check("racing same-wallet purchases: one wins, balance never negative", sorted(pur_results) == [False, True] and bal >= 0, str(pur_results)+" bal="+str(bal))
+
+# concurrent treasury draws cannot overdraw
+cur.execute("UPDATE public.economy_treasury SET balance = 50 WHERE id=1")
+dr_results = []
+def race_draw(tag):
+    c2 = psycopg2.connect(srv.get_uri()); c2.autocommit = True
+    cur2 = c2.cursor()
+    cur2.execute("SELECT set_config('test.uid', %s, false)", (uid,))
+    try:
+        cur2.execute("SELECT public.treasury_fund_reward(%s, 50, 'race')", (uid,))
+        dr_results.append(cur2.fetchone()[0]['success'])
+    except Exception:
+        dr_results.append(False)
+    c2.close()
+da = threading.Thread(target=race_draw, args=('a',)); db2 = threading.Thread(target=race_draw, args=('b',))
+da.start(); db2.start(); da.join(); db2.join()
+check("racing treasury draws: exactly one wins", sorted(dr_results) == [False, True], str(dr_results))
+check("treasury never negative", q1("SELECT balance FROM public.economy_treasury") >= 0)
+cur.execute("SELECT set_config('test.role', 'authenticated', false)")
+
 db.commit()
 print("\n%d failures" % len(fails))
 sys.exit(1 if fails else 0)

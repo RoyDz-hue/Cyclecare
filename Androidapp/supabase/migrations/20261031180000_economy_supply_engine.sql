@@ -429,6 +429,20 @@ BEGIN
         RETURN jsonb_build_object('success', FALSE, 'message', 'Invalid server package reward');
     END IF;
     PERFORM pg_advisory_xact_lock(hashtext('economy_wallet:' || v_tx.user_id));
+    -- Consume the checkout reservation first: its held coins are released back
+    -- to the gate so this exact fulfillment can draw them, and the hold cannot
+    -- be used twice. An expired or missing hold simply does not apply.
+    v_reservation := NULLIF(v_tx.metadata->>'reservation_id', '')::UUID;
+    IF v_reservation IS NOT NULL THEN
+        UPDATE public.economy_paid_reservations SET status = 'EXPIRED'
+        WHERE reservation_id = v_reservation AND status = 'HELD' AND expires_at < NOW();
+        UPDATE public.economy_supply_lines l SET reserved = GREATEST(0, l.reserved - r.coins)
+        FROM public.economy_paid_reservations r
+        WHERE r.reservation_id = v_reservation AND r.status = 'HELD' AND r.user_id = v_tx.user_id
+          AND l.line_key = 'paid';
+        UPDATE public.economy_paid_reservations SET status = 'FULFILLED'
+        WHERE reservation_id = v_reservation AND status = 'HELD' AND user_id = v_tx.user_id;
+    END IF;
     -- Fail closed: a paid package is never partially fulfilled.
     v_minted := public.mint_from_supply_line('paid', v_tx.user_id, v_coins, 'PAYMENT_CREDIT',
         jsonb_build_object('source', 'apply_verified_payment', 'transaction_id', p_transaction_id, 'provider', p_expected_provider));
@@ -469,13 +483,6 @@ BEGIN
     VALUES(v_tx.user_id,'PAYMENT_CREDIT',v_minted,v_balance,jsonb_build_object('source','apply_verified_payment','transaction_id',p_transaction_id,'provider',p_expected_provider,'provider_reference',p_provider_reference,'budget_line','paid'));
     UPDATE public.transactions SET status = 'success' , provider_reference = p_provider_reference,
         raw_payload = COALESCE(p_provider_payload, '{}'::JSONB), updated_at = NOW() WHERE id = p_transaction_id;
-    -- Settle a checkout reservation when one backs this transaction.
-    v_reservation := NULLIF(v_tx.metadata->>'reservation_id', '')::UUID;
-    IF v_reservation IS NOT NULL THEN
-        UPDATE public.economy_paid_reservations SET status = 'FULFILLED'
-        WHERE reservation_id = v_reservation AND status = 'HELD';
-        UPDATE public.economy_supply_lines SET reserved = GREATEST(0, reserved - v_minted) WHERE line_key = 'paid';
-    END IF;
     RETURN jsonb_build_object('success', TRUE, 'new_balance', v_balance, 'lifetime_earned', v_lifetime, 'coins_credited', v_minted);
 END;
 $function$
