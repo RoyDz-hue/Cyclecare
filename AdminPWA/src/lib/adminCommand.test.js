@@ -40,6 +40,9 @@ test('plan card closes on saved run status even without a decided flag', () => {
   assert.equal(planCardState({ run_status: 'rejected' }).decided, true);
   assert.equal(planCardState({ run_status: 'rejected' }).outcome.label, 'Cancelled - no change was made');
   assert.equal(planCardState({ run_status: 'failed' }).outcome.tone, 'bad');
+  assert.ok(!planCardState({ run_status: 'failed' }).outcome.label.includes('no change'), 'failed never claims zero writes');
+  assert.ok(planCardState({ run_status: 'rejected' }).outcome.label.includes('no change'), 'rejected proves zero writes');
+  assert.equal(planCardState({ run_status: 'unconfirmed' }).outcome.label, 'Accepted but not confirmed - do not repeat; review the current state');
   assert.equal(planCardState({ run_status: 'executing' }).decided, true, 'in-flight run is not clickable');
   assert.equal(planCardState({ run_status: 'unknown' }).outcome.label, 'Outcome unclear - ask me to check before trying again');
   assert.equal(planCardState({ run_status: 'something-new' }).outcome, PLAN_OUTCOME.unknown, 'unrecognized status never looks active');

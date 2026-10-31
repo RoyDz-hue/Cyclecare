@@ -11,7 +11,7 @@ import { applyRealtimeInsert } from '../lib/commandThread.js';
 // Admin Command chat: a ChatGPT/WhatsApp-style thread. Messages persist per
 // admin (backend table + local cache), paint instantly from the local cache,
 // then sync silently and stream in over realtime when available.
-function PlanMessage({ message, busy, onApprove, onReject }) {
+export function PlanMessage({ message, busy, onApprove, onReject }) {
   const plan = { steps: message?.meta?.steps || [] };
   const risk = planRiskLevel(plan.steps);
   const { decided, outcome } = planCardState(message?.meta);

@@ -84,12 +84,19 @@ export async function preloadCommandThread(config) {
 // saved run is no longer waiting for a decision. The saved run status wins
 // over the message meta, so a card can never look actionable when the backend
 // would refuse the click (expired, already decided, or decided out-of-band).
+// Executor semantics (admin-command executeRun): 'rejected' never executed, so
+// "no change was made" is proven. 'failed' means at least one step failed but
+// earlier steps may have applied - never claim zero writes. 'unconfirmed'
+// means accepted but not verified; repeating could double-apply.
 export const PLAN_OUTCOME = {
   done: { label: 'Completed', tone: 'ok' },
   rejected: { label: 'Cancelled - no change was made', tone: 'muted' },
-  failed: { label: 'Failed - no change was completed', tone: 'bad' },
+  expired: { label: 'Expired - no change was made', tone: 'muted' },
+  failed: { label: 'Failed - check the result message before trying again; earlier steps may have applied', tone: 'bad' },
+  unconfirmed: { label: 'Accepted but not confirmed - do not repeat; review the current state', tone: 'bad' },
   approved: { label: 'Approved - working on it...', tone: 'muted' },
   executing: { label: 'Approved - working on it...', tone: 'muted' },
+  already_started: { label: 'Already in progress', tone: 'muted' },
   unknown: { label: 'Outcome unclear - ask me to check before trying again', tone: 'bad' },
 };
 
