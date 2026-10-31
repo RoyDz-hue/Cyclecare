@@ -361,7 +361,12 @@ serve(async (req: Request) => {
   }
 
   if (action === "message") {
-    const chatPrompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 2000) : "";
+    const chatPrompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    if (chatPrompt.length > 2000) {
+      const msg = "That message is too long for me to act on safely (over 2,000 characters). Shorten it and I will handle the full request - nothing was done with it.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
     if (!chatPrompt) return jsonResponse({ error: "A prompt is required" }, 400);
     // Fair-use limit: 30 messages per rolling 10 minutes per admin.
     const since = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -516,7 +521,10 @@ serve(async (req: Request) => {
   }
 
   // action === "plan"
-  const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 2000) : "";
+  const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+  if (prompt.length > 2000) {
+    return jsonResponse({ success: true, type: "clarify", message: "That message is too long for me to act on safely (over 2,000 characters). Shorten it and I will handle the full request - nothing was done with it." });
+  }
   if (!prompt) return jsonResponse({ error: "A prompt is required" }, 400);
   const nameCheck = await checkNamedRecipient(userClient,prompt);
   if (nameCheck.clarification) return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
