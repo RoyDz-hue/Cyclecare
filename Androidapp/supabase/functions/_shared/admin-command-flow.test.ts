@@ -300,6 +300,18 @@ Deno.test("executeStep refuses more than 3 decimals instead of rounding", async 
   assertEquals(rpcCalls.length, before, "no RPC calls at all");
 });
 
+Deno.test("freeze and reset-to-zero get a capability statement, never a plan or an amount re-ask (Roy 12:32/12:34)", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const before = rpcCalls.length;
+  const freeze = await coinDialog(admin, userClient, "admin-1", "From all user freeze all their balnces");
+  assertEquals(freeze?.type, "clarify");
+  assertEquals(freeze?.message, "Freezing or locking balances isn't something I can do yet - I can only add or deduct coins. No change was made.");
+  const zero = await coinDialog(admin, userClient, "admin-1", "From all users duduct all their balnces to zero coins");
+  assertEquals(zero?.type, "clarify");
+  assertEquals(zero?.message, "Setting balances to a target amount (like zero for everyone) isn't something I can do yet - I can only add or deduct a fixed amount per member. No change was made.");
+  assertEquals(rpcCalls.length, before, "no RPC left the edge");
+});
+
 Deno.test("verbose all-users directive (hyphenated amount, per-user, noun verbs) proposes a plan, not a typed question", async () => {
   const { admin, userClient } = makeClients();
   const out = await coinDialog(admin, userClient, "admin-1",

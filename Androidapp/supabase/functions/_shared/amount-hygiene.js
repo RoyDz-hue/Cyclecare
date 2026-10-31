@@ -188,7 +188,31 @@ export function signMismatchProblem(text, tool, amount) {
   // all (no sign, no amount-attached cue, no give/allocate wording), direction
   // is ungrounded - clarify instead of gifting by assumption. Negative plans
   // reach here only when no cues exist; they came from a deduction reading.
-  if (!negativePlan && !inc) return 'I cannot tell whether to add or deduct coins - say exactly which';
+  if (!inc && !dec) return 'I cannot tell whether to add or deduct coins - say exactly which';
+  return null;
+}
+
+// Effect-level intent. "Deduct all balances to zero" asks for a TARGET
+// BALANCE, not a delta; "freeze/lock balances" asks for a LOCK, not a coin
+// movement. Neither capability exists: coin writes only apply per-member
+// deltas. Detect the effect from the original wording (with common typos) so
+// the answer is a capability statement, never an amount re-ask or a guessed
+// fixed-delta mapping.
+const MONEY_WORD = /balanc|balnce|balans|coins?|wallet|fund/i;
+const TARGET_BALANCE_RE = /(?:\bto\s+(?:zero|0)(?:\s+coins?)?\b|\bzero\s*out\b|\b(?:all|whole|entire|full)\s+(?:of\s+)?(?:their\s+)?(?:balanc|balnce|balans)|\ball\s+their\s+coins\b|\beverything\s+in\s+(?:their\s+)?(?:wallet|balanc|balnce))/i;
+const FREEZE_RE = /\b(?:freez(?:e|es|ed|ing)|lock(?:s|ed|ing)?)\b(?!\s+in\b)/i;
+export function coinEffectProblem(text) {
+  const t = String(text);
+  if (!MONEY_WORD.test(t)) return null;
+  if (FREEZE_RE.test(t)) return 'freeze'; // freeze wording wins over balance phrases
+  if (TARGET_BALANCE_RE.test(t)) return 'set_target';
+  return null;
+}
+export function effectMismatchProblem(text, tool) {
+  if (tool !== 'gift_all_coins' && tool !== 'deduct_all_coins' && tool !== 'adjust_coins') return null;
+  const fx = coinEffectProblem(text);
+  if (fx === 'set_target') return 'that asks to set balances to a target amount - I can only add or deduct a fixed amount per member, not set a balance';
+  if (fx === 'freeze') return 'that asks to freeze or lock balances - I can only add or deduct coins, not lock them';
   return null;
 }
 
@@ -201,6 +225,8 @@ export function coinWriteGuardProblem(originalPrompt, tool, delta) {
   if (typeof originalPrompt !== 'string' || !originalPrompt.trim()) {
     return 'This plan predates amount-sign validation, so it cannot be re-checked safely. Please ask again - nothing was executed.';
   }
+  const fx = effectMismatchProblem(originalPrompt, tool);
+  if (fx) return `This plan no longer passes safety validation: ${fx}. Please ask again - nothing was executed.`;
   const mismatch = signMismatchProblem(originalPrompt, tool, delta);
   if (mismatch) return `This plan no longer passes safety validation: ${mismatch}. Please ask again - nothing was executed.`;
   return null;

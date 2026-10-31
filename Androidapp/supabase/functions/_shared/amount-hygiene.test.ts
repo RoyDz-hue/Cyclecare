@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { amountCandidates, amountSourceFlags, amountSourceProblem, expressedNegative, expressedDeduction, signMismatchProblem, coinWriteGuardProblem } from "./amount-hygiene.js";
+import { amountCandidates, amountSourceFlags, amountSourceProblem, expressedNegative, expressedDeduction, signMismatchProblem, coinWriteGuardProblem, effectMismatchProblem, coinEffectProblem } from "./amount-hygiene.js";
 
 Deno.test("clean amount passes", () => {
   assertEquals(amountSourceFlags("give everyone 50 coins", 50), []);
@@ -97,9 +97,11 @@ Deno.test("a positive plan is never the ungrounded default (Roy 12:30)", () => {
   assertEquals(
     coinWriteGuardProblem("Liquidate all users with 4 coins each", "gift_all_coins", 4),
     "This plan no longer passes safety validation: I cannot tell whether to add or deduct coins - say exactly which. Please ask again - nothing was executed.");
-  // A negative plan from the same ungrounded wording came from a deduction
-  // reading (planner semantics) and is not vetoed by the positive-default rule.
-  assertEquals(signMismatchProblem("Liquidate all users with 4 coins each", "deduct_all_coins", 4), null);
+  // Direction grounding is SYMMETRIC: an ungrounded negative plan is also a
+  // guess. A model deduction reading is not intent proof; clarify both ways.
+  assertEquals(
+    signMismatchProblem("Liquidate all users with 4 coins each", "deduct_all_coins", 4),
+    "I cannot tell whether to add or deduct coins - say exactly which");
   // Grounded gifts still pass.
   assertEquals(signMismatchProblem("gift everyone 4 coins", "gift_all_coins", 4), null);
 });
@@ -117,4 +119,25 @@ Deno.test("coinWriteGuardProblem is the execute-time backstop", () => {
     "This plan no longer passes safety validation: you wrote a negative amount - that would take coins away, but this plan adds them. Please ask again - nothing was executed.");
   // Non-coin tools are untouched, even on legacy runs.
   assertEquals(coinWriteGuardProblem(null, "announce_all", NaN), null);
+});
+
+Deno.test("effect-level intent: target-balance and freeze never map to a fixed delta (Roy 12:32/12:34)", () => {
+  // "Deduct all balances to zero" asks for a TARGET balance, not a delta.
+  assertEquals(
+    effectMismatchProblem("From all users duduct all their balnces to zero coins", "deduct_all_coins"),
+    "that asks to set balances to a target amount - I can only add or deduct a fixed amount per member, not set a balance");
+  // "Freeze balances" asks for a LOCK, not a coin movement (typo-tolerant).
+  assertEquals(
+    effectMismatchProblem("From all user freeze all their balnces", "adjust_coins"),
+    "that asks to freeze or lock balances - I can only add or deduct coins, not lock them");
+  // The same wording is caught at execution time through the backstop.
+  assertEquals(
+    coinWriteGuardProblem("From all users duduct all their balnces to zero coins", "deduct_all_coins", 4),
+    "This plan no longer passes safety validation: that asks to set balances to a target amount - I can only add or deduct a fixed amount per member, not set a balance. Please ask again - nothing was executed.");
+  // Ordinary deltas are untouched; "lock in a bonus" is not a freeze.
+  assertEquals(effectMismatchProblem("deduct 4 coins from each member", "deduct_all_coins"), null);
+  assertEquals(effectMismatchProblem("lock in the 5 coin bonus for everyone", "gift_all_coins"), null);
+  assertEquals(coinEffectProblem("what is the weather today"), null);
+  // Non-coin tools are untouched.
+  assertEquals(effectMismatchProblem("freeze all their balances", "set_user_status"), null);
 });

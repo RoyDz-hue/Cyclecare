@@ -1,7 +1,7 @@
 // Testable Admin Command flow: coin dialog, step execution and message persistence.
 // Imported by admin-command/index.ts and exercised directly by mocked Deno tests.
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "./coin-dialog.js";
-import { signMismatchProblem } from "./amount-hygiene.js";
+import { signMismatchProblem, effectMismatchProblem, coinEffectProblem } from "./amount-hygiene.js";
 
 // Decimal Precision Rules: coins carry up to 3 decimals, handled EXACTLY.
 // String(n) is the shortest round-trip form, so its fraction length is the true
@@ -21,6 +21,17 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  const active=previous && Date.now()-Date.parse(previous.updated_at)<30*60_000 ? previous.state : null;
  if(previous&&!active){await retire(previous.state?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);}
 
+ // Effect-level capability statement: target-balance ("to zero", "all their
+ // balances") and freeze/lock requests are NOT coin deltas. Answer with the
+ // capability limit deterministically - never an amount re-ask, never a plan.
+ const unsupportedEffect=coinEffectProblem(text);
+ if(unsupportedEffect&&!isConfirmation(text)){
+   const msg=unsupportedEffect==="freeze"
+     ?"Freezing or locking balances isn't something I can do yet - I can only add or deduct coins. No change was made."
+     :"Setting balances to a target amount (like zero for everyone) isn't something I can do yet - I can only add or deduct a fixed amount per member. No change was made.";
+   await persistMessage(admin,adminId,"assistant","chat",msg);
+   return {success:true,type:"clarify",message:msg};
+ }
  if(startsCoinCommand(text)&&!fresh){
    await retire(previous?.state?.run_id);
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
@@ -73,7 +84,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    // this plan. The label is a derived review summary; the prompt binds the
    // verbatim request so the execute-time sign guard can re-ground it later.
    const originalText=(fresh?text:String(active?.prompt??text)).trim();
-   const signProblem=signMismatchProblem(originalText,tool,amount);
+   const signProblem=effectMismatchProblem(originalText,tool)||signMismatchProblem(originalText,tool,amount);
    if(signProblem){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
      const msg=`I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
@@ -142,8 +153,8 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  // Sign is semantics: the plan's direction must match the administrator's own
  // words before a card is even proposed.
  const originalText=(fresh?text:String(active?.prompt??st?.prompt??text)).trim();
- const signProblem=signMismatchProblem(originalText,"adjust_coins",st.delta);
- if(signProblem)return reply(`I can't prepare that safely: ${signProblem}. Please restate the exact amount - no change was made.`);
+ const signProblem=effectMismatchProblem(originalText,"adjust_coins")||signMismatchProblem(originalText,"adjust_coins",st.delta);
+ if(signProblem)return reply(`I can't prepare that safely: ${signProblem}. No change was made.`);
  const steps=[{tool:"adjust_coins",label:actionText,args:{targets:[bound.user_id],delta:st.delta,reason:st.reason}}];
  const prompt=originalText;
  const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:prompt,p_plan:{steps,original_prompt:originalText}});

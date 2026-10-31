@@ -3,7 +3,7 @@ import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, is
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps, resolveWorkflowGate, runWritesSequential } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, matchWorkflow, validateSteps } from "../_shared/admin-tool-spec.ts";
-import { amountSourceFlags, amountSourceProblem, signMismatchProblem, coinWriteGuardProblem } from "../_shared/amount-hygiene.js";
+import { amountSourceFlags, amountSourceProblem, signMismatchProblem, effectMismatchProblem, coinWriteGuardProblem } from "../_shared/amount-hygiene.js";
 import { nextAttemptGrant, REQUEST_BUDGET } from "../_shared/ai-cost.ts";
 import { composeMissingClarify, filterActuallyMissing, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
@@ -565,7 +565,7 @@ serve(async (req: Request) => {
           await persistMessage(admin, userId, "assistant", "chat", msg);
           return jsonResponse({ success: true, type: "clarify", message: msg });
         }
-        const signProblem = signMismatchProblem(chatPrompt, String(step?.tool ?? ""), value as number);
+        const signProblem = effectMismatchProblem(chatPrompt, String(step?.tool ?? "")) || signMismatchProblem(chatPrompt, String(step?.tool ?? ""), value as number);
         if (signProblem) {
           const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
           await persistMessage(admin, userId, "assistant", "chat", msg);
@@ -666,7 +666,7 @@ serve(async (req: Request) => {
         await persistMessage(admin, userId, "assistant", "chat", msg);
         return jsonResponse({ success: true, type: "clarify", message: msg });
       }
-      const signProblem = signMismatchProblem(String(prompt), String(step?.tool ?? ""), value as number);
+      const signProblem = effectMismatchProblem(String(prompt), String(step?.tool ?? "")) || signMismatchProblem(String(prompt), String(step?.tool ?? ""), value as number);
       if (signProblem) {
         const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
         await persistMessage(admin, userId, "assistant", "chat", msg);
