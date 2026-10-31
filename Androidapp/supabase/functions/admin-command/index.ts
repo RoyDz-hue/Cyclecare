@@ -1,7 +1,9 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
-import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
+import { buildToolCatalog } from "../_shared/admin-tool-spec.ts";
+import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -15,26 +17,7 @@ import { AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2, loadAgentPrompt, recordAi
 
 type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
 
-const TOOL_CATALOG = `
-Available tools (use only these, with only these args):
-- get_user_insights {focus?: "richest"|"newest"|"most_active"|"inactive"|"tier_split"|"all"} - ranked member analytics.
-- get_member_count {} - the total number of members only; prefer this over get_user_insights for count questions.
-- get_flagged_messages {} - open moderation queue.
-- get_safety_signals {} - app-detected safety events.
-- get_pricing {} - coin packages, multipliers, cosmetics.
-- get_audit_log {} - recent admin audit log.
-- set_coin_packages {packages: [{id, title, coins, bonus_coins, price_kes, price_usd, tag?}]} - REPLACE the price list (psychological pricing rules apply).
-- set_cosmetic_price {item_id, price_coins?, is_active?} - change one cosmetic.
-- adjust_coins {targets: [user_id,...], delta: number (up to 3 decimal places), reason} - grant (positive) or deduct (negative) coins; max 10000 per step, max 5 targets.
-- gift_all_coins {delta: number (up to 3 decimal places), reason} - gift coins to EVERY member at once; always use this for an all-users gift, never adjust_coins; no targets needed.
-- deduct_all_coins {delta: number (up to 3 decimal places), reason} - deduct coins from EVERY member at once; always use this for an all-users deduction, never adjust_coins; no targets needed. All-or-nothing: aborts if any member cannot cover the full amount.
-- set_user_status {targets: [user_id,...], status: "ACTIVE"|"SUSPENDED"|"BANNED", reason?, duration_hours?} - max 5 targets.
-- set_user_tier {targets: [user_id,...], tier: "FREE"|"SUPPORTER"|"PREMIUM"} - max 5 targets.
-- gift_artifact {targets: [user_id,...], artifact_name: "Luminescent Moon"|"Golden Blossom"|"Rose Obelisk"|"Dual Eclipse"|"Celestial Tiara", artifact_rarity?}
-- send_notice {targets: [user_id,...] or audience: "ALL"|"FREE"|"SUPPORTER"|"PREMIUM", title, body} - official CycleCare team notice; max 25 individual targets.
-- set_guides_enabled {enabled: boolean} - Community Guides kill switch.
-- update_guide {persona_id, daily_post_cap?, is_active?}
-- moderate_message {targets: [message_id,...], action: "DISMISS"|"REMOVE"|"RESTORE"} - max 10 targets.`;
+const TOOL_CATALOG = "\n" + buildToolCatalog();
 
 function fnv1a(input: string): number {
   let hash = 0x811c9dc5;
@@ -196,52 +179,6 @@ function resultSummaryText(outcome: { status: string; steps: unknown[] }): strin
 
 // Post-execution read-back for writes: confirms the change actually landed.
 // Returns true/false when verifiable, null when there is nothing cheap to check.
-async function noticeVerified(admin: any, result: any, args: any): Promise<boolean> {
-  const id = typeof result?.message_id === "string" ? result.message_id : null;
-  if (!id) return false;
-  const { data } = await admin.from("in_house_messages").select("title,message,target_audience").eq("id", id).maybeSingle();
-  if (!data) return false;
-  const wantAudience = typeof args?.audience === "string" ? args.audience.toUpperCase() : "ALL";
-  return data.title === String(args?.title ?? "CycleCare Notice")
-    && data.message === String(args?.body ?? "")
-    && String(data.target_audience ?? "").toUpperCase() === wantAudience;
-}
-
-async function verifyWrite(admin: any, tool: string, args: any): Promise<boolean | null> {
-  try {
-    const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
-    switch (tool) {
-      case "set_coin_packages": {
-        const { data } = await admin.from("app_config").select("value").eq("key", "coin_packages").maybeSingle();
-        const live = Array.isArray(data?.value) ? data.value : [];
-        const fields = ["id", "title", "coins", "bonus_coins", "price_kes", "price_usd", "tag"];
-        return live.length === (args?.packages ?? []).length && live.every((row: any, i: number) => fields.every((key) => (row[key] ?? null) === (args.packages[i][key] ?? null)));
-      }
-      case "set_cosmetic_price": {
-        const { data } = await admin.from("cosmetic_catalog").select("price_coins,is_active").eq("item_id", String(args?.item_id ?? "")).maybeSingle();
-        if (!data) return false;
-        if (typeof args?.price_coins === "number" && data.price_coins !== Math.round(args.price_coins)) return false;
-        if (typeof args?.is_active === "boolean" && data.is_active !== args.is_active) return false;
-        return true;
-      }
-      case "set_user_status": {
-        if (targets.length === 0) return null;
-        const { data } = await admin.from("profiles").select("status").in("user_id", targets);
-        const want = String(args?.status ?? "").toUpperCase();
-        return Array.isArray(data) && data.length >= targets.length && data.every((r: any) => String(r?.status ?? "").toUpperCase() === want);
-      }
-      case "set_user_tier": {
-        if (targets.length === 0) return null;
-        const { data } = await admin.from("economy_profiles").select("tier").in("user_id", targets);
-        const want = String(args?.tier ?? "").toUpperCase();
-        return Array.isArray(data) && data.length >= targets.length && data.every((r: any) => String(r?.tier ?? "").toUpperCase() === want);
-      }
-      default:
-        return null;
-    }
-  } catch { return null; }
-}
-
 async function resolveTargetNames(admin: any, ids: string[]): Promise<string[]> {
   if (!ids.length) return [];
   const { data: profiles } = await admin.from("profiles").select("user_id,display_name").in("user_id", ids);
@@ -314,23 +251,8 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
   reads.forEach(({ index, step }, i) => { indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "READ", ...readResults[i] }; });
   for (const { index, step } of writes) {
     const out = await executeStep(userClient, String(step.tool), step.args ?? {});
-    let verified = out.ok ? await verifyWrite(admin, String(step.tool), step.args ?? {}) : null;
-    if (out.ok && step.tool === "adjust_coins") {
-      const receipts = Array.isArray(out.result) ? out.result as any[] : [];
-      const balances: any[] = [];
-      verified = receipts.length > 0;
-      for (const receipt of receipts) {
-        const expected = receipt.result?.details?.new_balance;
-        const { data, error } = await admin.from("economy_profiles").select("user_id,coin_balance").eq("user_id", receipt.target).maybeSingle();
-        const confirmed = !error && data && typeof expected === "number" && data.coin_balance === expected;
-        if (!confirmed) verified = false;
-        balances.push({target:receipt.target,balance:confirmed ? data.coin_balance : null,confirmed:!!confirmed});
-      }
-      (out as any).balances = balances;
-    }
-    if (out.ok && step.tool === "gift_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
-    if (out.ok && step.tool === "deduct_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
-    if (out.ok && step.tool === "send_notice") verified = await noticeVerified(admin, out.result, step.args ?? {});
+    const verified = out.ok ? await runVerifier(admin, String(step.tool), step.args ?? {}, out.result) : null;
+    if (out.ok && (out.result as any)?.balances) (out as any).balances = (out.result as any).balances;
     indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "WRITE", verified, ...out };
   }
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);
