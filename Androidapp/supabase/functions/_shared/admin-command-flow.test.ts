@@ -93,6 +93,13 @@ Deno.test("mass deduction is refused with a clear boundary", async () => {
   assertEquals(state.row, null);
 });
 
+Deno.test("Roy's 08:49 'Valued at -4.1 each donate to all users coins' hits the mass-deduction refusal, never an amount re-ask", async () => {
+  const { admin, userClient, state } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Valued at -4.1 each donate to all users coins");
+  assertStringIncludes(r.message, "deduction has to name each member");
+  assertEquals(state.row, null);
+});
+
 Deno.test("single-member flow resolves the recipient and proposes one plan with default reason", async () => {
   const { admin, userClient, state } = makeClients();
   const r2 = await coinDialog(admin, userClient, "admin-1", "Give Kevin 200");

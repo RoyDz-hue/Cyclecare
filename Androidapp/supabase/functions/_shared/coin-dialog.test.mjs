@@ -85,3 +85,15 @@ test('"any user" delegates the pick; signed amounts are preserved (Roy 08:25 def
   const named = parseCoinRequest('Give any user 5 coins');
   assert.equal(named.query, null);
 });
+
+test('amount written away from the word "coins" is read exactly (Roy 08:49 defect)', () => {
+  // Roy's exact message: amount AND all-users scope are both given, so ACI
+  // must never ask for the amount again. Scope all + negative = the existing
+  // mass-deduction refusal (policy unchanged).
+  assert.deepEqual(parseCoinRequest('Valued at -4.1 each donate to all users coins'),
+    { scope: 'all', delta: -4.1, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Donate 5 coins to all users'), { scope: 'all', delta: 5, query: null, reason: null });
+  // No amount written still means no amount: never invent one.
+  assert.equal(parseCoinRequest('Gift all users coins'), null);
+  assert.equal(parseCoinRequest('Donate coins to everyone'), null);
+});

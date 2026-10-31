@@ -36,6 +36,11 @@ export function parseCoinRequest(text) {
   const WORDNUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
   let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
   if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w)amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];}
+  // The amount can sit away from the word "coins" ("Valued at -4.1 each
+  // donate to all users coins"): read the exact signed number as long as a
+  // coin word appears somewhere. The amount is never asked for again when it
+  // is already written; scope/verb branches below still decide what it means.
+  if(!amt&&/\bcoins?\b/i.test(t)){const n=t.match(/-?\d+(?:\.\d+)?/);if(n)amt=[n[0],n[0]];}
   // Audience scope. Bare forms mean every member (grounded: the member registry
   // is exactly the all-users population). ANY adjective qualifier ("eligible",
   // "active", "paying", "extant", "new") names a SUBSET: qualifiers are audience
@@ -46,7 +51,7 @@ export function parseCoinRequest(text) {
   const allScope=/\b(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|per[-\s]capita|the\s+whole\s+(?:community|team)|across\s+all\s+(?:our\s+)?(?:users?|members?))\b/i.test(t);
   const qualifiedScope=/\b(?:all\s+(?:our\s+)?(?:(?!our\b)[\w-]+\s+){1,3}(?:users?|members?)|every\s+(?:[\w-]+\s+){1,2}(?:user|member)|each\s+(?:[\w-]+\s+){1,2}(?:user|member)|per[-\s](?:[\w-]+[-\s]+){1,3}(?:user|member)|across\s+(?:(?!all\b|our\b)[\w-]+\s+){1,4}(?:users?|members?))\b/i.test(t);
   const deduct=/\b(?:deduct|deduction|debit|remove|take\s+back|take|claw\s*back)\b/i.test(t);
-  const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits|add|adds|adding|top\s*up|bless|blesses|shower|showers|receive|receives|receiving|get|gets|getting)\b/i.test(t);
+  const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits|add|adds|adding|top\s*up|bless|blesses|shower|showers|receive|receives|receiving|get|gets|getting|donate|donates|donating|donation)\b/i.test(t);
   // A qualifier anywhere on the audience wins over any bare/totality wording in
   // the same message: "per extant eligible user ... per-capita" is still a
   // qualified audience, so subset is checked first.
