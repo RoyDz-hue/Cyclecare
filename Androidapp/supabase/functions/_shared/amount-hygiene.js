@@ -107,13 +107,54 @@ export function expressedNegative(text, amount) {
 // gift, credit, bonus, ...). Direction is semantics: when the cues conflict,
 // or when the plan's direction contradicts the only cue present, the request
 // is ambiguous and must clarify - never guess a direction at any confidence.
-const DECREASE_CUES = /\b(?:negative|minus|diminish(?:es|ed|ing)?|reduc(?:es|ed|ing|tion|tions)|decreas(?:es|ed|ing)|lower(?:s|ed|ing)?|less|shrink(?:s|ing)?|deduct(?:s|ed|ing|ion)?|debit(?:s|ed|ing)?|subtract(?:s|ed|ing|ion)?|penalt(?:y|ies)|charge[sd]?|dock(?:s|ed|ing)?|claw\s*back|tak(?:e|en|ing)|took|remov(?:e|es|ed|ing|al)|cut(?:s|ting)?|slash(?:es|ed|ing)?)\b/i;
-const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing))\b/i;
+export const DECREASE_CUES = /\b(?:negative|minus|diminish(?:es|ed|ing)?|reduc(?:es|ed|ing|tion|tions)|decreas(?:es|ed|ing)|lower(?:s|ed|ing)?|less|shrink(?:s|ing)?|deduct(?:s|ed|ing|ion)?|debit(?:s|ed|ing)?|subtract(?:s|ed|ing|ion)?|penalt(?:y|ies)|charge[sd]?|dock(?:s|ed|ing)?|claw\s*back|tak(?:e|en|ing)|took|remov(?:e|es|ed|ing|al)|cut(?:s|ting)?|slash(?:es|ed|ing)?)\b/i;
+export const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing))\b/i;
 
 // A negative coin plan is also grounded by a deduction verb ("take", "deduct",
 // "remove", ...) - the word "negative" is not the only way to take coins away.
 export function expressedDeduction(text) {
   return DECREASE_CUES.test(String(text));
+}
+
+// Direction is carried by the AMOUNT PHRASE, not by a bag-of-words vote: in
+// "allocated to all users a diminishing balance of 2 coins each", "allocated"
+// only attaches the amount to the audience while "diminishing" directs the
+// amount itself - the request is a deduction. For each written occurrence of
+// the amount, the cue CLOSEST in front of it wins; an explicit sign
+// ("negative three", "-3") outranks every cue. Returns a Set of 'dec'/'inc';
+// both present means the amount is genuinely contradictory -> clarify.
+const CUE_WINDOW = 48;
+function nearestCue(before) {
+  const win = before.slice(-CUE_WINDOW);
+  const lastEnd = (re) => {
+    const g = new RegExp(re.source, 'gi');
+    let m, last = -1;
+    while ((m = g.exec(win)) !== null) last = g.lastIndex;
+    return last;
+  };
+  return { dec: lastEnd(DECREASE_CUES), inc: lastEnd(INCREASE_CUES) };
+}
+export function attachedPolarities(text, amount) {
+  const out = new Set();
+  if (!Number.isFinite(amount)) return out;
+  const abs = Math.abs(amount);
+  const forms = [String(abs)];
+  if (Number.isInteger(abs) && WORD_FOR_NUM[abs]) forms.push(WORD_FOR_NUM[abs]);
+  const t = String(text);
+  for (const form of forms) {
+    const rx = new RegExp(`(^|[^\\d.])${form.replace('.', '\\.')}(?![\\d.])`, 'gi');
+    let m;
+    while ((m = rx.exec(t)) !== null) {
+      const idx = m.index + m[1].length;
+      const before = t.slice(0, idx);
+      if (/(?:negative|minus)\s*$/i.test(before)) { out.add('dec'); continue; }
+      if (form === String(abs) && /\-\s*$/.test(before)) { out.add('dec'); continue; }
+      const { dec, inc } = nearestCue(before);
+      if (dec < 0 && inc < 0) continue;
+      out.add(dec > inc ? 'dec' : 'inc');
+    }
+  }
+  return out;
 }
 
 // Semantic direction gate for every coin-moving write: gift_all_coins must be
@@ -126,9 +167,18 @@ export function signMismatchProblem(text, tool, amount) {
   if (tool !== 'gift_all_coins' && tool !== 'adjust_coins' && tool !== 'deduct_all_coins') return null;
   if (!Number.isFinite(amount) || amount === 0) return null;
   const negativePlan = tool === 'deduct_all_coins' || amount < 0;
-  if (expressedNegative(text, amount)) {
-    return negativePlan ? null : 'you wrote a negative amount - that would take coins away, but this plan adds them';
+  // Amount-attached direction first: the cue bound to the amount phrase
+  // itself decides; an audience-attachment verb elsewhere does not vote.
+  const pol = attachedPolarities(text, amount);
+  if (pol.has('dec') && pol.has('inc')) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';
+  if (pol.has('dec')) {
+    if (negativePlan) return null;
+    return /(?:negative|minus)\s*(?:[\d]+|one|two|three|four|five|six|seven|eight|nine|ten)/i.test(String(text))
+      ? 'you wrote a negative amount - that would take coins away, but this plan adds them'
+      : 'your message says the balance is reduced, but this plan adds coins';
   }
+  if (pol.has('inc')) return negativePlan ? 'your message adds or allocates coins, but this plan takes them away' : null;
+  // No amount-attached cue: message-level cues decide, conflict clarifies.
   const dec = DECREASE_CUES.test(String(text));
   const inc = INCREASE_CUES.test(String(text));
   if (dec && inc) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';

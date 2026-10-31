@@ -142,3 +142,15 @@ test('contradictory amounts fail closed; a repeated amount is fine', () => {
   assert.equal(parseCoinRequest('Gift -3 coins to all users, yes 3 coins'), null);
   assert.deepEqual(parseCoinRequest('Gift 3 coins to all users, exactly 3 coins'), { scope: 'all', delta: 3, query: null, reason: null });
 });
+
+test('amount-attached direction: the cue bound to the amount decides (Roy 12:14, corrected)', () => {
+  // "allocated" attaches the amount to the audience; "diminishing" directs it.
+  assert.deepEqual(parseCoinRequest('Directive therefore, allocated to all users a diminishing balance of 2 coins each'),
+    { scope: 'all', delta: -2, query: null, reason: null });
+  // An audience verb with no amount cue keeps the positive default.
+  assert.deepEqual(parseCoinRequest('Allocated to all users a balance of 2 coins each'),
+    { scope: 'all', delta: 2, query: null, reason: null });
+  // A reduction noun attached to the amount is a deduction.
+  assert.deepEqual(parseCoinRequest('Apply a reduction of 2 coins each to all users'),
+    { scope: 'all', delta: -2, query: null, reason: null });
+});

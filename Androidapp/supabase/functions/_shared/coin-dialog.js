@@ -1,5 +1,5 @@
 // Explicit coin slots. A confirmation never executes a pending plan.
-import {amountCandidates} from './amount-hygiene.js';
+import {amountCandidates, DECREASE_CUES, INCREASE_CUES} from './amount-hygiene.js';
 export function parseCoinRequest(text) {
   const t=text.trim().replace(/^debit\s+amount\s+of\s+/i,'deduct ').replace(/^debit\s+/i,'deduct ');
   let m=t.match(/^(deduct|remove|take)\s+(\d+(?:\.\d+)?)\s*(?:coins?\s*)?from\s+(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member))(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
@@ -63,11 +63,22 @@ export function parseCoinRequest(text) {
   let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
   let amtIndex=amt?amt.index:-1;
   if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w){amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];amtIndex=w.index;}}
-  // Sign is semantics: "negative three" and "minus 3" are DEDUCTIONS, never
-  // gifts. The word "negative"/"minus" directly before the amount negates it,
-  // exactly as a typed "-3" would. Losing this flips the action's direction.
+  // Sign is semantics: direction is carried by the AMOUNT PHRASE. An explicit
+  // "negative"/"minus" (or a typed "-3") negates directly; otherwise the cue
+  // CLOSEST in front of the amount decides ("a diminishing balance of 2 coins"
+  // is a deduction even when an audience-attachment verb like "allocated"
+  // appears earlier). Losing this flips the action's direction.
+  const amountWordSign=(idx,literal)=>{
+    if(literal&&literal.startsWith('-'))return 1; // sign already in the number
+    const before=t.slice(0,idx);
+    if(/(?:negative|minus)\s*$/i.test(before))return -1;
+    const win=before.slice(-48);
+    const lastEnd=(re)=>{const g=new RegExp(re.source,'gi');let m2,last=-1;while((m2=g.exec(win))!==null)last=g.lastIndex;return last;};
+    const d=lastEnd(DECREASE_CUES),i=lastEnd(INCREASE_CUES);
+    return d>=0&&d>i?-1:1;
+  };
   let wordSign=1;
-  if(amt&&amtIndex>0&&/(?:negative|minus)\s*$/i.test(t.slice(0,amtIndex)))wordSign=-1;
+  if(amt&&amtIndex>0)wordSign=amountWordSign(amtIndex,amt[1]);
   // The amount can sit away from the word "coins" ("Valued at -4.1 each
   // donate to all users coins"): read the exact signed number as long as a
   // coin word appears somewhere. The amount is never asked for again when it
@@ -79,7 +90,7 @@ export function parseCoinRequest(text) {
     // several survivors is ambiguous: clarify rather than gift a date or a
     // count. One implementation serves the parser and the planner gate.
     const cands=amountCandidates(t);
-    if(cands.length===1){amt=[cands[0],cands[0]];const ci=t.indexOf(cands[0]);if(ci>0&&/(?:negative|minus)\s*$/i.test(t.slice(0,ci)))wordSign=-1;}
+    if(cands.length===1){amt=[cands[0],cands[0]];const ci=t.indexOf(cands[0]);if(ci>0)wordSign=amountWordSign(ci,cands[0]);}
   }
   // Audience scope. Bare forms mean every member (grounded: the member registry
   // is exactly the all-users population). ANY adjective qualifier ("eligible",
