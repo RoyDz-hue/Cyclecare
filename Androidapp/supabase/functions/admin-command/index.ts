@@ -24,7 +24,7 @@ Available tools (use only these, with only these args):
 - get_audit_log {} - recent admin audit log.
 - set_coin_packages {packages: [{id, title, coins, bonus_coins, price_kes, price_usd, tag?}]} - REPLACE the price list (psychological pricing rules apply).
 - set_cosmetic_price {item_id, price_coins?, is_active?} - change one cosmetic.
-- adjust_coins {targets: [user_id,...], delta: integer, reason} - grant (positive) or deduct (negative) coins; max 10000 per step, max 5 targets.
+- adjust_coins {targets: [user_id,...], delta: number (up to 3 decimal places), reason} - grant (positive) or deduct (negative) coins; max 10000 per step, max 5 targets.
 - set_user_status {targets: [user_id,...], status: "ACTIVE"|"SUSPENDED"|"BANNED", reason?, duration_hours?} - max 5 targets.
 - set_user_tier {targets: [user_id,...], tier: "FREE"|"SUPPORTER"|"PREMIUM"} - max 5 targets.
 - gift_artifact {targets: [user_id,...], artifact_name: "Luminescent Moon"|"Golden Blossom"|"Rose Obelisk"|"Dual Eclipse"|"Celestial Tiara", artifact_rarity?}

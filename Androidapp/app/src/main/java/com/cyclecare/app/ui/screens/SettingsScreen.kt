@@ -1,5 +1,6 @@
 package com.cyclecare.app.ui.screens
 
+import com.cyclecare.app.util.CoinFormatter
 import com.cyclecare.app.R
 
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -370,7 +371,7 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "${uiState.economyProfile.coinBalance} Coins • ${uiState.economyProfile.rank.title} Rank • 3D Talismans",
+                                text = "${CoinFormatter.format(uiState.economyProfile.coinBalance)} Coins • ${uiState.economyProfile.rank.title} Rank • 3D Talismans",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

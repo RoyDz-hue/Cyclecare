@@ -54,7 +54,7 @@ class SupabaseEconomyServiceWalletTest {
     @Test fun normalWalletRequiresBothOwnerRowsAndExactBalance() = runBlocking {
         enqueueWallet()
         val result = service().fetchVerifiedProfile(owner)
-        assertEquals(4L, (result as EconomyResult.Success).data.coinBalance)
+        assertEquals(java.math.BigDecimal("4"), (result as EconomyResult.Success).data.coinBalance)
         assertEquals(owner, result.data.userId)
     }
     @Test fun identityMismatchFailsClosed() = runBlocking {
@@ -66,7 +66,7 @@ class SupabaseEconomyServiceWalletTest {
         assertTrue(service().fetchVerifiedProfile(owner) is EconomyResult.Error)
     }
     @Test fun malformedAndMissingCountersAreNotCoercedIntoZeroBalance() = runBlocking {
-        for (value in listOf("4", "invalid", 1.5, -1)) {
+        for (value in listOf("4", "invalid", -1)) {
             server.enqueue(MockResponse().setBody("{\"success\":true}"))
             server.enqueue(MockResponse().setBody(JSONArray().put(wallet().put("coin_balance", value)).toString()))
             assertTrue(service().fetchVerifiedProfile(owner) is EconomyResult.Error)
@@ -75,6 +75,12 @@ class SupabaseEconomyServiceWalletTest {
         server.enqueue(MockResponse().setBody("{\"success\":true}"))
         server.enqueue(MockResponse().setBody(JSONArray().put(missing).toString()))
         assertTrue(service().fetchVerifiedProfile(owner) is EconomyResult.Error)
+    }
+    @Test fun decimalBalanceIsAcceptedExactly() = runBlocking {
+        enqueueWallet(wallet().put("coin_balance", 1.5).put("lifetime_earned", 10.25))
+        val result = service().fetchVerifiedProfile(owner)
+        assertEquals(java.math.BigDecimal("1.5"), (result as EconomyResult.Success).data.coinBalance)
+        assertEquals(java.math.BigDecimal("10.25"), result.data.lifetimeEarned)
     }
     @Test fun oversizedResponseFailsClosed() = runBlocking {
         server.enqueue(MockResponse().setChunkedBody("x".repeat(70_000), 512))

@@ -1,5 +1,6 @@
 package com.cyclecare.app.ui.screens
 
+import com.cyclecare.app.util.CoinFormatter
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,9 +39,9 @@ import com.cyclecare.app.R
 
 @Composable
 fun CoinTransferDialog(
-    currentBalance: Long,
+    currentBalance: java.math.BigDecimal,
     onDismiss: () -> Unit,
-    onSendTransfer: (recipientEmail: String, amount: Long) -> Unit
+    onSendTransfer: (recipientEmail: String, amount: java.math.BigDecimal) -> Unit
 ) {
     var recipientEmail by remember { mutableStateOf("") }
     var transferAmountText by remember { mutableStateOf("50") }
@@ -73,7 +74,7 @@ fun CoinTransferDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Available Vault Balance: $currentBalance Coins",
+                    text = "Available Vault Balance: ${CoinFormatter.format(currentBalance)} Coins",
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -139,15 +140,20 @@ fun CoinTransferDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val amount = transferAmountText.toLongOrNull() ?: 0L
+                    val amountText = transferAmountText.trim()
                     if (recipientEmail.isBlank() || !recipientEmail.contains("@")) {
                         errorMessage = "Please enter a valid registered email address."
-                    } else if (amount <= 0) {
-                        errorMessage = "Please enter an amount greater than zero."
-                    } else if (amount > currentBalance) {
-                        errorMessage = "Amount exceeds your available balance ($currentBalance coins)."
+                    } else if (!Regex("""^\d+(\.\d{1,3})?$""").matches(amountText)) {
+                        errorMessage = "Enter an amount with up to 3 decimal places."
                     } else {
-                        onSendTransfer(recipientEmail, amount)
+                        val amount = amountText.toBigDecimal()
+                        if (amount <= java.math.BigDecimal.ZERO) {
+                            errorMessage = "Please enter an amount greater than zero."
+                        } else if (amount > currentBalance) {
+                            errorMessage = "Amount exceeds your available balance (${CoinFormatter.format(currentBalance)} coins)."
+                        } else {
+                            onSendTransfer(recipientEmail, amount)
+                        }
                     }
                 },
                 modifier = Modifier

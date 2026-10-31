@@ -1,5 +1,6 @@
 package com.cyclecare.app.ui.screens
 
+import com.cyclecare.app.util.CoinFormatter
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -51,13 +52,13 @@ import com.cyclecare.app.ui.components.InteractiveArtifact3D
 @Composable
 fun InsufficientCoinsDialog(
     item: EconomyItem,
-    userCoins: Long,
+    userCoins: java.math.BigDecimal,
     userEmail: String?,
     onGoToStore: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val missingCoins = (item.price - userCoins).coerceAtLeast(1L)
+    val missingCoins = (item.price.toBigDecimal() - userCoins).coerceAtLeast(java.math.BigDecimal("0.001"))
     val shareMessage = CurrencyLocaleManager.buildShareableCoinRequestMessage(userEmail, missingCoins)
 
     AlertDialog(
@@ -105,7 +106,7 @@ fun InsufficientCoinsDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "$userCoins Coins",
+                                text = "${CoinFormatter.format(userCoins)} Coins",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )

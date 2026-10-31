@@ -1,6 +1,7 @@
 package com.cyclecare.app.data.economy
 
 import androidx.annotation.DrawableRes
+import java.math.BigDecimal
 import com.cyclecare.app.R
 
 enum class UserEconomyTier(
@@ -31,9 +32,9 @@ data class EconomyProfile(
     val userId: String = "",
     val tier: UserEconomyTier = UserEconomyTier.FREE,
     val rank: IdentityRank = IdentityRank.LUMEN,
-    val coinBalance: Long = 0L,
-    val lifetimeEarned: Long = 0L,
-    val lifetimeSpent: Long = 0L,
+    val coinBalance: BigDecimal = BigDecimal.ZERO,
+    val lifetimeEarned: BigDecimal = BigDecimal.ZERO,
+    val lifetimeSpent: BigDecimal = BigDecimal.ZERO,
     val activeFrame: String? = null,
     val activeArtifact: String? = "cycle_coin",
     val activeBackground: String? = null,
@@ -230,7 +231,7 @@ enum class TransactionType {
 
 data class CoinTransaction(
     val id: String,
-    val amount: Long,
+    val amount: BigDecimal,
     val type: TransactionType,
     val description: String,
     val timestamp: Long,

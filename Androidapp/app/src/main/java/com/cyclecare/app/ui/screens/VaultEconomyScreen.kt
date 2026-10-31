@@ -1,5 +1,6 @@
 package com.cyclecare.app.ui.screens
 
+import com.cyclecare.app.util.CoinFormatter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,7 +77,7 @@ import com.cyclecare.app.ui.components.InteractiveArtifact3D
 fun VaultEconomyScreen(
     profile: EconomyProfile,
     onMineCoins: () -> Unit,
-    onTransferCoins: (recipientEmail: String, amount: Long) -> Unit,
+    onTransferCoins: (recipientEmail: String, amount: java.math.BigDecimal) -> Unit,
     onUnlockItem: (EconomyItem) -> Unit,
     onEquipItem: (EconomyItem) -> Unit,
     onPurchasePackage: (com.cyclecare.app.data.economy.CoinPurchasePackage) -> Unit,
@@ -211,7 +212,7 @@ fun VaultEconomyScreen(
                                     )
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "${profile.coinBalance}",
+                                            text = CoinFormatter.format(profile.coinBalance),
                                             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -289,7 +290,7 @@ fun VaultEconomyScreen(
 
                             // Lifetime stats on their own line
                             Text(
-                                text = "Earned: ${profile.lifetimeEarned} • Used: ${profile.lifetimeSpent}",
+                                text = "Earned: ${CoinFormatter.format(profile.lifetimeEarned)} • Used: ${CoinFormatter.format(profile.lifetimeSpent)}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -443,7 +444,7 @@ fun VaultEconomyScreen(
                                     } else {
                                         Button(
                                             onClick = {
-                                                if (profile.coinBalance < selectedArtifactForDetail.price) {
+                                                if (profile.coinBalance < selectedArtifactForDetail.price.toBigDecimal()) {
                                                     itemForInsufficientCoins = selectedArtifactForDetail
                                                 } else {
                                                     onUnlockItem(selectedArtifactForDetail)
@@ -671,7 +672,7 @@ fun VaultEconomyScreen(
                             } else {
                                 Button(
                                     onClick = {
-                                        if (profile.coinBalance < item.price) {
+                                        if (profile.coinBalance < item.price.toBigDecimal()) {
                                             itemForInsufficientCoins = item
                                         } else {
                                             onUnlockItem(item)

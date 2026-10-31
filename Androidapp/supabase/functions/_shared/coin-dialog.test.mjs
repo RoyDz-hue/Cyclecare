@@ -58,3 +58,15 @@ test('parseCoinRequest understands natural sentences and preserves decimals exac
   assert.equal(parseCoinRequest('How many coins does Kevin have?'), null, 'no amount-verb coin question stays null');
   assert.equal(parseCoinRequest('What is the price of 100 coins?'), null, 'pricing question stays null');
 });
+
+test('decimals beyond 3 places are preserved exactly for the flow to judge', () => {
+  const r = parseCoinRequest('Disburse 3.4567 coins each to all our users');
+  assert.equal(r.scope, 'all');
+  assert.equal(r.delta, 3.4567);
+});
+
+test('whole-number phrasing still parses after decimal support', () => {
+  const r = parseCoinRequest('Give all users 4 coins');
+  assert.equal(r.scope, 'all');
+  assert.equal(r.delta, 4);
+});

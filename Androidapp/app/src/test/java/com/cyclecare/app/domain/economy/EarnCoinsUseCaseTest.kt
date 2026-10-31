@@ -13,9 +13,9 @@ class EarnCoinsUseCaseTest {
 
     private val defaultProfile = EconomyProfile(
         userId = "test-user-id",
-        coinBalance = 100L,
-        lifetimeEarned = 100L,
-        lifetimeSpent = 0L,
+        coinBalance = java.math.BigDecimal("100"),
+        lifetimeEarned = java.math.BigDecimal("100"),
+        lifetimeSpent = java.math.BigDecimal.ZERO,
         tier = UserEconomyTier.FREE
     )
 
@@ -34,7 +34,7 @@ class EarnCoinsUseCaseTest {
         val result = useCase.reconcilePendingOfflineClaims(defaultProfile)
 
         assertTrue(result is EconomyResult.Success)
-        assertEquals(100L, (result as EconomyResult.Success).data.coinBalance)
+        assertEquals(java.math.BigDecimal("100"), (result as EconomyResult.Success).data.coinBalance)
     }
 
     @Test

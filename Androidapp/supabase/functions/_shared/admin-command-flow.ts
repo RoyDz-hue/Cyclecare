@@ -2,6 +2,16 @@
 // Imported by admin-command/index.ts and exercised directly by mocked Deno tests.
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "./coin-dialog.js";
 
+// Decimal Precision Rules: coins carry up to 3 decimals, handled EXACTLY.
+// String(n) is the shortest round-trip form, so its fraction length is the true
+// decimal count. All arithmetic runs in integer milli-units (thousandths):
+// for any decimal with <=3 fraction digits, Math.round(n*1000) is its exact
+// milli value, and milli/1000 prints back as the exact decimal. No float
+// arithmetic ever decides a coin amount.
+const coinDecimals=(n:number)=>(String(n).split(".")[1]??"").length;
+const coinMilli=(n:number)=>Math.round(n*1000);
+const coinText=(n:number)=>String(Number(n.toFixed(3))); // suggestion text only, never stored
+
 export async function coinDialog(admin:any,userClient:any,adminId:string,text:string):Promise<any|null> {
  const fresh=parseCoinRequest(text);
  const {data:previous,error:stateError}=await admin.from("admin_coin_dialog_state").select("state,updated_at").eq("admin_user_id",adminId).maybeSingle();
@@ -37,9 +47,9 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
      await persistMessage(admin,adminId,"assistant","chat",msg);
      return {success:true,type:"chat",message:msg};
    }
-   if(!Number.isInteger(gst.delta)){
+   if(coinDecimals(gst.delta)>3){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-     const msg=`Coins move in whole numbers, so I can't gift ${gst.delta} coins to each member. Say a whole number, like 3 or 4. No change has been made.`;
+     const msg=`Cycle Coins allow up to 3 decimal places, so I can't gift ${gst.delta} coins to each member. Try 3 decimals or fewer, like ${coinText(gst.delta)}. No change has been made.`;
      await persistMessage(admin,adminId,"assistant","chat",msg);
      return {success:true,type:"chat",message:msg};
    }
@@ -48,7 +58,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    if(profErr||!Array.isArray(profs))return {success:true,type:"chat",message:"I couldn't list the members just now. No change was made."};
    const snapshot=profs.map((p:any)=>String(p.user_id||p.device_id||p.id));
    if(!snapshot.length||snapshot.length>5000)return {success:true,type:"chat",message:"I couldn't prepare the member list safely. No change was made."};
-   const total=gst.delta*snapshot.length;
+   const total=coinMilli(gst.delta)*snapshot.length/1000; // exact: integer milli-units
    const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
    const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:steps[0].label,p_plan:{steps}});
    if(proposeError){const msg="I couldn't prepare the gift safely. Nothing was changed; please try again or say cancel.";await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
@@ -68,13 +78,13 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Confirm to make the change, Cancel to discard it, or say cancel. No extra change has been made.");
  if(typeof st.delta!=="number"||Number.isNaN(st.delta)||st.delta===0||Math.abs(st.delta)>10000){
    await retire(active?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-   const msg="Choose a non-zero whole number up to 10,000 coins. No change has been made.";
+   const msg="Choose a non-zero amount up to 10,000 coins. No change has been made.";
    await persistMessage(admin,adminId,"assistant","chat",msg);
    return {success:true,type:"chat",message:msg};
  }
- if(!Number.isInteger(st.delta)){
+ if(coinDecimals(st.delta)>3){
    await retire(active?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-   const msg=`Coins move in whole numbers, so ${st.delta} coins isn't possible. Say a whole number up to 10,000. No change has been made.`;
+   const msg=`Cycle Coins allow up to 3 decimal places, so ${st.delta} coins isn't possible. Try 3 decimals or fewer, like ${coinText(st.delta)}. No change has been made.`;
    await persistMessage(admin,adminId,"assistant","chat",msg);
    return {success:true,type:"chat",message:msg};
  }
@@ -120,9 +130,10 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
 export function giftAllVerified(result: any, args: any): boolean {
   const gifted = typeof result?.recipients === "number" ? result.recipients : null;
   const snapshot = Array.isArray(args?.recipients) ? args.recipients.length : null;
-  const delta = Math.trunc(Number(args?.delta) || 0);
+  const delta = Number(args?.delta);
   const total = typeof result?.total_coins === "number" ? result.total_coins : null;
-  return gifted !== null && total === gifted * delta && (snapshot === null ? gifted > 0 : gifted === snapshot);
+  if (gifted === null || !Number.isFinite(delta) || total === null) return false;
+  return Math.round(total * 1000) === Math.round(delta * 1000) * gifted && (snapshot === null ? gifted > 0 : gifted === snapshot);
 }
 
 export async function executeStep(userClient: any, tool: string, args: any, includeGuides = false): Promise<{ ok: boolean; result?: unknown; error?: string }> {
@@ -156,9 +167,11 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
         const control = await rpc("admin_get_control_data", {});
         const item = (control.data?.cosmetics ?? []).find((c: any) => c.item_id === args?.item_id);
         if (!item) return { ok: false, error: `cosmetic ${args?.item_id} not found` };
+        const price = args?.price_coins === undefined || args?.price_coins === null ? item.price_coins : Number(args.price_coins);
+        if (!Number.isFinite(price) || price < 0 || price > 1000000 || coinDecimals(price) > 3) return { ok: false, error: "price_coins must be 0-1,000,000 with up to 3 decimal places" };
         const { data, error } = await rpc("admin_upsert_cosmetic", {
           p_item_id: item.item_id, p_kind: item.kind, p_name: item.name, p_description: item.description,
-          p_price_coins: typeof args?.price_coins === "number" ? Math.round(args.price_coins) : item.price_coins,
+          p_price_coins: price,
           p_rarity: item.rarity, p_is_active: typeof args?.is_active === "boolean" ? args.is_active : item.is_active,
           p_sort_order: item.sort_order ?? 0, p_premium_included: item.premium_included === true });
         return error ? { ok: false, error: error.message } : { ok: true, result: data };
@@ -168,7 +181,11 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
         const list = tool === "moderate_message" ? targets : targets;
         for (const target of list) {
           let out;
-          if (tool === "adjust_coins") out = await rpc("admin_apply_action", { p_action: "COINS", p_target_user_id: target, p_payload: { delta: Math.trunc(Number(args?.delta) || 0), reason: String(args?.reason ?? "Admin Command") } });
+          if (tool === "adjust_coins") {
+            const delta = Number(args?.delta);
+            if (!Number.isFinite(delta) || delta === 0 || coinDecimals(delta) > 3) { results.push({ target, ok: false, error: "coin delta must be a non-zero amount with up to 3 decimal places" }); continue; }
+            out = await rpc("admin_apply_action", { p_action: "COINS", p_target_user_id: target, p_payload: { delta, reason: String(args?.reason ?? "Admin Command") } });
+          }
           else if (tool === "set_user_status") out = await rpc("admin_apply_action", { p_action: "STATUS", p_target_user_id: target, p_payload: { status: String(args?.status ?? ""), reason: args?.reason ?? null, duration_hours: args?.duration_hours ?? null } });
           else if (tool === "set_user_tier") out = await rpc("admin_apply_action", { p_action: "TIER", p_target_user_id: target, p_payload: { tier: String(args?.tier ?? "") } });
           else if (tool === "gift_artifact") out = await rpc("admin_apply_action", { p_action: "GIFT", p_target_user_id: target, p_payload: { artifact_name: String(args?.artifact_name ?? ""), artifact_rarity: args?.artifact_rarity ?? "Rare" } });
@@ -180,8 +197,10 @@ export async function executeStep(userClient: any, tool: string, args: any, incl
         return { ok: allOk, result: results, error: allOk ? undefined : (results.find((r: any) => !r.ok)?.error ?? "step failed") };
       }
       case "gift_all_coins": {
+        const delta = Number(args?.delta);
+        if (!Number.isFinite(delta) || delta < 1 || delta > 10000 || coinDecimals(delta) > 3) return { ok: false, error: "gift delta must be 1-10,000 coins with up to 3 decimal places" };
         const { data, error } = await rpc("admin_gift_all_coins", {
-          p_delta: Math.trunc(Number(args?.delta) || 0),
+          p_delta: delta,
           p_reason: String(args?.reason ?? ""),
           p_run_key: String(args?.run_key ?? ""),
           p_recipients: Array.isArray(args?.recipients) && args.recipients.length ? args.recipients.map(String) : null });

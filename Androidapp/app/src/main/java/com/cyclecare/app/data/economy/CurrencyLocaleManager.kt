@@ -104,8 +104,8 @@ object CurrencyLocaleManager {
     }
 
     /** Builds a shareable request without changing the caller's wallet. */
-    fun buildShareableCoinRequestMessage(userEmail: String?, missingCoins: Long): String {
+    fun buildShareableCoinRequestMessage(userEmail: String?, missingCoins: java.math.BigDecimal): String {
         val email = userEmail ?: "my registered email"
-        return "Hi! I'm using CycleCare to track my cycle health. Could you send me $missingCoins Cycle Coins to help me unlock an artifact? My registered account is: $email. Let's track together on CycleCare!"
+        return "Hi! I'm using CycleCare to track my cycle health. Could you send me ${com.cyclecare.app.util.CoinFormatter.format(missingCoins)} Cycle Coins to help me unlock an artifact? My registered account is: $email. Let's track together on CycleCare!"
     }
 }

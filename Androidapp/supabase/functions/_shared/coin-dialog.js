@@ -13,7 +13,7 @@ export function parseCoinRequest(text) {
   if(m)return {delta:Number(m[2]||m[5]),query:(m[3]||m[4]).trim(),reason:m[6]?.trim()||null};
   // Natural-language fallback: a coin amount plus a clear scope or verb anywhere
   // in the sentence, however it is phrased. Decimals stay exact; the flow
-  // validates whole numbers without rounding.
+  // enforces the 3-decimal limit without rounding.
   const amt=t.match(/(\d+(?:\.\d+)?)\s*coins?\b/i);
   const allScope=/\b(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|the\s+whole\s+(?:community|team))\b/i.test(t);
   const deduct=/\b(?:deduct|remove|take\s+back|take|claw\s*back)\b/i.test(t);

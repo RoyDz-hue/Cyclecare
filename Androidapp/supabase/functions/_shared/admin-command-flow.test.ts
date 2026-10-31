@@ -43,6 +43,7 @@ function makeClients(profiles: any[] = PROFILES) {
         return { data: { user_id: id, email }, error: null };
       }
       if (name === "admin_random_member") return { data: { user_id: "u-amani", display_name: "Amani", email: "amani@example.com" }, error: null };
+      if (name === "admin_apply_action") return { data: { success: true, action: params.p_action, details: { delta: params.p_payload?.delta } }, error: null };
       throw new Error("unexpected rpc " + name);
     },
   };
@@ -177,14 +178,33 @@ Deno.test("random-member gift: picks a member, names the pick, proposes one plan
   assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 1);
 });
 
-Deno.test("decimal all-scope gift: whole-number boundary, amount echoed, nothing proposed", async () => {
+Deno.test("decimal all-scope gift proposes one plan with the exact amount", async () => {
   const { admin, userClient, state, rpcCalls } = makeClients();
   const r = await coinDialog(admin, userClient, "admin-1", "Broo I therefore direct you acutely to categorically disburse 3.5 coins each to all our users on the go");
-  assertEquals(r.type, "chat");
-  assertStringIncludes(r.message, "whole numbers");
-  assertStringIncludes(r.message, "3.5");
-  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0, "no plan for a decimal amount");
+  assertEquals(r.type, "plan");
+  assertEquals(r.plan.steps[0].args.delta, 3.5, "decimal amount preserved exactly");
+  assertStringIncludes(r.plan.steps[0].label, "Gift 3.5 coins to each of the 3 members (10.5 coins in total)");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 1);
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
   assertEquals(state.row, null, "no stuck dialog state");
+});
+
+Deno.test("more than 3 decimals is rejected with the exact amount echoed, nothing proposed", async () => {
+  const { admin, userClient, rpcCalls, state } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Disburse 3.4567 coins each to all our users");
+  assertEquals(r.type, "chat");
+  assertStringIncludes(r.message, "3 decimal places");
+  assertStringIncludes(r.message, "3.4567");
+  assertStringIncludes(r.message, "3.457");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0);
+  assertEquals(state.row, null, "no stuck dialog state");
+});
+
+Deno.test("decimal gift total in the plan label is exact, not float dust", async () => {
+  const { admin, userClient } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Disburse 2.3 coins each to all our users");
+  assertEquals(r.type, "plan");
+  assertStringIncludes(r.plan.steps[0].label, "Gift 2.3 coins to each of the 3 members (6.9 coins in total)");
 });
 
 Deno.test("natural-phrased whole all-scope gift proposes one plan", async () => {
@@ -200,15 +220,56 @@ Deno.test("a new full gift instruction is not swallowed as a pending recipient n
   const stuck = await coinDialog(admin, userClient, "admin-1", "Give Zznotaperson 2 coins");
   assertStringIncludes(stuck.message, "No member matches");
   const r = await coinDialog(admin, userClient, "admin-1", "Broo I therefore direct you acutely to categorically disburse 3.5 coins each to all our users on the go");
-  assertStringIncludes(r.message, "whole numbers", "parsed as a new gift, not a recipient name");
+  assertEquals(r.type, "plan", "parsed as a new gift, not a recipient name");
+  assertEquals(r.plan.steps[0].args.delta, 3.5);
   assertEquals(state.row, null, "stuck recipient state cleared");
 });
 
-Deno.test("decimal single-recipient gift: whole-number boundary, nothing proposed", async () => {
+Deno.test("decimal single-recipient gift proposes one plan with the exact amount", async () => {
   const { admin, userClient, rpcCalls } = makeClients();
   const r = await coinDialog(admin, userClient, "admin-1", "Give Kevin 3.5 coins");
+  assertEquals(r.type, "plan");
+  assertEquals(r.plan.steps[0].args.delta, 3.5, "decimal amount preserved exactly");
+  assertStringIncludes(r.plan.steps[0].label, "Grant 3.5 coins to kevin@example.com");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 1);
+});
+
+Deno.test("single-recipient gift with more than 3 decimals is rejected, nothing proposed", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Give Kevin 3.4567 coins");
   assertEquals(r.type, "chat");
-  assertStringIncludes(r.message, "whole numbers");
-  assertStringIncludes(r.message, "3.5");
+  assertStringIncludes(r.message, "3 decimal places");
+  assertStringIncludes(r.message, "3.4567");
   assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0);
+});
+
+Deno.test("giftAllVerified accepts exact decimal totals and float dust", async () => {
+  const { giftAllVerified } = await import("./admin-command-flow.ts");
+  assertEquals(giftAllVerified({ recipients: 3, total_coins: 10.5 }, { delta: 3.5, recipients: ["a", "b", "c"] }), true);
+  assertEquals(giftAllVerified({ recipients: 3, total_coins: 6.8999999999999995 }, { delta: 2.3, recipients: ["a", "b", "c"] }), true, "JS float product dust tolerated");
+  assertEquals(giftAllVerified({ recipients: 3, total_coins: 10.6 }, { delta: 3.5, recipients: ["a", "b", "c"] }), false);
+  assertEquals(giftAllVerified({ recipients: 3, total_coins: 3.003 }, { delta: 1.001, recipients: ["a", "b", "c"] }), true, "thousandths compare exactly");
+});
+
+Deno.test("executeStep passes the exact decimal delta through, never truncates", async () => {
+  const { userClient, rpcCalls } = makeClients();
+  const ok = await executeStep(userClient, "adjust_coins", { targets: ["u-kevin"], delta: 2.5, reason: "Test" });
+  assertEquals(ok.ok, true);
+  const call = rpcCalls.find((c) => c.name === "admin_apply_action");
+  assertEquals(call.params.p_payload.delta, 2.5, "2.5 reaches the RPC exactly");
+  const gift = await executeStep(userClient, "gift_all_coins", { delta: 3.5, reason: "Test", run_key: "rk-1", recipients: ["u-1", "u-2"] });
+  assertEquals(gift.ok, true);
+  const giftCall = rpcCalls.find((c) => c.name === "admin_gift_all_coins");
+  assertEquals(giftCall.params.p_delta, 3.5, "3.5 reaches the RPC exactly");
+});
+
+Deno.test("executeStep refuses more than 3 decimals instead of rounding", async () => {
+  const { userClient, rpcCalls } = makeClients();
+  const before = rpcCalls.length;
+  const gift = await executeStep(userClient, "gift_all_coins", { delta: 3.4567, reason: "Test", run_key: "rk-1", recipients: ["u-1"] });
+  assertEquals(gift.ok, false);
+  const adj = await executeStep(userClient, "adjust_coins", { targets: ["u-kevin"], delta: 1.2345, reason: "Test" });
+  assertEquals(adj.ok, false);
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins" || c.name === "admin_apply_action").length, 0, "no RPC left the edge");
+  assertEquals(rpcCalls.length, before, "no RPC calls at all");
 });
