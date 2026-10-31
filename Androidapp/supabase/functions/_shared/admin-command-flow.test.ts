@@ -283,12 +283,34 @@ Deno.test("verbose all-users directive (hyphenated amount, per-user, noun verbs)
   assertEquals(out?.plan?.steps?.[0]?.args?.delta, 4.6, "4.6 preserved exactly");
 });
 
+Deno.test("held-out gift competence corpus: directives, subsets, questions, negation, cancellation, word numbers", async () => {
+  const { parseCoinRequest } = await import("./coin-dialog.js");
+  const cases = [
+    ["Drop 5 coins into every member's wallet", "all"], ["Add 10 coins to everyone's balance", "all"],
+    ["Bless the whole community with 100 coins", "all"], ["Everyone gets 8 coins", "all"],
+    ["I want every user to receive 2.5 coins", "all"], ["Top up all users with 3 coins", "all"],
+    ["Gift all users five coins", "all"], ["Send 50 coins to Kevin", "single"],
+    ["Kevin should get 20 coins", "null"], ["Put 5 coins in amani@example.com's account", "null"],
+    ["Gift 5 coins to all premium members", "subset"], ["Give every new member 1 coin", "subset"],
+    ["How many coins does everyone have in total?", "null"], ["Did the 4 coins go to all users?", "null"],
+    ["List users with more than 100 coins", "null"], ["Don't give all users 5 coins", "null"],
+    ["Do not gift anyone coins", "null"], ["Never gift all users coins again", "null"],
+    ["Cancel the gift of 5 coins to all users", "null"], ["Gift all users -5 coins", "all-neg"],
+    ["Gift all users some coins", "null"], ["Reverse the gift to all users of 5 coins", "null"],
+  ];
+  for (const [text, exp] of cases) {
+    const r = parseCoinRequest(text);
+    const got = !r ? "null" : r.scope === "all" ? (r.delta < 0 ? "all-neg" : "all") : r.scope === "subset" ? "subset" : "single";
+    assertEquals(got, exp, `corpus case: ${text}`);
+  }
+});
+
 Deno.test("per-user / each user / hyphenated amount phrasings parse as all-scope gifts", async () => {
   const { parseCoinRequest } = await import("./coin-dialog.js");
   assertEquals(parseCoinRequest("Disburse 1.5 coins per user")?.scope, "all");
   assertEquals(parseCoinRequest("Disburse 1.5 coins per user")?.delta, 1.5);
   assertEquals(parseCoinRequest("Gift 2 coins to each user")?.scope, "all");
-  assertEquals(parseCoinRequest("Allocation of a 3.25-coin grant to all eligible members")?.delta, 3.25);
+  assertEquals(parseCoinRequest("Allocation of a 3.25-coin grant to all eligible members")?.scope, "subset", "eligible members are a qualified audience");
   assertEquals(parseCoinRequest("Credit 10 coins across all our users")?.scope, "all");
   assertEquals(parseCoinRequest("Can you gift everyone 2 coins?")?.scope, "all", "polite imperative is a directive, never a typed-confirmation loop");
   assertEquals(parseCoinRequest("Can you gift everyone 2 coins?")?.delta, 2);
@@ -340,18 +362,17 @@ Deno.test("Roy's 08:12 promulgation (per extant eligible user, per-capita) propo
   const { admin, userClient } = makeClients();
   const out = await coinDialog(admin, userClient, "admin-1",
     "Yooh, I hereby promulgate an unequivocal, non-negotiable operational mandate authorising the immediate initiation, orchestration, and consummation of a universally scoped, cardinality-complete micro-denomination credit-allocation protocol, pursuant to which an invariant-preserving entitlement of precisely 2.05 coins per extant eligible user shall be systematically instantiated, atomically committed, and recursively propagated throughout the entirety of the active-user ecosystem.\n\nExecution shall be governed by strict transactional consistency, deterministic allocation semantics, idempotent state-transition guarantees, referential integrity, and absolute exclusion of duplication anomalies, partial-commit inconsistencies, allocation asymmetries, or any other computationally induced deviations from the prescribed per-capita entitlement.\n\nFurthermore, I expect the resulting ledger mutations to be exhaustively reconciled against the authoritative user registry, with every individual credit event independently verifiable, persistently auditable, and epistemically irreproachable.");
-  assertEquals(out?.type, "plan", "the whole directive becomes one review card");
-  assertEquals(out?.plan?.steps?.[0]?.tool, "gift_all_coins");
-  assertEquals(out?.plan?.steps?.[0]?.args?.delta, 2.05, "2.05 preserved exactly");
+  assertEquals(out?.type, "clarify", "qualified audience (extant eligible / active users) is never guessed or widened");
+  assertStringIncludes(out?.message, "2.05", "action and amount extracted faithfully");
+  assertStringIncludes(out?.message, "specific group");
 });
 
 Deno.test("Roy's pasted 3.5 variant of the same directive also proposes a plan with the exact amount", async () => {
   const { admin, userClient } = makeClients();
   const out = await coinDialog(admin, userClient, "admin-1",
     "Yooh, I hereby promulgate an unequivocal, non-negotiable operational mandate authorising the immediate initiation, orchestration, and consummation of a universally scoped, cardinality-complete micro-denomination credit-allocation protocol, pursuant to which an invariant-preserving entitlement of precisely 3.5 coins per extant eligible user shall be systematically instantiated, atomically committed, and recursively propagated throughout the entirety of the active-user ecosystem.\n\nExecution shall be governed by strict transactional consistency, deterministic allocation semantics, idempotent state-transition guarantees, referential integrity, and absolute exclusion of duplication anomalies, partial-commit inconsistencies, allocation asymmetries, or any other computationally induced deviations from the prescribed per-capita entitlement.\n\nFurthermore, I expect the resulting ledger mutations to be exhaustively reconciled against the authoritative user registry, with every individual credit event independently verifiable, persistently auditable, and epistemically irreproachable.");
-  assertEquals(out?.type, "plan");
-  assertEquals(out?.plan?.steps?.[0]?.tool, "gift_all_coins");
-  assertEquals(out?.plan?.steps?.[0]?.args?.delta, 3.5, "3.5 preserved exactly");
+  assertEquals(out?.type, "clarify");
+  assertStringIncludes(out?.message, "3.5", "action and amount extracted faithfully");
 });
 
 Deno.test("audience adjectives are filters, never decoration: qualified scopes are subsets unless the message claims totality", async () => {

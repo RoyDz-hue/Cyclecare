@@ -28,25 +28,30 @@ export function parseCoinRequest(text) {
   // about the past, it does not order a gift. Skip the fallback for them.
   if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|has|have|had|am)\b/i.test(t))return null;
   if(/^(?:can|could|will|would|should|shall)\s+(?:i|we)\b/i.test(t))return null; // advice-seeking ("should I gift...?"), not a directive. "Can you gift...?" IS a directive and falls through.
-  const amt=t.match(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i);
-  // Audience scope. Bare forms mean every member. Qualified forms ("each paying
-  // member", "per extant eligible user") name a SUBSET: adjectives are audience
-  // filters, never decoration, and stripping them would silently widen the gift.
-  // A qualified scope only counts as all-members when the SAME message explicitly
-  // claims totality ("universally scoped", "cardinality-complete", "the entirety",
-  // "per-capita", "every single user"). Otherwise it is a subset we cannot filter
-  // safely: return scope 'subset' so the flow clarifies instead of guessing.
-  const bareScope=/\b(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|per[-\s]capita|the\s+whole\s+(?:community|team)|across\s+all\s+(?:our\s+)?(?:users?|members?))\b/i.test(t);
-  const qualifiedScope=/\b(?:all\s+(?:[\w-]+\s+){1,3}(?:users?|members?)|every\s+(?:[\w-]+\s+){1,2}(?:user|member)|each\s+(?:[\w-]+\s+){1,2}(?:user|member)|per[-\s](?:[\w-]+[-\s]+){1,3}(?:user|member)|across\s+(?:[\w-]+\s+){1,4}(?:users?|members?))\b/i.test(t);
-  const totality=/\b(?:everyone|everybody|every\s+single\s+(?:user|member)|entirety|whole\s+(?:community|team)|universally|cardinality|per[-\s]capita)\b/i.test(t);
-  const allScope=bareScope||(qualifiedScope&&totality);
+  if(/\b(?:don't|do\s+not|never)\b/i.test(t))return null; // a negated instruction is never a gift
+  if(/^(?:cancel|abort|undo|reverse|revert|stop|forget)\b/i.test(t))return null; // cancellation/reversal intent, not a gift
+  const WORDNUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
+  if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w)amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];}
+  // Audience scope. Bare forms mean every member (grounded: the member registry
+  // is exactly the all-users population). ANY adjective qualifier ("eligible",
+  // "active", "paying", "extant", "new") names a SUBSET: qualifiers are audience
+  // filters, never decoration, and no grandiose totality language ("universally
+  // scoped", "the entirety of the ACTIVE-user ecosystem") cancels them. There is
+  // no grounded filter for such qualifiers, so a qualified scope always returns
+  // 'subset' and the flow clarifies instead of guessing or widening the audience.
+  const allScope=/\b(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|per[-\s]capita|the\s+whole\s+(?:community|team)|across\s+all\s+(?:our\s+)?(?:users?|members?))\b/i.test(t);
+  const qualifiedScope=/\b(?:all\s+(?:our\s+)?(?:(?!our\b)[\w-]+\s+){1,3}(?:users?|members?)|every\s+(?:[\w-]+\s+){1,2}(?:user|member)|each\s+(?:[\w-]+\s+){1,2}(?:user|member)|per[-\s](?:[\w-]+[-\s]+){1,3}(?:user|member)|across\s+(?:(?!all\b|our\b)[\w-]+\s+){1,4}(?:users?|members?))\b/i.test(t);
   const deduct=/\b(?:deduct|deduction|debit|remove|take\s+back|take|claw\s*back)\b/i.test(t);
-  const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits)\b/i.test(t);
-  if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
-    return {scope:'all',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
-  }
+  const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits|add|adds|adding|top\s*up|bless|blesses|shower|showers|receive|receives|receiving|get|gets|getting)\b/i.test(t);
+  // A qualifier anywhere on the audience wins over any bare/totality wording in
+  // the same message: "per extant eligible user ... per-capita" is still a
+  // qualified audience, so subset is checked first.
   if(amt&&qualifiedScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s]/i.test(t))){
     return {scope:'subset',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
+  }
+  if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
+    return {scope:'all',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
   }
   if(amt&&giveVerb&&/\b(?:any\s+|a\s+)?random\s+(?:user|member|person)\b/i.test(t)){
     return {delta:Number(amt[1]),query:null,random:true,reason:null};

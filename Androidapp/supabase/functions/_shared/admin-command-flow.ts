@@ -38,7 +38,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  if(fresh?.scope==="subset"){
    await retire(previous?.state?.run_id);
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-   const msg="That points to a specific group of members, and I can't pick a group by description safely. To gift every member, say gift all users 2 coins (your amount); to gift specific members, name them one at a time. No change has been made.";
+   const msg=`I read that as gifting ${fresh.delta} coins to a specific group of members, not everyone. I can't pick a group by description safely. To gift every member, say gift all users ${fresh.delta} coins; to gift specific members, name them one at a time. No change has been made.`;
    await persistMessage(admin,adminId,"assistant","chat",msg);
    return {success:true,type:"clarify",message:msg};
  }
