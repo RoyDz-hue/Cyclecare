@@ -97,3 +97,21 @@ test('amount written away from the word "coins" is read exactly (Roy 08:49 defec
   assert.equal(parseCoinRequest('Gift all users coins'), null);
   assert.equal(parseCoinRequest('Donate coins to everyone'), null);
 });
+
+test('an unrelated number is never treated as the coin amount (offline ambiguity checks)', () => {
+  // Dates, years, ordinals, fiat, identifiers, and either/or amounts must
+  // clarify (null), never become a gift of 2026 / 500 / 31 / -2342 coins.
+  assert.equal(parseCoinRequest('Gift all users coins on 2026-11-01'), null, 'ISO date');
+  assert.equal(parseCoinRequest('Credit coins to all users today 2026'), null, 'bare year');
+  assert.equal(parseCoinRequest('Send coins worth 500 KES to all users'), null, 'fiat amount');
+  assert.equal(parseCoinRequest('Gift all users 5 or 10 coins'), null, 'either/or amount');
+  assert.equal(parseCoinRequest('Gift all users coins, invoice INV-2342'), null, 'letter-glued identifier');
+  assert.equal(parseCoinRequest('Gift coins to all users on the 31st'), null, 'ordinal day');
+  // The amount written as the value still reads exactly.
+  assert.deepEqual(parseCoinRequest('Valued at -4.1 each donate to all users coins'), { scope: 'all', delta: -4.1, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Gift coins worth 2.5 to all users'), { scope: 'all', delta: 2.5, query: null, reason: null });
+  // A proper coin amount next to "coins" still wins over a date in the same message.
+  assert.deepEqual(parseCoinRequest('Gift all users 1000 coins on 2026-11-01'), { scope: 'all', delta: 1000, query: null, reason: null });
+  // Instruction prose containing "coins" is never a recipient name.
+  assert.equal(parseCoinRequest('Credit coins to all users today 2026'), null);
+});

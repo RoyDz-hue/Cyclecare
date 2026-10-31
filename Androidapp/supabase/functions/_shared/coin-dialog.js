@@ -7,7 +7,7 @@ export function parseCoinRequest(text) {
   if(m){
     const q=m[3].trim().replace(/(?:['’]s)?\s+(?:ledger|wallet|account)\s*$/i,'');
     // A scope phrase is never a recipient name; let the fallback classify it.
-    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)/i.test(q))
+    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)|\bcoins?\b/i.test(q))
       return {delta:-Number(m[2]),query:q,reason:m[4]?.trim()||null};
   }
   m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s*(?:each)?|(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s+(\d+(?:\.\d+)?)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
@@ -18,7 +18,7 @@ export function parseCoinRequest(text) {
   if(m){
     const q=(m[3]||m[4]).trim();
     // A scope phrase is never a recipient name; let the fallback classify it.
-    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)/i.test(q))
+    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)|\bcoins?\b/i.test(q))
       return {delta:Number(m[2]||m[5]),query:q,reason:m[6]?.trim()||null};
   }
   // Natural-language fallback: a coin amount plus a clear scope or verb anywhere
@@ -33,6 +33,8 @@ export function parseCoinRequest(text) {
   // clarify but never execute without the review card.
   if(/\b(?:don't|do\s+not|didn't|did\s+not|doesn't|does\s+not|never|no\s+longer|refrain|avoid|let's\s+not|lets\s+not)\b/i.test(t))return null;
   if(/^(?:cancel|abort|undo|reverse|revert|stop|forget|hold\s+off|hold\s+on|hang\s+on|wait)\b/i.test(t))return null; // cancellation/reversal/deferral intent, not a gift
+  // "5 or 10 coins" is a choice between amounts: never pick one.
+  if(/-?\d+(?:\.\d+)?\s+or\s+-?\d+(?:\.\d+)?\s*coins?\b/i.test(t)||/\bcoins?\s+of\s+-?\d+(?:\.\d+)?\s+or\s+-?\d+(?:\.\d+)?/i.test(t))return null;
   const WORDNUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
   let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
   if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w)amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];}
@@ -40,7 +42,23 @@ export function parseCoinRequest(text) {
   // donate to all users coins"): read the exact signed number as long as a
   // coin word appears somewhere. The amount is never asked for again when it
   // is already written; scope/verb branches below still decide what it means.
-  if(!amt&&/\bcoins?\b/i.test(t)){const n=t.match(/-?\d+(?:\.\d+)?/);if(n)amt=[n[0],n[0]];}
+  if(!amt&&/\bcoins?\b/i.test(t)){
+    // Scan on a copy with date shapes blanked, then keep only plausible coin
+    // amounts: no years/long ids, no ordinals ("31st"), no fiat ("500 KES"),
+    // no letter-glued identifiers ("INV-2342"). Zero or several survivors is
+    // ambiguous: better to clarify than to gift a date or a count.
+    const masked=t.replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g,' ').replace(/\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b/g,' ');
+    const cands=[];
+    for(const n of masked.matchAll(/-?\d+(?:\.\d+)?/g)){
+      const num=n[0],i=n.index;
+      if(!num.includes('.')&&num.replace('-','').length>=4)continue; // year / long id
+      if(/^(?:st|nd|rd|th)\b/i.test(masked.slice(i+num.length).trimStart()))continue; // ordinal day
+      if(/^\s*(?:KES|USD|Ksh|shillings?)\b/i.test(masked.slice(i+num.length)))continue; // fiat, not coins
+      if(/[A-Za-z]$/.test(masked.slice(0,i)))continue; // glued to a letter (INV-2342)
+      cands.push(num);
+    }
+    if(cands.length===1)amt=[cands[0],cands[0]];
+  }
   // Audience scope. Bare forms mean every member (grounded: the member registry
   // is exactly the all-users population). ANY adjective qualifier ("eligible",
   // "active", "paying", "extant", "new") names a SUBSET: qualifiers are audience
