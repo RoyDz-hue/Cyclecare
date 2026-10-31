@@ -67,7 +67,12 @@
      "label": "New price list"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "packages": {
+     "type": "packages"
+    }
+   }
   },
   {
    "name": "set_cosmetic_price",
@@ -90,7 +95,19 @@
      "label": "Visible"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "item_id": {
+     "type": "text"
+    },
+    "price_coins": {
+     "type": "int",
+     "min": 0
+    },
+    "is_active": {
+     "type": "bool"
+    }
+   }
   },
   {
    "name": "adjust_coins",
@@ -114,7 +131,22 @@
      "label": "Reason"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "delta": {
+     "type": "coins",
+     "signed": true,
+     "maxAbs": 10000,
+     "decimals": 3
+    },
+    "targets": {
+     "type": "targets",
+     "max": 5
+    },
+    "reason": {
+     "type": "text"
+    }
+   }
   },
   {
    "name": "gift_all_coins",
@@ -141,7 +173,19 @@
      "label": "Reason"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "delta": {
+     "type": "coins",
+     "signed": false,
+     "min": 1,
+     "max": 10000,
+     "decimals": 3
+    },
+    "reason": {
+     "type": "text"
+    }
+   }
   },
   {
    "name": "deduct_all_coins",
@@ -168,7 +212,19 @@
      "label": "Reason"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "delta": {
+     "type": "coins",
+     "signed": false,
+     "min": 1,
+     "max": 10000,
+     "decimals": 3
+    },
+    "reason": {
+     "type": "text"
+    }
+   }
   },
   {
    "name": "set_user_status",
@@ -192,7 +248,25 @@
      "label": "Duration (hours)"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "targets": {
+     "type": "targets",
+     "max": 5
+    },
+    "status": {
+     "type": "enum",
+     "values": [
+      "ACTIVE",
+      "SUSPENDED",
+      "BANNED"
+     ]
+    },
+    "duration_hours": {
+     "type": "int",
+     "min": 1
+    }
+   }
   },
   {
    "name": "set_user_tier",
@@ -212,7 +286,21 @@
      "label": "Members"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "targets": {
+     "type": "targets",
+     "max": 5
+    },
+    "tier": {
+     "type": "enum",
+     "values": [
+      "FREE",
+      "SUPPORTER",
+      "PREMIUM"
+     ]
+    }
+   }
   },
   {
    "name": "gift_artifact",
@@ -232,7 +320,23 @@
      "label": "Members"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "targets": {
+     "type": "targets",
+     "max": 25
+    },
+    "artifact_name": {
+     "type": "enum",
+     "values": [
+      "Luminescent Moon",
+      "Golden Blossom",
+      "Rose Obelisk",
+      "Dual Eclipse",
+      "Celestial Tiara"
+     ]
+    }
+   }
   },
   {
    "name": "send_notice",
@@ -264,7 +368,28 @@
      "label": "Audience"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "targets": {
+     "type": "targets",
+     "max": 25
+    },
+    "audience": {
+     "type": "enum",
+     "values": [
+      "ALL",
+      "FREE",
+      "SUPPORTER",
+      "PREMIUM"
+     ]
+    },
+    "title": {
+     "type": "text"
+    },
+    "body": {
+     "type": "text"
+    }
+   }
   },
   {
    "name": "set_guides_enabled",
@@ -279,7 +404,12 @@
      "label": "Guides enabled"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "enabled": {
+     "type": "bool"
+    }
+   }
   },
   {
    "name": "update_guide",
@@ -302,7 +432,19 @@
      "label": "Active"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "persona_id": {
+     "type": "text"
+    },
+    "daily_post_cap": {
+     "type": "int",
+     "min": 0
+    },
+    "is_active": {
+     "type": "bool"
+    }
+   }
   },
   {
    "name": "moderate_message",
@@ -322,7 +464,21 @@
      "label": "Messages"
     }
    ],
-   "requiresVerifier": true
+   "requiresVerifier": true,
+   "argRules": {
+    "targets": {
+     "type": "targets",
+     "max": 10
+    },
+    "action": {
+     "type": "enum",
+     "values": [
+      "DISMISS",
+      "REMOVE",
+      "RESTORE"
+     ]
+    }
+   }
   }
  ]
 }

@@ -2,7 +2,7 @@ import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, star
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
-import { buildToolCatalog } from "../_shared/admin-tool-spec.ts";
+import { buildToolCatalog, validateSteps } from "../_shared/admin-tool-spec.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -483,6 +483,12 @@ serve(async (req: Request) => {
     try { resolvedEmails = await bindRecipients(userClient, steps, chatPrompt + "\n" + recipientText, true); }
     catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
     await enrichPlanTargetNames(admin, steps);
+    const argProblems = validateSteps(steps);
+    if (argProblems.length > 0) {
+      const msg = "I cannot prepare that safely: " + argProblems.map((p) => p.problem).join("; ") + ". No change was made.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
     const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
     if (proposeError) {
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
@@ -538,6 +544,12 @@ serve(async (req: Request) => {
   try { resolvedEmails = await bindRecipients(userClient, steps, prompt, true); }
   catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
   await enrichPlanTargetNames(admin, steps);
+  const argProblems = validateSteps(steps);
+  if (argProblems.length > 0) {
+    const msg = "I cannot prepare that safely: " + argProblems.map((p) => p.problem).join("; ") + ". No change was made.";
+    await persistMessage(admin, userId, "assistant", "chat", msg);
+    return jsonResponse({ success: true, type: "clarify", message: msg });
+  }
   const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: prompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
   if (proposeError) {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });

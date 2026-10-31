@@ -104,9 +104,13 @@ test('bulk coin review shows member count and total from the bound snapshot', ()
   assert.equal(lines.find((l) => l.k === 'Total').v, '12.3 coins in total');
 });
 
-test('unknown or contentless writes fail closed: no Confirm path', () => {
-  assert.ok(planReviewBlocker([{ tool: 'made_up_write', label: 'Do something', args: {} }]));
-  assert.ok(planReviewBlocker([{ tool: 'adjust_coins', label: 'Deduct coins', args: {} }]));
+test('unknown or contentless writes fail closed: no Confirm path, plain wording', () => {
+  const unknown = planReviewBlocker([{ tool: 'made_up_write', label: 'Do something', args: {} }]);
+  assert.ok(unknown && !unknown.includes('made_up_write') && !/ask me again/i.test(unknown));
+  const missing = planReviewBlocker([{ tool: 'adjust_coins', label: 'Deduct coins', args: { targets: ['u1'], target_names: ['Amina'] } }]);
+  assert.ok(missing && missing.includes('amount per member'));
+  assert.equal(planReviewBlocker([{ tool: 'adjust_coins', args: { delta: 5 } }]) !== null, true); // members missing
+  assert.equal(planReviewBlocker([{ tool: 'deduct_all_coins', args: { delta: 4.1, recipients: ['a'], reason: 'r' } }]), null);
   assert.equal(planReviewBlocker([{ tool: 'get_user_insights', args: {} }]), null); // reads never block
   assert.equal(planReviewBlocker([{ tool: 'adjust_coins', args: { delta: -5, targets: ['u1'], target_names: ['Amina'], reason: 'r' } }]), null);
 });

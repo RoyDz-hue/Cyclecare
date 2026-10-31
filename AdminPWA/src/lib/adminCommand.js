@@ -92,13 +92,25 @@ function formatReviewValue(key, value, args) {
   return String(value);
 }
 
-// A WRITE/RISKY step is reviewable only when its bound args produce real
-// content. Unknown tool or nothing renderable: the card must not offer Confirm.
+// A WRITE/RISKY step is reviewable only when its bound args produce every
+// material fact. Unknown tool or any missing essential content: the card must
+// not offer Confirm. Plain wording, no internals, no blind retry advice.
 export function stepReviewBlocker(step) {
   const spec = SPEC_BY_NAME.get(step?.tool || '');
-  if (!spec) return `I can't show what "${step?.tool || 'this step'}" will do, so it can't be approved safely. Ask me again.`;
+  if (!spec) return 'I could not prepare a clear review of this change, so nothing was done and it cannot be approved.';
   if (spec.kind === 'READ') return null;
-  if (stepContentLines(step).length === 0) return 'The exact change is missing from this plan, so it cannot be approved safely. Ask me again.';
+  const lines = stepContentLines(step);
+  const rendered = new Set(lines.map((l) => l.k));
+  // Every label group covering an essential arg must render a real value.
+  for (const arg of spec.essentialArgs) {
+    const fields = spec.reviewFields.filter((f) => f.key === arg || (arg === 'targets' && f.key === 'target_names'));
+    if (fields.length === 0) continue;
+    const covered = fields.some((f) => rendered.has(f.label));
+    if (!covered) {
+      const gap = fields[0].label.toLowerCase();
+      return `I could not prepare a clear review of this change - ${gap} is missing - so nothing was done and it cannot be approved.`;
+    }
+  }
   return null;
 }
 

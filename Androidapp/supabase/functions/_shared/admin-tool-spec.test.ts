@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { TOOL_SPECS, buildToolCatalog, specFor } from "./admin-tool-spec.ts";
+import { TOOL_SPECS, buildToolCatalog, specFor, validateSteps } from "./admin-tool-spec.ts";
 import { GOLDEN_CATALOG } from "./tool-catalog.golden.ts";
 import { executeStep } from "./admin-command-flow.ts";
 import { VERIFIERS, runVerifier } from "./admin-verify.ts";
@@ -86,4 +86,18 @@ Deno.test("unknown tools fail closed: no verifier, unknown-tool executor error",
   const out = await executeStep({ rpc: () => Promise.resolve({ data: null, error: null }) }, "made_up_tool", {});
   assertEquals(out.ok, false);
   assertEquals(out.error, "unknown tool made_up_tool");
+});
+
+Deno.test("validation: presence alone is not enough - values, enums, ranges, cross-field", () => {
+  const P = (tool: string, args: unknown) => validateSteps([{ tool, args }]).map((p) => p.problem);
+  assert(P("adjust_coins", { targets: ["u1"] }).includes("missing delta"));
+  assert(P("adjust_coins", { targets: ["u1"], delta: 0 }).some((p) => p.includes("non-zero")));
+  assert(P("adjust_coins", { targets: ["u1"], delta: 1.2345 }).some((p) => p.includes("decimal")));
+  assert(P("adjust_coins", { targets: ["u1", "u2", "u3", "u4", "u5", "u6"], delta: 5 }).some((p) => p.includes("at most 5")));
+  assert(P("set_user_tier", { targets: ["u1"], tier: "GOLD" }).some((p) => p.includes("FREE/SUPPORTER/PREMIUM")));
+  assert(P("send_notice", { title: "t", body: "b", audience: "ALL", targets: ["u1"] }).some((p) => p.includes("not both")));
+  assert(P("gift_all_coins", { delta: 0.5 }).some((p) => p.includes("1-10000")));
+  assert(P("made_up_tool", {}).some((p) => p.includes("unknown tool")));
+  assertEquals(validateSteps([{ tool: "adjust_coins", args: { targets: ["u1"], delta: -50, reason: "r" } }]).length, 0);
+  assertEquals(validateSteps([{ tool: "send_notice", args: { title: "t", body: "b", audience: "ALL" } }]).length, 0);
 });
