@@ -129,6 +129,14 @@
      "label": "Gift per member"
     },
     {
+     "key": "__member_count",
+     "label": "Members"
+    },
+    {
+     "key": "__total",
+     "label": "Total"
+    },
+    {
      "key": "reason",
      "label": "Reason"
     }
@@ -146,6 +154,14 @@
     {
      "key": "delta",
      "label": "Deduction per member"
+    },
+    {
+     "key": "__member_count",
+     "label": "Members"
+    },
+    {
+     "key": "__total",
+     "label": "Total"
     },
     {
      "key": "reason",

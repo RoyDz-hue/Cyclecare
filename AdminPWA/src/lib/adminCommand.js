@@ -25,13 +25,11 @@ export function adminIdFromConfig(config) {
 }
 
 // Pure helpers (unit tested).
-export const RISKY_TOOLS = new Set(['set_coin_packages', 'adjust_coins', 'set_user_status', 'set_user_tier', 'set_guides_enabled', 'moderate_message']);
-export const WRITE_TOOLS = new Set(['set_cosmetic_price', 'gift_artifact', 'send_notice', 'update_guide']);
 
 export function stepKind(tool) {
-  if (RISKY_TOOLS.has(tool)) return 'RISKY';
-  if (WRITE_TOOLS.has(tool)) return 'WRITE';
-  return 'READ';
+  const spec = SPEC_BY_NAME.get(tool || '');
+  if (!spec) return 'UNKNOWN';
+  return spec.kind;
 }
 
 export function planRiskLevel(steps) {
@@ -64,6 +62,12 @@ import SPEC_DATA from './adminToolSpec.json' with { type: 'json' };
 const SPEC_BY_NAME = new Map(SPEC_DATA.tools.map((t) => [t.name, t]));
 
 function formatReviewValue(key, value, args) {
+  // Derived fields are computed from the bound snapshot, not read from args.
+  if (key === '__member_count') return Array.isArray(args.recipients) ? `${args.recipients.length} members` : null;
+  if (key === '__total') {
+    const n = Number(args.delta);
+    return Array.isArray(args.recipients) && Number.isFinite(n) ? `${Math.round(Math.abs(n) * args.recipients.length * 1000) / 1000} coins in total` : null;
+  }
   if (value === undefined || value === null || value === '') return null;
   if (key === 'audience') {
     const aud = String(value).toUpperCase();
@@ -76,11 +80,35 @@ function formatReviewValue(key, value, args) {
     if (Array.isArray(args.target_names) && args.target_names.length) return null; // names shown instead
     return Array.isArray(value) ? `${value.length} selected` : null;
   }
-  if (key === 'delta') return `${Math.abs(Number(value))} coins`;
+  if (key === 'delta') {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    if (Array.isArray(args.targets)) return `${n < 0 ? 'Deduct' : 'Gift'} ${Math.abs(n)} coins`;
+    return `${Math.abs(n)} coins`; // gift_all/deduct_all direction is fixed by the bound tool name
+  }
   if (key === 'packages') return Array.isArray(value) ? `${value.length} packages` : null;
   if (key === 'enabled' || key === 'is_active') return value ? 'Yes' : 'No';
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
+}
+
+// A WRITE/RISKY step is reviewable only when its bound args produce real
+// content. Unknown tool or nothing renderable: the card must not offer Confirm.
+export function stepReviewBlocker(step) {
+  const spec = SPEC_BY_NAME.get(step?.tool || '');
+  if (!spec) return `I can't show what "${step?.tool || 'this step'}" will do, so it can't be approved safely. Ask me again.`;
+  if (spec.kind === 'READ') return null;
+  if (stepContentLines(step).length === 0) return 'The exact change is missing from this plan, so it cannot be approved safely. Ask me again.';
+  return null;
+}
+
+export function planReviewBlocker(steps) {
+  if (!Array.isArray(steps)) return 'This plan is empty.';
+  for (const step of steps) {
+    const blocked = stepReviewBlocker(step);
+    if (blocked) return blocked;
+  }
+  return null;
 }
 
 export function stepContentLines(step) {

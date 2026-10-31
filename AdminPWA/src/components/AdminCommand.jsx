@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ArrowUpRight, CheckCircle2, XCircle, ShieldAlert, Copy, Check } from 'lucide-react';
 import {
-  commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, stepContentLines, planRiskLevel, adminIdFromConfig,
+  commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, stepContentLines, planReviewBlocker, planRiskLevel, adminIdFromConfig,
   planCardState,
 } from '../lib/adminCommand.js';
 import { formatCommandOutcome } from '../lib/commandResults.js';
@@ -42,7 +42,10 @@ export function PlanMessage({ message, busy, onApprove, onReject }) {
           {outcome.label}
         </p>
       )}
-      {message.meta?.requires_approval !== false && !decided && (
+      {message.meta?.requires_approval !== false && !decided && planReviewBlocker(plan.steps) && (
+        <p className="chat-plan-outcome bad"><XCircle size={14} color="var(--rose-pink)" />{planReviewBlocker(plan.steps)}</p>
+      )}
+      {message.meta?.requires_approval !== false && !decided && !planReviewBlocker(plan.steps) && (
         <div className="btn-row">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onApprove(message)}>
             {busy ? 'Running...' : 'Confirm'}

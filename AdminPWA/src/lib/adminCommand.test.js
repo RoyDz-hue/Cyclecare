@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLocalSuggestions, describeStep, stepContentLines, planRiskLevel, stepKind, planCardState, PLAN_OUTCOME } from './adminCommand.js';
+import { buildLocalSuggestions, describeStep, stepContentLines, planReviewBlocker, planRiskLevel, stepKind, planCardState, PLAN_OUTCOME } from './adminCommand.js';
 import SPEC from './adminToolSpec.json' with { type: 'json' };
 
 test('stepKind classifies tools', () => {
@@ -8,7 +8,7 @@ test('stepKind classifies tools', () => {
   assert.equal(stepKind('send_notice'), 'WRITE');
   assert.equal(stepKind('adjust_coins'), 'RISKY');
   assert.equal(stepKind('set_user_status'), 'RISKY');
-  assert.equal(stepKind('unknown_future_tool'), 'READ');
+  assert.equal(stepKind('unknown_future_tool'), 'UNKNOWN');
 });
 
 test('planRiskLevel marks risky and write plans for approval', () => {
@@ -89,4 +89,24 @@ test('every WRITE/RISKY tool gets real review content on the card, not just a la
     const lines = stepContentLines({ tool: spec.name, args: fullArgs });
     assert.ok(lines.length > 0, `${spec.name}: review card would show only a label`);
   }
+});
+
+test('review derives direction from the bound amount, never the label', () => {
+  const deduct = stepContentLines({ tool: 'adjust_coins', args: { delta: -50, targets: ['u1'], target_names: ['Amina'] } });
+  assert.equal(deduct.find((l) => l.k === 'Amount per member').v, 'Deduct 50 coins');
+  const gift = stepContentLines({ tool: 'adjust_coins', args: { delta: 50, targets: ['u1'], target_names: ['Amina'] } });
+  assert.equal(gift.find((l) => l.k === 'Amount per member').v, 'Gift 50 coins');
+});
+
+test('bulk coin review shows member count and total from the bound snapshot', () => {
+  const lines = stepContentLines({ tool: 'deduct_all_coins', args: { delta: 4.1, reason: 'r', recipients: ['a', 'b', 'c'] } });
+  assert.equal(lines.find((l) => l.k === 'Members').v, '3 members');
+  assert.equal(lines.find((l) => l.k === 'Total').v, '12.3 coins in total');
+});
+
+test('unknown or contentless writes fail closed: no Confirm path', () => {
+  assert.ok(planReviewBlocker([{ tool: 'made_up_write', label: 'Do something', args: {} }]));
+  assert.ok(planReviewBlocker([{ tool: 'adjust_coins', label: 'Deduct coins', args: {} }]));
+  assert.equal(planReviewBlocker([{ tool: 'get_user_insights', args: {} }]), null); // reads never block
+  assert.equal(planReviewBlocker([{ tool: 'adjust_coins', args: { delta: -5, targets: ['u1'], target_names: ['Amina'], reason: 'r' } }]), null);
 });
