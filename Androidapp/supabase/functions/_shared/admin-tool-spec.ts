@@ -22,7 +22,41 @@ export interface ToolSpec {
 export const TOOL_SPECS: ToolSpec[] = SPEC_DATA.tools as ToolSpec[];
 
 export function buildToolCatalog(specs: ToolSpec[] = TOOL_SPECS): string {
-  return `${SPEC_DATA.header}\n${specs.map((s) => s.catalogLine).join("\n")}`;
+  const lines = specs.map((s) => s.catalogLine);
+  const wf = (WORKFLOWS as WorkflowSpec[]).map((w) => w.catalogLine);
+  return `${SPEC_DATA.header}\n${[...lines, ...wf].join("\n")}`;
+}
+
+// Registered bounded workflows: named, fixed step sequences that are the ONLY
+// permitted multi-write compositions. No recursion, no open loops - a plan
+// either matches a registered workflow exactly (same tools, same order,
+// constraints satisfied) or the one-change-at-a-time guard applies.
+export interface WorkflowConstraint { step: string; arg?: string; equals?: unknown; forbidArgs?: string[] }
+export interface WorkflowSpec { id: string; catalogLine: string; description: string; steps: string[]; constraints: WorkflowConstraint[] }
+export const WORKFLOWS: WorkflowSpec[] = ((SPEC_DATA as any).workflows ?? []) as WorkflowSpec[];
+
+// Returns the matching workflow id when the plan is exactly a registered
+// workflow; otherwise null. Extra, missing, reordered or off-constraint steps
+// never match, so nothing silently widens an approval.
+export function matchWorkflow(steps: any[], workflows: WorkflowSpec[] = WORKFLOWS): string | null {
+  const tools = (Array.isArray(steps) ? steps : []).map((s) => String(s?.tool ?? ""));
+  for (const wf of workflows) {
+    if (tools.length !== wf.steps.length) continue;
+    if (!wf.steps.every((t, i) => tools[i] === t)) continue;
+    let ok = true;
+    for (const c of wf.constraints ?? []) {
+      const step = steps[wf.steps.indexOf(c.step)];
+      if (!step) { ok = false; break; }
+      if (c.equals !== undefined && step?.args?.[c.arg as string] !== c.equals) { ok = false; break; }
+      for (const f of c.forbidArgs ?? []) {
+        const v = step?.args?.[f];
+        if (v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0)) { ok = false; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) return wf.id;
+  }
+  return null;
 }
 
 export function specFor(name: string, specs: ToolSpec[] = TOOL_SPECS): ToolSpec | undefined {

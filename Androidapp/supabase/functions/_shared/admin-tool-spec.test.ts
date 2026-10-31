@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { TOOL_SPECS, buildToolCatalog, specFor, validateSteps } from "./admin-tool-spec.ts";
+import { TOOL_SPECS, buildToolCatalog, matchWorkflow, specFor, validateSteps } from "./admin-tool-spec.ts";
 import { GOLDEN_CATALOG } from "./tool-catalog.golden.ts";
 import { executeStep } from "./admin-command-flow.ts";
 import { VERIFIERS, runVerifier } from "./admin-verify.ts";
@@ -141,4 +141,30 @@ Deno.test("proposal validation and executor enforcement agree on every boundary 
     const executorOk = out.ok === true;
     assertEquals(executorOk, proposalOk, `${tool} ${JSON.stringify(args)}: proposal ${proposalOk} vs executor ${executorOk}`);
   }
+});
+
+Deno.test("matchWorkflow: exact registered sequence matches", () => {
+  const steps = [
+    { tool: "gift_all_coins", args: { delta: 5, reason: "thank-you" } },
+    { tool: "send_notice", args: { audience: "ALL", title: "Gift", body: "We gifted you 5 coins." } },
+  ];
+  assertEquals(matchWorkflow(steps), "gift_all_with_notice");
+});
+Deno.test("matchWorkflow: wrong order, extra step, missing step never match", () => {
+  const a = { tool: "gift_all_coins", args: { delta: 5 } };
+  const n = { tool: "send_notice", args: { audience: "ALL", title: "t", body: "b" } };
+  assertEquals(matchWorkflow([n, a]), null);
+  assertEquals(matchWorkflow([a]), null);
+  assertEquals(matchWorkflow([a, n, a]), null);
+});
+Deno.test("matchWorkflow: off-constraint audience or targets never match", () => {
+  const a = { tool: "gift_all_coins", args: { delta: 5 } };
+  assertEquals(matchWorkflow([a, { tool: "send_notice", args: { audience: "FREE", title: "t", body: "b" } }]), null);
+  assertEquals(matchWorkflow([a, { tool: "send_notice", args: { targets: ["u1"], title: "t", body: "b" } }]), null);
+});
+Deno.test("matchWorkflow: no registered workflow for other write pairs", () => {
+  assertEquals(matchWorkflow([
+    { tool: "adjust_coins", args: { targets: ["u1"], delta: 5, reason: "r" } },
+    { tool: "send_notice", args: { audience: "ALL", title: "t", body: "b" } },
+  ]), null);
 });

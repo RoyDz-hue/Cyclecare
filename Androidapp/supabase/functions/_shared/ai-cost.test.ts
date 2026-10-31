@@ -1,5 +1,5 @@
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { capConversation, extractUsage } from "./ai-cost.ts";
+import { capConversation, extractUsage, nextAttemptGrant, REQUEST_BUDGET } from "./ai-cost.ts";
 
 Deno.test("capConversation keeps the newest lines within the char budget", () => {
   const lines = Array.from({ length: 24 }, (_, i) => `Admin: message ${i} ` + "x".repeat(700));
@@ -22,4 +22,24 @@ Deno.test("extractUsage reads each provider shape and never invents numbers", ()
   assertEquals(extractUsage("COHERE", { usage: { tokens: { input_tokens: 80, output_tokens: 25 } } }), { input: 80, output: 25 });
   assertEquals(extractUsage("GEMINI", {}), { input: null, output: null });
   assertEquals(extractUsage("OPENROUTER", { usage: {} }), { input: null, output: null });
+});
+
+Deno.test("nextAttemptGrant: decaying grants, total backstop, time stop", () => {
+  assertEquals(nextAttemptGrant(0, 0, 0), 1500);
+  assertEquals(nextAttemptGrant(1, 1500, 9000), 1000);
+  assertEquals(nextAttemptGrant(2, 2500, 20000), 500);
+  assertEquals(nextAttemptGrant(3, 3000, 30000), null);
+  assertEquals(nextAttemptGrant(0, 2900, 1000), 100); // total backstop bites early
+  assertEquals(nextAttemptGrant(0, 0, 61_000), null);
+});
+Deno.test("REQUEST_BUDGET: worst case is 3 attempts, 3000 reserved tokens, 60s", () => {
+  let reserved = 0; let attempts = 0;
+  for (let i = 0; i < 5; i++) {
+    const grant = nextAttemptGrant(i, reserved, i * 20_000);
+    if (grant === null) break;
+    reserved += grant; attempts++;
+  }
+  assertEquals(attempts, 3);
+  assertEquals(reserved, 3000);
+  assertEquals(nextAttemptGrant(3, reserved, 60_000), null);
 });

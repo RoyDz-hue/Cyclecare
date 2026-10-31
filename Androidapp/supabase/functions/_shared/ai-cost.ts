@@ -38,3 +38,28 @@ export function extractUsage(provider: string, data: any): TokenUsage {
              output: typeof u?.completion_tokens === "number" ? u.completion_tokens : null };
   } catch { return { input: null, output: null }; }
 }
+
+// Request-wide budget across fallback attempts (Roy's "one prompt twerking
+// 30 times" guard): one admin message can never reserve more than
+// maxOutputTokensTotal output tokens or run longer than maxTotalMs across ALL
+// provider attempts combined. Reserve-based because failed attempts report no
+// usage: we cap what we ask for, and record what providers say they burned.
+export const REQUEST_BUDGET = {
+  perAttemptOutputTokens: 1500,
+  maxOutputTokensTotal: 3000,
+  maxTotalMs: 60_000,
+  perAttemptTimeoutMs: 25_000,
+} as const;
+
+// The max_tokens grant for the next attempt, or null to stop rotating. The
+// grant decays by attempt (1500, 1000, 500): a request that already burned a
+// full attempt gets progressively less room, and the total reserve across
+// attempts can never exceed maxOutputTokensTotal.
+export function nextAttemptGrant(attemptIndex: number, reservedSoFar: number, elapsedMs: number): number | null {
+  if (elapsedMs >= REQUEST_BUDGET.maxTotalMs) return null;
+  const remaining = REQUEST_BUDGET.maxOutputTokensTotal - reservedSoFar;
+  if (remaining <= 0) return null;
+  const decayed = REQUEST_BUDGET.perAttemptOutputTokens - attemptIndex * 500;
+  if (decayed <= 0) return null;
+  return Math.min(decayed, remaining);
+}

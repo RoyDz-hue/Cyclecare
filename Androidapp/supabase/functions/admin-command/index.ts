@@ -2,9 +2,10 @@ import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, star
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
-import { buildToolCatalog, validateSteps } from "../_shared/admin-tool-spec.ts";
+import { buildToolCatalog, matchWorkflow, validateSteps } from "../_shared/admin-tool-spec.ts";
 import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.js";
-import { sanitizeClarifyText } from "../_shared/planner-clarify.ts";
+import { nextAttemptGrant, REQUEST_BUDGET } from "../_shared/ai-cost.ts";
+import { composeMissingClarify, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -15,7 +16,7 @@ import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } fr
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
 import { isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
-import { AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2, loadAgentPrompt, recordAiRun } from "../_shared/ai-core.ts";
+import { AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3, loadAgentPrompt, recordAiRun } from "../_shared/ai-core.ts";
 import { capConversation, extractUsage, TokenUsage } from "../_shared/ai-cost.ts";
 
 type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
@@ -34,15 +35,15 @@ function httpErrorKind(status: number): string {
   return status === 429 ? "http_429" : status >= 500 ? "http_5xx" : "http_4xx";
 }
 
-async function callProvider(provider: ProviderId, apiKey: string, system: string, user: string): Promise<ProviderOutcome> {
+async function callProvider(provider: ProviderId, apiKey: string, system: string, user: string, maxTokens: number): Promise<ProviderOutcome> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25_000);
+  const timer = setTimeout(() => controller.abort(), REQUEST_BUDGET.perAttemptTimeoutMs);
   try {
     if (provider === "GEMINI") {
       const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, signal: controller.signal,
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1500 } }),
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { temperature: 0.2, maxOutputTokens: maxTokens } }),
       });
       if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
       const data = await res.json();
@@ -53,7 +54,7 @@ async function callProvider(provider: ProviderId, apiKey: string, system: string
     const model = provider === "COHERE" ? "command-a-03-2025" : "openai/gpt-4.1-mini";
     const res = await fetch(endpoint, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, signal: controller.signal,
-      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: 1500,
+      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: maxTokens,
         ...(provider === "OPENROUTER" ? { provider: { only: ["openai"], allow_fallbacks: false, data_collection: "deny", zdr: true } } : {}) }),
     });
     if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
@@ -66,35 +67,46 @@ async function callProvider(provider: ProviderId, apiKey: string, system: string
 }
 
 type PlannerResult =
-  | { kind: "steps"; plan: any; provider: string; usage: TokenUsage | null; attempts: number }
-  | { kind: "chat" | "clarify"; text: string; provider: string; usage: TokenUsage | null; attempts: number };
+  | { kind: "steps"; plan: any; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number }
+  | { kind: "chat" | "clarify"; text: string; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number; missing: unknown };
 
 async function planWithProviders(admin: any, userId: string, system: string, user: string, promptVersion: string): Promise<PlannerResult | null> {
   const keys: Record<ProviderId, string | undefined> = { GEMINI: Deno.env.get("GEMINI_API_KEY"), COHERE: Deno.env.get("COHERE_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY") };
   const configured = (Object.keys(keys) as ProviderId[]).filter((p) => isConfiguredSecret(keys[p]));
   if (configured.length === 0) return null;
   const start = (fnv1a(userId) + Math.floor(Date.now() / 600_000)) % configured.length;
-  // Hard per-request budget: each configured provider is tried at most ONCE,
-  // so one admin message can never cost more than `configured.length` calls
-  // (max 3), each capped at 1,500 output tokens and a 25s timeout.
+  // Hard REQUEST-WIDE budget across all fallback attempts combined: each
+  // configured provider is tried at most ONCE, and the aggregate grant decays
+  // per attempt (1500/1000/500 output tokens) with a 3,000-token total reserve
+  // and a 60s wall-clock cap - one admin message can never burn more than
+  // that, no matter how providers fail. Failed attempts report no usage:
+  // their consumption is UNKNOWN (never logged as zero).
   let attempts = 0;
+  let reservedOutput = 0;
+  const requestStart = Date.now();
   for (const provider of configured.map((_, i) => configured[(start + i) % configured.length])) {
+    const grant = nextAttemptGrant(attempts, reservedOutput, Date.now() - requestStart);
+    if (grant === null) {
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, promptVersion, status: "failed", errorKind: "budget_exhausted", latencyMs: Date.now() - requestStart, meta: { attempts, reservedOutput } });
+      break;
+    }
     attempts++;
+    reservedOutput += grant;
     const attemptStart = Date.now();
-    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user);
+    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user, grant);
     const logFailure = (kind: string) => void recordAiRun(admin, {
       agent: AGENT_ADMIN_COMMAND, userId, provider, promptVersion, status: "failed",
       errorKind: kind, latencyMs: Date.now() - attemptStart,
-      meta: { attempts, usage } }); // schema failures still burned tokens - account for them
+      meta: { attempts, usage, grant } }); // usage null = provider did not report; consumption unknown, never zero
     if (!text) { logFailure(errorKind ?? "empty"); continue; }
     const cleaned = text.replace(/```[a-z]*\n?/gi, "").trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) { logFailure("invalid_schema"); continue; }
     try {
       const parsed = JSON.parse(match[0]);
-      if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return { kind: "steps", plan: parsed, provider, usage, attempts };
-      if (parsed && typeof parsed.chat === "string" && parsed.chat.trim()) return { kind: "chat", text: parsed.chat.trim(), provider, usage, attempts };
-      if (parsed && typeof parsed.clarify === "string" && parsed.clarify.trim()) return { kind: "clarify", text: parsed.clarify.trim(), provider, usage, attempts };
+      if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return { kind: "steps", plan: parsed, provider, usage, attempts, reservedOutput };
+      if (parsed && typeof parsed.chat === "string" && parsed.chat.trim()) return { kind: "chat", text: parsed.chat.trim(), provider, usage, attempts, reservedOutput, missing: null };
+      if (parsed && typeof parsed.clarify === "string" && parsed.clarify.trim()) return { kind: "clarify", text: parsed.clarify.trim(), provider, usage, attempts, reservedOutput, missing: Array.isArray(parsed.missing) ? parsed.missing : null };
     } catch { /* fall through to schema failure */ }
     logFailure("invalid_schema");
   }
@@ -449,7 +461,7 @@ serve(async (req: Request) => {
     const recipients = await recipientContext(userClient, recipientText);
     const nameCandidates = JSON.stringify(nameCheck.candidates);
     const { data: insights } = await userClient.rpc("admin_member_insights", {});
-    const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2);
+    const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3);
     const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${nameCandidates}\n</live-data>\n\n<conversation>\n${convo}\n</conversation>\n\nAdministrator's latest message: ${chatPrompt}\n\nReply with the JSON now.`;
     const started = Date.now();
     const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
@@ -460,7 +472,7 @@ serve(async (req: Request) => {
       return jsonResponse({ success: false, type: "chat", message: sorry }, 503);
     }
     if (planned.kind === "chat" || planned.kind === "clarify") {
-      const shown = planned.kind === "clarify" ? sanitizeClarifyText(planned.text).text : planned.text;
+      const shown = planned.kind === "clarify" ? (composeMissingClarify(planned.missing) ?? sanitizeClarifyText(planned.text).text) : planned.text;
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
       await persistMessage(admin, userId, "assistant", "chat", shown);
       return jsonResponse({ success: true, type: planned.kind, message: shown });
@@ -488,7 +500,10 @@ serve(async (req: Request) => {
     }
     // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
     // never proposed, so a single approval can never silently execute several changes.
-    if (await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
+    // The ONLY exception is an exact match to a registered bounded workflow
+    // (fixed tool sequence, constraints satisfied) - never an ad-hoc bundle.
+    const matchedWorkflow = matchWorkflow(steps);
+    if (!matchedWorkflow && await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
       const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
       await persistMessage(admin, userId, "assistant", "chat", msg);
@@ -548,7 +563,7 @@ serve(async (req: Request) => {
   if (nameCheck.clarification) return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
   const recipients = await recipientContext(userClient, prompt);
   const { data: insights } = await userClient.rpc("admin_member_insights", {});
-  const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V2);
+  const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3);
   const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${JSON.stringify(nameCheck.candidates)}\n</live-data>\n\n<conversation>\n(no prior messages)\n</conversation>\n\nAdministrator's latest message: ${prompt}\n\nReply with the JSON now.`;
   const started = Date.now();
   const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
@@ -559,7 +574,7 @@ serve(async (req: Request) => {
   if (planned.kind !== "steps") {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
     await persistMessage(admin, userId, "user", "chat", prompt);
-    const shown = planned.kind === "clarify" ? sanitizeClarifyText(planned.text).text : planned.text;
+    const shown = planned.kind === "clarify" ? (composeMissingClarify(planned.missing) ?? sanitizeClarifyText(planned.text).text) : planned.text;
     await persistMessage(admin, userId, "assistant", "chat", shown);
     return jsonResponse({ success: true, type: planned.kind, message: shown });
   }

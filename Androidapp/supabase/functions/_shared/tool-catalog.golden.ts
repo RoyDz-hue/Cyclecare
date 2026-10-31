@@ -18,4 +18,5 @@ Available tools (use only these, with only these args):
 - send_notice {targets: [user_id,...] or audience: "ALL"|"FREE"|"SUPPORTER"|"PREMIUM", title, body} - official CycleCare team notice; max 25 individual targets.
 - set_guides_enabled {enabled: boolean} - Community Guides kill switch.
 - update_guide {persona_id, daily_post_cap?, is_active?}
-- moderate_message {targets: [message_id,...], action: "DISMISS"|"REMOVE"|"RESTORE"} - max 10 targets.`;
+- moderate_message {targets: [message_id,...], action: "DISMISS"|"REMOVE"|"RESTORE"} - max 10 targets.
+- WORKFLOW gift_all_with_notice: to gift every member coins AND announce it, plan exactly these two steps in this order: gift_all_coins, then send_notice with audience "ALL" (never targets).`;

@@ -480,5 +480,29 @@
     }
    }
   }
+ ],
+ "workflows": [
+  {
+   "id": "gift_all_with_notice",
+   "catalogLine": "- WORKFLOW gift_all_with_notice: to gift every member coins AND announce it, plan exactly these two steps in this order: gift_all_coins, then send_notice with audience \"ALL\" (never targets).",
+   "description": "Gift coins to every member, then send all members an official notice about it.",
+   "steps": [
+    "gift_all_coins",
+    "send_notice"
+   ],
+   "constraints": [
+    {
+     "step": "send_notice",
+     "arg": "audience",
+     "equals": "ALL"
+    },
+    {
+     "step": "send_notice",
+     "forbidArgs": [
+      "targets"
+     ]
+    }
+   ]
+  }
  ]
 }
