@@ -70,3 +70,18 @@ test('whole-number phrasing still parses after decimal support', () => {
   assert.equal(r.scope, 'all');
   assert.equal(r.delta, 4);
 });
+
+test('"any user" delegates the pick; signed amounts are preserved (Roy 08:25 defect)', () => {
+  // Roy's exact screenshot message: must become a random single-recipient
+  // DEDUCTION card, never a clarify that changes the amount.
+  assert.deepEqual(parseCoinRequest('Give any user -5 coins'), { delta: -5, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Give any user 5 coins'), { delta: 5, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Send 10 coins to any member'), { delta: 10, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Deduct 5 coins from any user'), { delta: -5, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Gift any person 3 coins, reason surprise'), { delta: 3, query: null, random: true, reason: 'surprise' });
+  // Existing random phrasings unchanged.
+  assert.deepEqual(parseCoinRequest('Give any random user 2 coins'), { delta: 2, query: null, random: true, reason: null });
+  // "any user" is never a recipient NAME to search for.
+  const named = parseCoinRequest('Give any user 5 coins');
+  assert.equal(named.query, null);
+});

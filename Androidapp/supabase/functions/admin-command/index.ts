@@ -1,5 +1,6 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
+import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -492,6 +493,15 @@ serve(async (req: Request) => {
         : "I couldn't prepare the member list safely. No change was made.";
       await persistMessage(admin, userId, "assistant", "chat", msg);
       return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    // Under-planning guard: never answer half a compound question as if it
+    // were the whole. Coverage comes from tool+args only, never step labels.
+    const dropped = missingFacets(chatPrompt, steps);
+    if (dropped.length > 0) {
+      const msg = `That asks for more than I prepared safely: I can show ${dropped.map((f) => FACET_LABEL[f]).join(" and ")}, but the plan I built would have skipped it. Ask me for it on its own and I'll get it right. No change was made.`;
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "underplanned_coverage", missing: dropped } });
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
     }
     // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
     // never proposed, so a single approval can never silently execute several changes.

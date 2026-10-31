@@ -7,18 +7,18 @@ export function parseCoinRequest(text) {
   if(m){
     const q=m[3].trim().replace(/(?:['’]s)?\s+(?:ledger|wallet|account)\s*$/i,'');
     // A scope phrase is never a recipient name; let the fallback classify it.
-    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b)/i.test(q))
+    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)/i.test(q))
       return {delta:-Number(m[2]),query:q,reason:m[4]?.trim()||null};
   }
   m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s*(?:each)?|(?:all\s+(?:our\s+)?(?:users?|members?)|everyone|everybody|every\s+(?:user|member)|each\s+(?:user|member)|the\s+whole\s+(?:community|team))\s+(\d+(?:\.\d+)?)\s*coins?(?:\s+each)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {scope:'all',delta:Number(m[2]||m[3]),query:null,reason:m[4]?.trim()||null};
-  m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:any\s+|a\s+)?random\s+(?:user|member|person)|(?:any\s+|a\s+)?random\s+(?:user|member|person)\s+(\d+(?:\.\d+)?)\s*coins?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
+  m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(-?\d+(?:\.\d+)?)\s+coins?\s+to\s+(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))|(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))\s+(-?\d+(?:\.\d+)?)\s*coins?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m)return {delta:Number(m[2]||m[3]),query:null,random:true,reason:m[4]?.trim()||null};
   m=t.match(/^(give|grant|gift|git|credit|award|send)\s+(?:(\d+(?:\.\d+)?)\s+coins?\s+to\s+(.+?)|(.+?)\s+(\d+(?:\.\d+)?)\s*(?:coins?)?)(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
   if(m){
     const q=(m[3]||m[4]).trim();
     // A scope phrase is never a recipient name; let the fallback classify it.
-    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b)/i.test(q))
+    if(!/^(?:all\b|every\b|each\b|everyone\b|everybody\b|per[-\s]|the\s+whole\b|any\s+(?:user|member|person)\b)/i.test(q))
       return {delta:Number(m[2]||m[5]),query:q,reason:m[6]?.trim()||null};
   }
   // Natural-language fallback: a coin amount plus a clear scope or verb anywhere
@@ -56,8 +56,13 @@ export function parseCoinRequest(text) {
   if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
     return {scope:'all',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
   }
-  if(amt&&giveVerb&&/\b(?:any\s+|a\s+)?random\s+(?:user|member|person)\b/i.test(t)){
-    return {delta:Number(amt[1]),query:null,random:true,reason:null};
+  if(amt&&(giveVerb||deduct)&&/\b(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))\b/i.test(t)){
+    // "any user" delegates the recipient choice: a random single member. A
+    // signed amount is preserved (give -5 = deduct 5); a deduct verb forces a
+    // deduction. Single-recipient deductions are allowed behind the review
+    // card; only MASS deductions are refused outright.
+    const d=Number(amt[1]);
+    return {delta:(deduct&&!giveVerb)?-Math.abs(d):d,query:null,random:true,reason:null};
   }
   return null;
 }

@@ -23,7 +23,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  if(startsCoinCommand(text)&&!fresh){
    await retire(previous?.state?.run_id);
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-   return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 651 coins from name@example.com. No change was made."};
+   return {success:true,type:"clarify",message:"I couldn't read that new coin request safely, so I cleared the earlier pending request. Please give the amount and recipient again, for example: Debit 100 coins from name@example.com. No change was made."};
  }
  if(fresh) await retire(previous?.state?.run_id);
  if(!fresh&&active?.cancelled&&(isConfirmation(text)||/reason|decide|choose/i.test(text)))return {success:true,type:"chat",message:"The previous coin request was cancelled. Start a new request with an amount and recipient; no change has been made."};
