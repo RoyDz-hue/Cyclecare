@@ -335,3 +335,19 @@ Deno.test("prepareGiftAllSteps fails safe when the member list cannot be read", 
   catch (e) { threw = e instanceof Error && e.message === "member_list_unavailable"; }
   assertEquals(threw, true, "no plan without a snapshot");
 });
+
+Deno.test("Roy's 08:12 promulgation (per extant eligible user, per-capita) proposes a plan with the exact 2.05", async () => {
+  const { admin, userClient } = makeClients();
+  const out = await coinDialog(admin, userClient, "admin-1",
+    "Yooh, I hereby promulgate an unequivocal, non-negotiable operational mandate authorising the immediate initiation, orchestration, and consummation of a universally scoped, cardinality-complete micro-denomination credit-allocation protocol, pursuant to which an invariant-preserving entitlement of precisely 2.05 coins per extant eligible user shall be systematically instantiated, atomically committed, and recursively propagated throughout the entirety of the active-user ecosystem.\n\nExecution shall be governed by strict transactional consistency, deterministic allocation semantics, idempotent state-transition guarantees, referential integrity, and absolute exclusion of duplication anomalies, partial-commit inconsistencies, allocation asymmetries, or any other computationally induced deviations from the prescribed per-capita entitlement.\n\nFurthermore, I expect the resulting ledger mutations to be exhaustively reconciled against the authoritative user registry, with every individual credit event independently verifiable, persistently auditable, and epistemically irreproachable.");
+  assertEquals(out?.type, "plan", "the whole directive becomes one review card");
+  assertEquals(out?.plan?.steps?.[0]?.tool, "gift_all_coins");
+  assertEquals(out?.plan?.steps?.[0]?.args?.delta, 2.05, "2.05 preserved exactly");
+});
+
+Deno.test("prose after a coin verb is never mistaken for a member name", async () => {
+  const { parseCoinRequest } = await import("./coin-dialog.js");
+  assertEquals(parseCoinRequest("Credit 2.05 coins per extant eligible user")?.scope, "all");
+  assertEquals(parseCoinRequest("Gift 1 coin per capita")?.scope, "all");
+  assertEquals(parseCoinRequest("Disburse 3 coins each paying member")?.scope, "all");
+});

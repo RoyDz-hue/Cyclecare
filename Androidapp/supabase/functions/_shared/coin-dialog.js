@@ -19,7 +19,7 @@ export function parseCoinRequest(text) {
   if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|has|have|had|am)\b/i.test(t))return null;
   if(/^(?:can|could|will|would|should|shall)\s+(?:i|we)\b/i.test(t))return null; // advice-seeking ("should I gift...?"), not a directive. "Can you gift...?" IS a directive and falls through.
   const amt=t.match(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i);
-  const allScope=/\b(?:all\s+(?:[\w-]+\s+){0,3}(?:users?|members?)|everyone|everybody|every\s+(?:[\w-]+\s+){0,2}(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|the\s+whole\s+(?:community|team)|across\s+(?:[\w-]+\s+){0,4}(?:users?|members?))\b/i.test(t);
+  const allScope=/\b(?:all\s+(?:[\w-]+\s+){0,3}(?:users?|members?)|everyone|everybody|every\s+(?:[\w-]+\s+){0,2}(?:user|member)|each\s+(?:[\w-]+\s+){0,2}(?:user|member)|per[-\s](?:[\w-]+[-\s]+){0,3}(?:user|member)|per[-\s]capita|the\s+whole\s+(?:community|team)|across\s+(?:[\w-]+\s+){0,4}(?:users?|members?))\b/i.test(t);
   const deduct=/\b(?:deduct|deduction|debit|remove|take\s+back|take|claw\s*back)\b/i.test(t);
   const giveVerb=/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits)\b/i.test(t);
   if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){

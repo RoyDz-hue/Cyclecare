@@ -113,7 +113,9 @@ function namedRecipient(text: string): string | null {
   if(coin)return coin.query;
   const match = text.match(/\b(?:give|grant|gift|award|credit|deduct(?:\s+from)?|ban|suspend)\s+(.+?)(?=\s+\d|\s+(?:some|coins|a gift|an artifact)\b|[.!?]|$)/i);
   const name = match?.[1]?.trim();
-  if (!name || name.includes("@") || /^(?:the |them$|those |all |me$|myself$)/i.test(name) || name.length>100) return null;
+  // A real name is short and comma-free; longer prose after a verb is part of
+  // the instruction, never a member lookup.
+  if (!name || name.includes("@") || name.includes(",") || name.split(/\s+/).length > 4 || /^(?:the |them$|those |all |me$|myself$)/i.test(name) || name.length>100) return null;
   return name;
 }
 async function checkNamedRecipient(userClient: any, text: string): Promise<{ query?:string; candidates:any[]; clarification?:string }> {
