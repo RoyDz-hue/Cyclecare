@@ -4,6 +4,7 @@ import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, validateSteps } from "../_shared/admin-tool-spec.ts";
 import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.js";
+import { sanitizeClarifyText } from "../_shared/planner-clarify.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
@@ -459,9 +460,10 @@ serve(async (req: Request) => {
       return jsonResponse({ success: false, type: "chat", message: sorry }, 503);
     }
     if (planned.kind === "chat" || planned.kind === "clarify") {
+      const shown = planned.kind === "clarify" ? sanitizeClarifyText(planned.text).text : planned.text;
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
-      await persistMessage(admin, userId, "assistant", "chat", planned.text);
-      return jsonResponse({ success: true, type: planned.kind, message: planned.text });
+      await persistMessage(admin, userId, "assistant", "chat", shown);
+      return jsonResponse({ success: true, type: planned.kind, message: shown });
     }
     // Action/analysis plan: run it through the same policy-gated propose flow.
     let steps: any[];
@@ -557,8 +559,9 @@ serve(async (req: Request) => {
   if (planned.kind !== "steps") {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
     await persistMessage(admin, userId, "user", "chat", prompt);
-    await persistMessage(admin, userId, "assistant", "chat", planned.text);
-    return jsonResponse({ success: true, type: planned.kind, message: planned.text });
+    const shown = planned.kind === "clarify" ? sanitizeClarifyText(planned.text).text : planned.text;
+    await persistMessage(admin, userId, "assistant", "chat", shown);
+    return jsonResponse({ success: true, type: planned.kind, message: shown });
   }
   let steps: any[];
   try {
