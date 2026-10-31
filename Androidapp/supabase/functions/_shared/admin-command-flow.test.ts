@@ -32,7 +32,11 @@ function makeClients(profiles: any[] = PROFILES) {
         const n = params.p_recipients?.length ?? 0;
         return { data: { success: true, duplicate: giftCalls > 1, recipients: n, total_coins: n * params.p_delta }, error: null };
       }
-      if (name === "admin_find_recipients") return { data: [{ user_id: "u-kevin", display_name: "Kevin", email: "kevin@example.com" }], error: null };
+      if (name === "admin_find_recipients") {
+        const q = String(params?.p_query ?? "").toLowerCase();
+        const data = q.includes("kevin") ? [{ user_id: "u-kevin", display_name: "Kevin", email: "kevin@example.com" }] : [];
+        return { data, error: null };
+      }
       if (name === "admin_resolve_recipient") {
         const email = String(params?.p_email ?? "kevin@example.com");
         const id = email === "amani@example.com" ? "u-amani" : "u-kevin";
@@ -171,4 +175,40 @@ Deno.test("random-member gift: picks a member, names the pick, proposes one plan
   assertEquals(rpcCalls.filter((c) => c.name === "admin_random_member").length, 1);
   assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
   assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 1);
+});
+
+Deno.test("decimal all-scope gift: whole-number boundary, amount echoed, nothing proposed", async () => {
+  const { admin, userClient, state, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Broo I therefore direct you acutely to categorically disburse 3.5 coins each to all our users on the go");
+  assertEquals(r.type, "chat");
+  assertStringIncludes(r.message, "whole numbers");
+  assertStringIncludes(r.message, "3.5");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0, "no plan for a decimal amount");
+  assertEquals(state.row, null, "no stuck dialog state");
+});
+
+Deno.test("natural-phrased whole all-scope gift proposes one plan", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Disburse 2 coins each to all our users");
+  assertEquals(r.type, "plan");
+  assertStringIncludes(r.plan.steps[0].label, "Gift 2 coins to each of the 3 members (6 coins in total)");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
+});
+
+Deno.test("a new full gift instruction is not swallowed as a pending recipient name", async () => {
+  const { admin, userClient, state } = makeClients();
+  const stuck = await coinDialog(admin, userClient, "admin-1", "Give Zznotaperson 2 coins");
+  assertStringIncludes(stuck.message, "No member matches");
+  const r = await coinDialog(admin, userClient, "admin-1", "Broo I therefore direct you acutely to categorically disburse 3.5 coins each to all our users on the go");
+  assertStringIncludes(r.message, "whole numbers", "parsed as a new gift, not a recipient name");
+  assertEquals(state.row, null, "stuck recipient state cleared");
+});
+
+Deno.test("decimal single-recipient gift: whole-number boundary, nothing proposed", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Give Kevin 3.5 coins");
+  assertEquals(r.type, "chat");
+  assertStringIncludes(r.message, "whole numbers");
+  assertStringIncludes(r.message, "3.5");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0);
 });

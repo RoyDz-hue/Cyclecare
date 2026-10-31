@@ -31,9 +31,17 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
      return {success:true,type:"chat",message:"Taking coins from every member at once isn't something I'll do; a deduction has to name each member. To gift every member instead, say the amount, for example: Gift all users 2 coins each. No change was made."};
    }
    let gst=fresh?{scope:"all",delta:fresh.delta,reason:fresh.reason??null,awaiting:"reason"}:applyCoinReply(active,text);
-   if(!Number.isInteger(gst.delta)||gst.delta<1||gst.delta>10000){
+   if(typeof gst.delta!=="number"||Number.isNaN(gst.delta)||gst.delta<1||gst.delta>10000){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
-     return {success:true,type:"chat",message:"Choose a whole gift between 1 and 10,000 coins for each member. No change has been made."};
+     const msg="Choose a gift between 1 and 10,000 coins for each member. No change has been made.";
+     await persistMessage(admin,adminId,"assistant","chat",msg);
+     return {success:true,type:"chat",message:msg};
+   }
+   if(!Number.isInteger(gst.delta)){
+     await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+     const msg=`Coins move in whole numbers, so I can't gift ${gst.delta} coins to each member. Say a whole number, like 3 or 4. No change has been made.`;
+     await persistMessage(admin,adminId,"assistant","chat",msg);
+     return {success:true,type:"chat",message:msg};
    }
    if(!gst.reason)gst.reason="Admin adjustment";
    const {data:profs,error:profErr}=await admin.from("profiles").select("user_id,device_id,id");
@@ -58,7 +66,18 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    st.lastQuestion=message;
    await save();await persistMessage(admin,adminId,"assistant","chat",message);return {success:true,type:"clarify",message};};
  if(st.run_id&&!fresh)return reply("The plan is already prepared. Use Confirm to make the change, Cancel to discard it, or say cancel. No extra change has been made.");
- if(!Number.isInteger(st.delta)||st.delta===0||Math.abs(st.delta)>10000)return reply("Choose a non-zero whole number up to 10,000 coins. No change has been made.");
+ if(typeof st.delta!=="number"||Number.isNaN(st.delta)||st.delta===0||Math.abs(st.delta)>10000){
+   await retire(active?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   const msg="Choose a non-zero whole number up to 10,000 coins. No change has been made.";
+   await persistMessage(admin,adminId,"assistant","chat",msg);
+   return {success:true,type:"chat",message:msg};
+ }
+ if(!Number.isInteger(st.delta)){
+   await retire(active?.run_id);await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   const msg=`Coins move in whole numbers, so ${st.delta} coins isn't possible. Say a whole number up to 10,000. No change has been made.`;
+   await persistMessage(admin,adminId,"assistant","chat",msg);
+   return {success:true,type:"chat",message:msg};
+ }
  if(!st.recipient && !fresh && active?.awaiting==="recipient") {
    const picked=selectCandidate(active.candidates,text);
    if(picked) {st.recipient=picked;st.query=picked.email;}

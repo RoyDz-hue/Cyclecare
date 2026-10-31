@@ -48,3 +48,13 @@ test('parseCoinRequest recognizes random-member gifts', () => {
   assert.equal(all.scope, 'all', 'all-scope unchanged');
   assert.equal(all.random, undefined);
 });
+
+test('parseCoinRequest understands natural sentences and preserves decimals exactly', () => {
+  assert.deepEqual(parseCoinRequest('Broo I therefore direct you acutely to categorically disburse 3.5 coins each to all our users on the go'),
+    { scope: 'all', delta: 3.5, query: null, reason: null }, 'Roy exact phrasing, decimal preserved');
+  assert.deepEqual(parseCoinRequest('Disburse 2 coins each to all our users'), { scope: 'all', delta: 2, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Give Kevin 3.5 coins'), { delta: 3.5, query: 'Kevin', reason: null });
+  assert.deepEqual(parseCoinRequest('Send Kevin 50 coins'), { delta: 50, query: 'Kevin', reason: null });
+  assert.equal(parseCoinRequest('How many coins does Kevin have?'), null, 'no amount-verb coin question stays null');
+  assert.equal(parseCoinRequest('What is the price of 100 coins?'), null, 'pricing question stays null');
+});
