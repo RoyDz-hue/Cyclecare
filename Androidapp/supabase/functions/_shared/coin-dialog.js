@@ -82,8 +82,8 @@ export function parseCoinRequest(text) {
   if(amt&&(giveVerb||deduct)&&/\b(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))\b/i.test(t)){
     // "any user" delegates the recipient choice: a random single member. A
     // signed amount is preserved (give -5 = deduct 5); a deduct verb forces a
-    // deduction. Single-recipient deductions are allowed behind the review
-    // card; only MASS deductions are refused outright.
+    // deduction. Single-recipient and all-member deductions both go through
+    // the same review card as gifts (bulk deductions added Oct 31).
     const d=Number(amt[1]);
     return {delta:(deduct&&!giveVerb)?-Math.abs(d):d,query:null,random:true,reason:null};
   }
