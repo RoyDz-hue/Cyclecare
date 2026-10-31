@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -51,6 +52,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -93,6 +95,9 @@ fun SettingsScreen(
         !cycleLengthChoice.contains("don't know") && !cycleLengthChoice.contains("don’t know") &&
         !cycleLengthChoice.contains("changes")
     var showUnifiedEraseDialog by remember { mutableStateOf(false) }
+    var showAllObservations by remember { mutableStateOf(false) }
+    var showAllPatterns by remember { mutableStateOf(false) }
+    var showAllTimeline by remember { mutableStateOf(false) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
     var tempPin by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -124,7 +129,7 @@ fun SettingsScreen(
         TopAppBar(
             title = {
                 Text(
-                    text = "Security, Privacy & Settings",
+                    text = "You & Settings",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                 )
             },
@@ -196,6 +201,10 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            RankCoinsRow(uiState)
+
                             Spacer(modifier = Modifier.height(14.dp))
 
                             Button(
@@ -257,6 +266,8 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    RankCoinsRow(uiState)
                                 }
                             }
 
@@ -301,6 +312,18 @@ fun SettingsScreen(
             }
 
             // Section: owner-bound local conflict review. Cloud sync remains disabled pending release.
+            // You page blended into Settings: patterns, cycle education,
+            // saved-log timeline and the clinician visit summary.
+            insightsItems(
+                uiState = uiState,
+                showAllObservations = showAllObservations,
+                onToggleObservations = { showAllObservations = !showAllObservations },
+                showAllPatterns = showAllPatterns,
+                onTogglePatterns = { showAllPatterns = !showAllPatterns },
+                showAllTimeline = showAllTimeline,
+                onToggleTimeline = { showAllTimeline = !showAllTimeline }
+            )
+
             item {
                 Card(
                     shape = RoundedCornerShape(20.dp),
@@ -912,3 +935,42 @@ private fun SyncConflictReviewRow(
     }
 }
 
+
+
+@Composable
+private fun RankCoinsRow(uiState: CycleUiState) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = Color(0xFFC89D54).copy(alpha = 0.2f)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = Color(0xFFC89D54),
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = uiState.economyProfile.rank.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFC89D54),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Text(
+            text = "${CoinFormatter.format(uiState.economyProfile.coinBalance)} coins",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}

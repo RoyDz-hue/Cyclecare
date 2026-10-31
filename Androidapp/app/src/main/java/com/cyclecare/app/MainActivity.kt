@@ -14,20 +14,33 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -43,13 +56,20 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -65,12 +85,10 @@ import com.cyclecare.app.ui.auth.AuthSheet
 import com.cyclecare.app.ui.auth.QuickUnlockSetupDialog
 import com.cyclecare.app.ui.auth.WelcomeAuthScreen
 import com.cyclecare.app.ui.screens.AppLockScreen
-import com.cyclecare.app.ui.screens.AskScreen
 import com.cyclecare.app.ui.screens.AtelierScreen
 import com.cyclecare.app.ui.screens.CareScreen
 import com.cyclecare.app.ui.screens.CycleScreen
 import com.cyclecare.app.ui.screens.HomeScreen
-import com.cyclecare.app.ui.screens.InsightsScreen
 import com.cyclecare.app.ui.screens.MpesaStkPushDialog
 import com.cyclecare.app.ui.screens.OnboardingScreen
 import com.cyclecare.app.ui.screens.SettingsScreen
@@ -78,7 +96,6 @@ import com.cyclecare.app.ui.screens.SomethingDifferentSheet
 import com.cyclecare.app.ui.screens.SpaceScreen
 import com.cyclecare.app.ui.screens.TrackScreen
 import com.cyclecare.app.ui.screens.VaultEconomyScreen
-import com.cyclecare.app.ui.screens.YouScreen
 import com.cyclecare.app.ui.theme.CycleCareTheme
 import com.cyclecare.app.ui.theme.rememberSystemMotionEnabled
 import com.cyclecare.app.ui.viewmodel.AppNavTab
@@ -242,6 +259,67 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                 )
             }
 
+            // Daily log overlay - opened from Home, or from a date action on Cycle/Calendar
+            uiState.isDailyLogOpen -> {
+                BackHandler { viewModel.closeDailyLog() }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.closeDailyLog() },
+                            modifier = Modifier.testTag("daily_log_back_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                    TrackScreen(
+                        viewModel = viewModel,
+                        uiState = uiState,
+                        currentLog = logsMap[uiState.selectedDate.toString()]
+                    )
+                }
+            }
+
+            // Ask CycleCare overlay - opened from the floating bubble
+            uiState.isAskOpen -> {
+                BackHandler { viewModel.closeAsk() }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.closeAsk() },
+                            modifier = Modifier.testTag("ask_back_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                        Text(
+                            text = "Ask CycleCare",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        )
+                    }
+                    CareScreen(
+                        viewModel = viewModel,
+                        uiState = uiState
+                    )
+                }
+            }
+
             // Vault / Economy Screen Overlay
             uiState.isVaultOpen && !uiState.isBanned && !uiState.isSuspended -> {
                 BackHandler { viewModel.setVaultOpen(false) }
@@ -260,7 +338,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                 )
             }
 
-            // Main Core App Shell (Today / Cycle / Ask / You / Space per spec §71-75)
+            // Main Core App Shell (Today / Cycle / Hub / Space; Daily log opens from Home, Ask is a floating bubble, You is blended into Settings)
             else -> {
                 BackHandler(enabled = uiState.activeTab != AppNavTab.TODAY) {
                     viewModel.selectTab(AppNavTab.TODAY)
@@ -275,15 +353,14 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         )
                     }
                 ) { innerPadding ->
+                    Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                     AnimatedContent(
                         targetState = uiState.activeTab,
                         transitionSpec = {
                             val duration = if (systemMotionEnabled) 180 else 0
                             fadeIn(animationSpec = tween(duration)) togetherWith fadeOut(animationSpec = tween(duration))
                         },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
+                        modifier = Modifier.fillMaxSize(),
                         label = "tab_transition"
                     ) { targetTab ->
                         when (targetTab) {
@@ -298,23 +375,19 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                                 uiState = uiState,
                                 logsMap = logsMap
                             )
-                            AppNavTab.ASK -> AskScreen(
+                            AppNavTab.ATELIER -> SpaceScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
-                                currentLog = logsMap[uiState.selectedDate.toString()],
-                                initialMode = uiState.pendingAskMode ?: com.cyclecare.app.ui.screens.AskMode.CARE_CHAT
-                            )
-                            AppNavTab.YOU -> YouScreen(
-                                viewModel = viewModel,
-                                uiState = uiState,
-                                logsMap = logsMap,
-                                onOpenSettings = { isSettingsOpen = true }
+                                initialTab = 1
                             )
                             AppNavTab.SPACE -> SpaceScreen(
                                 viewModel = viewModel,
                                 uiState = uiState
                             )
                         }
+                    }
+
+                    AskFloatingBubble(onClick = { viewModel.openAsk() })
                     }
 
                     if (uiState.isSomethingDifferentSheetOpen) {
@@ -444,8 +517,7 @@ fun CycleCareBottomBar(
     val items = listOf(
         NavItem(AppNavTab.TODAY, "Today", Icons.Default.Home),
         NavItem(AppNavTab.CYCLE, "Cycle", Icons.Default.CalendarMonth),
-        NavItem(AppNavTab.ASK, "Ask", Icons.Default.AutoAwesome),
-        NavItem(AppNavTab.YOU, "You", Icons.Default.Person),
+        NavItem(AppNavTab.ATELIER, "Hub", Icons.Default.Star),
         NavItem(AppNavTab.SPACE, "Space", Icons.Default.Spa)
     )
 
@@ -475,3 +547,74 @@ fun CycleCareBottomBar(
     }
 }
 
+
+
+/**
+ * Floating Ask CycleCare entry. Draggable anywhere on screen, position is
+ * remembered across launches, tap opens the chat overlay. Defaults to the
+ * bottom-end corner inside the safe content area.
+ */
+@Composable
+private fun AskFloatingBubble(onClick: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("ask_bubble_position", android.content.Context.MODE_PRIVATE) }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val bubblePx = with(density) { 56.dp.toPx() }
+        val marginPx = with(density) { 16.dp.toPx() }
+        val maxX = (constraints.maxWidth.toFloat() - bubblePx - marginPx).coerceAtLeast(marginPx)
+        val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(marginPx)
+        var offsetX by remember { mutableFloatStateOf(prefs.getFloat("x", Float.NaN)) }
+        var offsetY by remember { mutableFloatStateOf(prefs.getFloat("y", Float.NaN)) }
+        val x = if (offsetX.isNaN()) maxX else offsetX.coerceIn(marginPx, maxX)
+        val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(marginPx, maxY)
+
+        Surface(
+            modifier = Modifier
+                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .size(56.dp)
+                .pointerInput(maxX, maxY) {
+                    detectTapGestures(onTap = { onClick() })
+                }
+                .pointerInput(maxX, maxY) {
+                    detectDragGestures(
+                        onDragEnd = {
+                            if (!offsetX.isNaN() && !offsetY.isNaN()) {
+                                prefs.edit()
+                                    .putFloat("x", offsetX.coerceIn(marginPx, maxX))
+                                    .putFloat("y", offsetY.coerceIn(marginPx, maxY))
+                                    .apply()
+                            }
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        // Read the state values, not the composed x/y: the
+                        // gesture lambda outlives the composition that
+                        // produced them, so captured x/y would be stale.
+                        val curX = if (offsetX.isNaN()) maxX else offsetX
+                        val curY = if (offsetY.isNaN()) maxY else offsetY
+                        offsetX = (curX + dragAmount.x).coerceIn(marginPx, maxX)
+                        offsetY = (curY + dragAmount.y).coerceIn(marginPx, maxY)
+                    }
+                }
+                .semantics(mergeDescendants = true) {
+                    onClick(label = "Open Ask CycleCare") {
+                        onClick()
+                        true
+                    }
+                }
+                .testTag("ask_floating_bubble"),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primary,
+            shadowElevation = 6.dp
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = "Ask CycleCare",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+    }
+}

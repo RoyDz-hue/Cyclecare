@@ -24,7 +24,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -236,6 +238,58 @@ fun HomeScreen(
             }
         }
 
+        // Daily log entry — opens today's log (moved out of Ask, per spec §72).
+        item {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .clickable(
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = "Open daily log"
+                    ) { viewModel.openTrackForDate(uiState.currentDate) }
+                    .testTag("home_daily_log_entry"),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Daily log",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = if (todayLog != null) "Today's entry is saved. Tap to review or add more." else "Record how you feel today - symptoms, mood, sleep and notes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
         if (safety.level != SafetyLevel.LOW) {
             item {
                 val safetyColor = if (safety.isRedFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
@@ -421,8 +475,7 @@ fun HomeScreen(
                             Text("Something feels different?")
                         }
                         TextButton(onClick = {
-                            viewModel.selectDate(uiState.currentDate)
-                            viewModel.selectTab(AppNavTab.ASK)
+                            viewModel.openTrackForDate(uiState.currentDate)
                         }) {
                             Text("Add details")
                         }
@@ -445,7 +498,7 @@ fun HomeScreen(
                     Text("A NOTE FOR TODAY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     Text(headline, style = MaterialTheme.typography.titleMedium)
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { viewModel.selectTab(AppNavTab.ASK) }) {
+                    TextButton(onClick = { viewModel.openAsk() }) {
                         Text("Explore in Ask")
                     }
                 }
@@ -541,7 +594,7 @@ fun HomeScreen(
                                 }
                             }
                         }
-                        TextButton(onClick = { viewModel.selectTab(AppNavTab.SPACE) }) {
+                        TextButton(onClick = { viewModel.selectTab(AppNavTab.ATELIER) }) {
                             Text("View Atelier")
                         }
                     }
@@ -651,7 +704,7 @@ fun HomeScreen(
                         val question = premiumChatPrompt.trim()
                         premiumChatPrompt = ""
                         showPremiumChatDialog = false
-                        viewModel.selectTab(AppNavTab.ASK)
+                        viewModel.openAsk()
                         viewModel.consultCare(question, includeFullContext = true)
                     }
                 ) { Text("Ask CycleCare") }

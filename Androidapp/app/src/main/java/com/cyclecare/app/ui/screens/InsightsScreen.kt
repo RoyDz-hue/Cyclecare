@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,26 +58,21 @@ import com.cyclecare.app.data.model.HealthPattern
 import com.cyclecare.app.ui.viewmodel.CycleCareViewModel
 import com.cyclecare.app.ui.viewmodel.CycleUiState
 
-@Composable
-fun InsightsScreen(
-    viewModel: CycleCareViewModel,
+/**
+ * You-page insights, emitted as LazyColumn items so they can be blended into
+ * the Settings screen (You tab removed; content preserved).
+ */
+fun LazyListScope.insightsItems(
     uiState: CycleUiState,
-    logsMap: Map<String, CycleDayLog>,
-    modifier: Modifier = Modifier
+    showAllObservations: Boolean,
+    onToggleObservations: () -> Unit,
+    showAllPatterns: Boolean,
+    onTogglePatterns: () -> Unit,
+    showAllTimeline: Boolean,
+    onToggleTimeline: () -> Unit
 ) {
     val baseline = uiState.baselineMetrics
     val patterns = uiState.patterns
-    var showAllObservations by remember { mutableStateOf(false) }
-    var showAllPatterns by remember { mutableStateOf(false) }
-    var showAllTimeline by remember { mutableStateOf(false) }
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("insights_screen_content")
-            .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
         // Screen Header
         item {
             Spacer(modifier = Modifier.height(16.dp))
@@ -208,7 +203,7 @@ fun InsightsScreen(
 
         if (uiState.learnedObservations.size > 1) {
             item {
-                TextButton(onClick = { showAllObservations = !showAllObservations }) {
+                TextButton(onClick = { onToggleObservations() }) {
                     Text(if (showAllObservations) "Show less" else "See all ${uiState.learnedObservations.size} observations")
                 }
             }
@@ -235,7 +230,7 @@ fun InsightsScreen(
 
         if (patterns.size > 1) {
             item {
-                TextButton(onClick = { showAllPatterns = !showAllPatterns }) {
+                TextButton(onClick = { onTogglePatterns() }) {
                     Text(if (showAllPatterns) "Show fewer patterns" else "See all ${patterns.size} patterns")
                 }
             }
@@ -395,7 +390,7 @@ fun InsightsScreen(
 
         if (uiState.monthlyTimeline.size > 1) {
             item {
-                TextButton(onClick = { showAllTimeline = !showAllTimeline }) {
+                TextButton(onClick = { onToggleTimeline() }) {
                     Text(if (showAllTimeline) "Show less history" else "See all ${uiState.monthlyTimeline.size} months")
                 }
             }
@@ -500,7 +495,6 @@ fun InsightsScreen(
             }
             Spacer(modifier = Modifier.height(30.dp))
         }
-    }
 }
 
 @Composable

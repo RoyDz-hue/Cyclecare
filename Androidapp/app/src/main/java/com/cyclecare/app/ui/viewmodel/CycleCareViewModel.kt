@@ -44,15 +44,11 @@ import java.time.LocalDate
 enum class AppNavTab(val title: String) {
     TODAY("Today"),
     CYCLE("Cycle"),
-    ASK("Ask"),
-    YOU("You"),
+    ATELIER("Hub"),
     SPACE("Space");
 
     companion object {
         val HOME get() = TODAY
-        val TRACK get() = ASK
-        val INSIGHTS get() = YOU
-        val CARE get() = ASK
     }
 }
 
@@ -68,9 +64,12 @@ data class CareChatTurn(
 data class CycleUiState(
     val currentDate: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
-    // One-shot: when set, the Ask tab opens directly in this mode (e.g. "Log
-    // this day" from the Cycle tab opens the Daily Log, not the AI chat).
-    val pendingAskMode: com.cyclecare.app.ui.screens.AskMode? = null,
+    // When set, the Daily log is open as a full-screen overlay (opened from
+    // Home, or from a date action on the Cycle/Calendar screens).
+    val isDailyLogOpen: Boolean = false,
+    // When set, the Ask CycleCare chat is open as a full-screen overlay
+    // (opened from the floating Ask bubble).
+    val isAskOpen: Boolean = false,
     val activeTab: AppNavTab = AppNavTab.TODAY,
     val settings: CycleSettings = CycleSettings(),
     val todayPrediction: DayPrediction? = null,
@@ -518,7 +517,7 @@ class CycleCareViewModel(
     }
 
     fun selectTab(tab: AppNavTab) {
-        _uiState.value = _uiState.value.copy(activeTab = tab, pendingAskMode = null)
+        _uiState.value = _uiState.value.copy(activeTab = tab)
     }
 
     fun selectDate(date: LocalDate) {
@@ -534,9 +533,20 @@ class CycleCareViewModel(
 
     fun openTrackForDate(date: LocalDate) {
         selectDate(date)
-        selectTab(AppNavTab.ASK)
-        // Land on the Daily Log interface, not the AI chat.
-        _uiState.value = _uiState.value.copy(pendingAskMode = com.cyclecare.app.ui.screens.AskMode.LOG_DAY)
+        // The Daily log lives on Home now; open it as a full-screen overlay.
+        _uiState.value = _uiState.value.copy(isDailyLogOpen = true)
+    }
+
+    fun closeDailyLog() {
+        _uiState.value = _uiState.value.copy(isDailyLogOpen = false)
+    }
+
+    fun openAsk() {
+        _uiState.value = _uiState.value.copy(isAskOpen = true)
+    }
+
+    fun closeAsk() {
+        _uiState.value = _uiState.value.copy(isAskOpen = false)
     }
 
     fun logPeriodStart(date: LocalDate) {
