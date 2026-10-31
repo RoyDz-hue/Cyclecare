@@ -297,6 +297,12 @@ Deno.test("held-out gift competence corpus: directives, subsets, questions, nega
     ["Do not gift anyone coins", "null"], ["Never gift all users coins again", "null"],
     ["Cancel the gift of 5 coins to all users", "null"], ["Gift all users -5 coins", "all-neg"],
     ["Gift all users some coins", "null"], ["Reverse the gift to all users of 5 coins", "null"],
+    ["I'd rather you didn't gift all users 5 coins", "null"],
+    ["Hold off on giving all users 5 coins", "null"],
+    ["Let's not gift everyone 5 coins", "null"],
+    ["Please refrain from gifting all users 5 coins", "null"],
+    ["Avoid sending all users 5 coins for now", "null"],
+    ["Wait before you gift all users 5 coins", "null"],
   ];
   for (const [text, exp] of cases) {
     const r = parseCoinRequest(text);

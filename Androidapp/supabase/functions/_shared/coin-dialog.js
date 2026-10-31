@@ -28,8 +28,11 @@ export function parseCoinRequest(text) {
   // about the past, it does not order a gift. Skip the fallback for them.
   if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|has|have|had|am)\b/i.test(t))return null;
   if(/^(?:can|could|will|would|should|shall)\s+(?:i|we)\b/i.test(t))return null; // advice-seeking ("should I gift...?"), not a directive. "Can you gift...?" IS a directive and falls through.
-  if(/\b(?:don't|do\s+not|never)\b/i.test(t))return null; // a negated instruction is never a gift
-  if(/^(?:cancel|abort|undo|reverse|revert|stop|forget)\b/i.test(t))return null; // cancellation/reversal intent, not a gift
+  // A negated or deferred instruction is never a gift. Lexical guard, not
+  // semantic proof: phrasings outside this list fall to the planner, which can
+  // clarify but never execute without the review card.
+  if(/\b(?:don't|do\s+not|didn't|did\s+not|doesn't|does\s+not|never|no\s+longer|refrain|avoid|let's\s+not|lets\s+not)\b/i.test(t))return null;
+  if(/^(?:cancel|abort|undo|reverse|revert|stop|forget|hold\s+off|hold\s+on|hang\s+on|wait)\b/i.test(t))return null; // cancellation/reversal/deferral intent, not a gift
   const WORDNUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
   let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
   if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w)amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];}
