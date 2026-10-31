@@ -242,6 +242,22 @@ async function verifyWrite(admin: any, tool: string, args: any): Promise<boolean
   } catch { return null; }
 }
 
+async function resolveTargetNames(admin: any, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const { data: profiles } = await admin.from("profiles").select("user_id,display_name").in("user_id", ids);
+  const names = new Map<string, string>((profiles ?? []).map((p: any) => [String(p.user_id), String(p.display_name)] as [string, string]));
+  return ids.map((id) => names.get(String(id)) ?? String(id));
+}
+
+async function enrichPlanTargetNames(admin: any, steps: any[]): Promise<void> {
+  for (const step of steps ?? []) {
+    const targets = Array.isArray(step?.args?.targets) ? step.args.targets.map(String).slice(0, 25) : [];
+    if (targets.length > 0 && !Array.isArray(step.args.target_names)) {
+      step.args.target_names = await resolveTargetNames(admin, targets);
+    }
+  }
+}
+
 async function attachMemberNames(admin: any, result: any): Promise<any> {
   const rows = Array.isArray(result) ? result : Object.values(result ?? {}).flatMap((v: any) => Array.isArray(v) ? v : []);
   const ids = [...new Set(rows.map((r: any) => r?.user_id).filter(Boolean))];
@@ -544,6 +560,7 @@ serve(async (req: Request) => {
     let resolvedEmails: string[] = [];
     try { resolvedEmails = await bindRecipients(userClient, steps, chatPrompt + "\n" + recipientText, true); }
     catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
+    await enrichPlanTargetNames(admin, steps);
     const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
     if (proposeError) {
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
@@ -598,6 +615,7 @@ serve(async (req: Request) => {
   let resolvedEmails: string[] = [];
   try { resolvedEmails = await bindRecipients(userClient, steps, prompt, true); }
   catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
+  await enrichPlanTargetNames(admin, steps);
   const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: prompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
   if (proposeError) {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });

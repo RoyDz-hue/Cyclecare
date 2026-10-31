@@ -61,11 +61,13 @@ test('stepContentLines shows exact notice content from the bound args', () => {
     { k: 'Title', v: 'Good Morning from CycleCare!' },
     { k: 'Message', v: 'Habari ya asubuhi!' },
     { k: 'Audience', v: 'ALL' },
-    { k: 'Channel', v: 'In-app notice + push' },
+    { k: 'Channel', v: 'In-app notice + push (queued)' },
   ]);
 });
 
-test('stepContentLines falls back for custom lists and ignores other tools', () => {
+test('stepContentLines shows recipient names for custom lists and ignores other tools', () => {
+  const named = stepContentLines({ tool: 'send_notice', args: { body: 'Hi', targets: ['u1', 'u2'], target_names: ['Amina', 'Brian'] } });
+  assert.equal(named.find((l) => l.k === 'Audience').v, 'Amina, Brian');
   const lines = stepContentLines({ tool: 'send_notice', args: { body: 'Hi', targets: ['u1', 'u2'] } });
   assert.equal(lines.find((l) => l.k === 'Audience').v, '2 selected members');
   assert.equal(lines.find((l) => l.k === 'Title').v, 'CycleCare Notice');
