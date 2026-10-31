@@ -56,7 +56,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    if(!gst.reason)gst.reason="Admin adjustment";
    const {data:profs,error:profErr}=await admin.from("profiles").select("user_id,device_id,id");
    if(profErr||!Array.isArray(profs))return {success:true,type:"chat",message:"I couldn't list the members just now. No change was made."};
-   const snapshot=profs.map((p:any)=>String(p.user_id||p.device_id||p.id));
+   const snapshot=[...new Set(profs.map((p:any)=>String(p.user_id||p.device_id||p.id)))];
    if(!snapshot.length||snapshot.length>5000)return {success:true,type:"chat",message:"I couldn't prepare the member list safely. No change was made."};
    const total=coinMilli(gst.delta)*snapshot.length/1000; // exact: integer milli-units
    const steps=[{tool:"gift_all_coins",label:`Gift ${gst.delta} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`,args:{delta:gst.delta,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
@@ -147,7 +147,7 @@ export async function prepareGiftAllSteps(admin: any, steps: any[]): Promise<any
     if (!Array.isArray(args.recipients) || !args.recipients.length) {
       const { data: profs, error } = await admin.from("profiles").select("user_id,device_id,id");
       if (error || !Array.isArray(profs)) throw new Error("member_list_unavailable");
-      const snapshot = profs.map((p: any) => String(p.user_id || p.device_id || p.id));
+      const snapshot = [...new Set(profs.map((p: any) => String(p.user_id || p.device_id || p.id)))];
       if (!snapshot.length || snapshot.length > 5000) throw new Error("member_list_unavailable");
       args.recipients = snapshot;
     }
