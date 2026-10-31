@@ -102,22 +102,38 @@ export function expressedNegative(text, amount) {
   return false;
 }
 
+// Direction cues beyond an explicit "negative": words that say the balance
+// goes DOWN (diminishing, reduced, deduct, charge, ...) or UP (allocate,
+// gift, credit, bonus, ...). Direction is semantics: when the cues conflict,
+// or when the plan's direction contradicts the only cue present, the request
+// is ambiguous and must clarify - never guess a direction at any confidence.
+const DECREASE_CUES = /\b(?:negative|minus|diminish(?:es|ed|ing)?|reduc(?:es|ed|ing|tion|tions)|decreas(?:es|ed|ing)|lower(?:s|ed|ing)?|less|shrink(?:s|ing)?|deduct(?:s|ed|ing|ion)?|debit(?:s|ed|ing)?|subtract(?:s|ed|ing|ion)?|penalt(?:y|ies)|charge[sd]?|dock(?:s|ed|ing)?|claw\s*back|tak(?:e|en|ing)|took|remov(?:e|es|ed|ing|al)|cut(?:s|ting)?|slash(?:es|ed|ing)?)\b/i;
+const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing))\b/i;
+
 // A negative coin plan is also grounded by a deduction verb ("take", "deduct",
 // "remove", ...) - the word "negative" is not the only way to take coins away.
 export function expressedDeduction(text) {
-  return /\b(?:deduct|take|took|remove|removed|subtract|debit|charge|reduce|dock|deducting)\b/i.test(String(text));
+  return DECREASE_CUES.test(String(text));
 }
 
-// Proposal-gate check for tools whose delta SIGN is the operation direction
-// (gift_all_coins must be positive; adjust_coins carries its own sign).
-// deduct_all_coins takes a positive magnitude - a negative phrasing is
-// CONSISTENT with it, so it is not checked here.
+// Semantic direction gate for every coin-moving write: gift_all_coins must be
+// positive, adjust_coins carries its own sign, deduct_all_coins takes a
+// positive magnitude. An explicitly signed amount ("negative three", "-3") is
+// the strongest ground and disambiguates everything else. Without one, cue
+// CONFLICT ("allocated ... diminishing") or cue/plan CONTRADICTION fails
+// closed at proposal and at execution - direction is never guessed.
 export function signMismatchProblem(text, tool, amount) {
-  if (tool !== 'gift_all_coins' && tool !== 'adjust_coins') return null;
+  if (tool !== 'gift_all_coins' && tool !== 'adjust_coins' && tool !== 'deduct_all_coins') return null;
   if (!Number.isFinite(amount) || amount === 0) return null;
-  const neg = expressedNegative(text, amount);
-  if (amount > 0 && neg) return 'you wrote a negative amount - that would take coins away, but this plan adds them';
-  if (amount < 0 && !neg && !expressedDeduction(text)) return 'the plan takes coins away, but you did not write a negative amount or a deduction';
+  const negativePlan = tool === 'deduct_all_coins' || amount < 0;
+  if (expressedNegative(text, amount)) {
+    return negativePlan ? null : 'you wrote a negative amount - that would take coins away, but this plan adds them';
+  }
+  const dec = DECREASE_CUES.test(String(text));
+  const inc = INCREASE_CUES.test(String(text));
+  if (dec && inc) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';
+  if (dec && !negativePlan) return 'your message says the balance is reduced, but this plan adds coins';
+  if (inc && negativePlan) return 'your message adds or allocates coins, but this plan takes them away';
   return null;
 }
 

@@ -50,13 +50,37 @@ Deno.test("signMismatchProblem binds plan sign to the admin's words", () => {
   // A negative adjust plan needs written grounding: "negative" or a deduction verb.
   assertEquals(signMismatchProblem("take 3 coins from ann@x.com", "adjust_coins", -3), null);
   assertEquals(signMismatchProblem("give 3 coins to ann@x.com", "adjust_coins", -3),
-    "the plan takes coins away, but you did not write a negative amount or a deduction");
+    "your message adds or allocates coins, but this plan takes them away");
   assertEquals(signMismatchProblem("add negative 3 coins to ann@x.com", "adjust_coins", 3),
     "you wrote a negative amount - that would take coins away, but this plan adds them");
   // Consistent plans pass.
   assertEquals(signMismatchProblem("gift everyone 3 coins", "gift_all_coins", 3), null);
   assertEquals(expressedDeduction("deduct 5 coins from each member"), true);
   assertEquals(expressedDeduction("gift 5 coins to each member"), false);
+});
+
+Deno.test("direction cues: conflict or contradiction fails closed, never guesses (Roy 12:14 defect)", () => {
+  // Roy's exact message: allocation cue AND decrease cue - clarify, not +2.
+  assertEquals(
+    signMismatchProblem("Directive therefore, allocated to all users a diminishing balance of 2 coins each", "gift_all_coins", 2),
+    "your message mixes adding and reducing wording - say exactly whether to add or deduct");
+  // Decrease cue alone blocks a positive plan.
+  assertEquals(
+    signMismatchProblem("a diminishing balance of 2 coins each to all users", "gift_all_coins", 2),
+    "your message says the balance is reduced, but this plan adds coins");
+  // Increase cue alone blocks a deduction plan.
+  assertEquals(
+    signMismatchProblem("gift 2 coins to all users", "deduct_all_coins", 2),
+    "your message adds or allocates coins, but this plan takes them away");
+  // The same conflict is caught at execution time through the backstop.
+  assertEquals(
+    coinWriteGuardProblem("Directive therefore, allocated to all users a diminishing balance of 2 coins each", "gift_all_coins", 2),
+    "This plan no longer passes safety validation: your message mixes adding and reducing wording - say exactly whether to add or deduct. Please ask again - nothing was executed.");
+  // Unambiguous directions still pass: plain gift, plain deduction, explicit sign.
+  assertEquals(signMismatchProblem("diminish all users by 2 coins", "deduct_all_coins", 2), null);
+  assertEquals(signMismatchProblem("gift everyone 2 coins", "gift_all_coins", 2), null);
+  assertEquals(signMismatchProblem("Gift all users a surprise bal of negative three coins each", "deduct_all_coins", 3), null);
+  assertEquals(signMismatchProblem("take 3 coins from ann@x.com", "adjust_coins", -3), null);
 });
 
 Deno.test("coinWriteGuardProblem is the execute-time backstop", () => {
