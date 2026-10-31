@@ -196,6 +196,17 @@ function resultSummaryText(outcome: { status: string; steps: unknown[] }): strin
 
 // Post-execution read-back for writes: confirms the change actually landed.
 // Returns true/false when verifiable, null when there is nothing cheap to check.
+async function noticeVerified(admin: any, result: any, args: any): Promise<boolean> {
+  const id = typeof result?.message_id === "string" ? result.message_id : null;
+  if (!id) return false;
+  const { data } = await admin.from("in_house_messages").select("title,message,target_audience").eq("id", id).maybeSingle();
+  if (!data) return false;
+  const wantAudience = typeof args?.audience === "string" ? args.audience.toUpperCase() : "ALL";
+  return data.title === String(args?.title ?? "CycleCare Notice")
+    && data.message === String(args?.body ?? "")
+    && String(data.target_audience ?? "").toUpperCase() === wantAudience;
+}
+
 async function verifyWrite(admin: any, tool: string, args: any): Promise<boolean | null> {
   try {
     const targets: string[] = Array.isArray(args?.targets) ? args.targets.slice(0, 25).map(String) : [];
@@ -303,6 +314,7 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
     }
     if (out.ok && step.tool === "gift_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
     if (out.ok && step.tool === "deduct_all_coins") verified = giftAllVerified(out.result, step.args ?? {});
+    if (out.ok && step.tool === "send_notice") verified = await noticeVerified(admin, out.result, step.args ?? {});
     indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "WRITE", verified, ...out };
   }
   for (let i = 0; i < steps.length; i++) results.push(indexed[i]);

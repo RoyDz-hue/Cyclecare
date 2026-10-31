@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, ArrowUpRight, CheckCircle2, XCircle, ShieldAlert, Copy, Check } from 'lucide-react';
 import {
-  commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, planRiskLevel, adminIdFromConfig,
+  commandMessage, commandDecide, commandHistoryList, buildLocalSuggestions, describeStep, stepContentLines, planRiskLevel, adminIdFromConfig,
   planCardState,
 } from '../lib/adminCommand.js';
 import { formatCommandOutcome } from '../lib/commandResults.js';
@@ -22,7 +22,18 @@ export function PlanMessage({ message, busy, onApprove, onReject }) {
         {message.meta?.requires_approval === false ? 'Read-only check' : 'Review this plan before anything changes'}
       </h4>
       <ol className="chat-plan-steps">
-        {plan.steps.map((s, i) => (<li key={i}>{s.label || describeStep(s)}</li>))}
+        {plan.steps.map((s, i) => (
+          <li key={i}>
+            {s.label || describeStep(s)}
+            {stepContentLines(s).length > 0 && (
+              <dl className="chat-plan-detail">
+                {stepContentLines(s).map((line) => (
+                  <div key={line.k}><dt>{line.k}</dt><dd>{line.v}</dd></div>
+                ))}
+              </dl>
+            )}
+          </li>
+        ))}
       </ol>
       {outcome && (
         <p className={`chat-plan-outcome ${outcome.tone}`}>

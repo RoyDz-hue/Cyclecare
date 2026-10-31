@@ -458,6 +458,10 @@ body {
 .chat-plan.risky { border-color: rgba(255, 158, 174, 0.45); }
 .chat-plan-title { font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .chat-plan-steps { margin: 8px 0 0 18px; font-size: 13px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px; }
+.chat-plan-detail { margin: 4px 0 2px; padding: 6px 10px; border-left: 2px solid rgba(244, 143, 177, 0.35); font-size: 12px; }
+.chat-plan-detail div { display: flex; gap: 8px; margin: 2px 0; }
+.chat-plan-detail dt { font-weight: 600; min-width: 64px; flex-shrink: 0; }
+.chat-plan-detail dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
 .composer {
   display: flex; align-items: flex-end; gap: 6px; margin: 8px 12px 12px; padding: 6px 6px 6px 16px;
@@ -611,6 +615,8 @@ body {
 .content-aci .chat-plan-title { color: #F4F4F5; font-size: 14px; }
 .content-aci .chat-plan .chat-plan-steps { color: #C9C4C9; font-size: 13px; }
 .content-aci .chat-plan .chat-plan-steps li { color: #C9C4C9; }
+.content-aci .chat-plan-detail { color: #E4E0E4; }
+.content-aci .chat-plan-detail dt { color: #F0A8C0; }
 .content-aci .chat-plan .btn-primary { background: linear-gradient(135deg, var(--rose-pink), #D81B60); border: none; color: #FFF; }
 .content-aci .chat-plan .btn-outline { background: transparent; border: 1px solid rgba(244, 244, 245, 0.25); color: #E8E8EA; }
 

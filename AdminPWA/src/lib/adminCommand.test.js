@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLocalSuggestions, describeStep, planRiskLevel, stepKind, planCardState, PLAN_OUTCOME } from './adminCommand.js';
+import { buildLocalSuggestions, describeStep, stepContentLines, planRiskLevel, stepKind, planCardState, PLAN_OUTCOME } from './adminCommand.js';
 
 test('stepKind classifies tools', () => {
   assert.equal(stepKind('get_user_insights'), 'READ');
@@ -53,4 +53,21 @@ test('plan card stays active only while the run is still proposed', () => {
   assert.equal(planCardState({ run_status: 'proposed' }).outcome, null);
   assert.equal(planCardState({}).decided, false, 'fresh local echo has no run status yet');
   assert.equal(planCardState({ decided: true }).decided, true, 'decided meta still closes without run status');
+});
+
+test('stepContentLines shows exact notice content from the bound args', () => {
+  const lines = stepContentLines({ tool: 'send_notice', label: 'Send a good morning message to all users', args: { title: 'Good Morning from CycleCare!', body: 'Habari ya asubuhi!', audience: 'ALL' } });
+  assert.deepEqual(lines, [
+    { k: 'Title', v: 'Good Morning from CycleCare!' },
+    { k: 'Message', v: 'Habari ya asubuhi!' },
+    { k: 'Audience', v: 'ALL' },
+    { k: 'Channel', v: 'In-app notice + push' },
+  ]);
+});
+
+test('stepContentLines falls back for custom lists and ignores other tools', () => {
+  const lines = stepContentLines({ tool: 'send_notice', args: { body: 'Hi', targets: ['u1', 'u2'] } });
+  assert.equal(lines.find((l) => l.k === 'Audience').v, '2 selected members');
+  assert.equal(lines.find((l) => l.k === 'Title').v, 'CycleCare Notice');
+  assert.deepEqual(stepContentLines({ tool: 'adjust_coins', args: {} }), []);
 });

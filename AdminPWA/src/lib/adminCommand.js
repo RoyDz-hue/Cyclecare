@@ -57,6 +57,22 @@ export function describeStep(step) {
   }
 }
 
+// Exact content a step will send/write, shown on the review card so approval
+// is informed by the bound args (what executes), not just a summary label.
+export function stepContentLines(step) {
+  const tool = step?.tool || '';
+  const args = step?.args || {};
+  if (tool === 'send_notice') {
+    const lines = [];
+    lines.push({ k: 'Title', v: String(args.title || 'CycleCare Notice') });
+    lines.push({ k: 'Message', v: String(args.body || '') });
+    lines.push({ k: 'Audience', v: args.audience ? String(args.audience).toUpperCase() : (Array.isArray(args.targets) && args.targets.length ? `${args.targets.length} selected member${args.targets.length === 1 ? '' : 's'}` : 'ALL') });
+    lines.push({ k: 'Channel', v: 'In-app notice + push' });
+    return lines;
+  }
+  return [];
+}
+
 export function buildLocalSuggestions(insights) {
   const chips = [];
   const active = insights?.most_active?.[0];
