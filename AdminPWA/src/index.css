@@ -584,17 +584,59 @@ body {
 }
 
 /* ---------- ACI full chat screen ---------- */
-.content-aci { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 0 12px 12px; }
+.content-aci { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 0; }
 .content-aci .chat-shell { width: 100%; max-width: 760px; margin: 0 auto; }
 .auth-inline { min-height: auto; padding: 24px 16px; }
 .welcome-card { max-width: 560px; margin: 40px auto 0; padding: 28px 22px; display: flex; flex-direction: column; gap: 14px; }
 .profile-row { display: flex; align-items: center; gap: 12px; padding: 6px 2px; }
 
-/* ---------- ACI: the screen is the chat canvas ---------- */
-.content-aci { padding-top: 4px; }
+/* ---------- ACI: the screen is the chat canvas (ChatGPT-reference dark pass) ----------
+   Edge-to-edge near-black canvas, subdued dark user bubbles, plain assistant text,
+   dark readable plan cards with Confirm/Cancel, floating pill composer. No fake buttons. */
+.content-aci { padding-top: 4px; background: #0B0709; }
 .content-aci .chat-shell.chat-bare { background: none; border: none; border-radius: 0; box-shadow: none; }
-.content-aci .chat-scroll { padding: 12px 4px 8px; gap: 12px; }
-.content-aci .composer { margin: 4px 0 12px; }
+.content-aci .chat-scroll { padding: 12px 16px 8px; gap: 12px; }
+
+.content-aci .bubble { font-size: 14.5px; line-height: 1.55; }
+.content-aci .bubble-mine { background: #2E2E33; color: #F4F4F5; border: none; border-radius: 18px 18px 6px 18px; padding: 10px 14px 6px; }
+.content-aci .bubble-theirs { background: none; border: none; border-left: none; padding: 4px 2px 2px; color: #EDEDEF; max-width: 100%; font-size: 15px; line-height: 1.6; }
+.content-aci .bubble-meta { color: rgba(244, 244, 245, 0.4); opacity: 1; }
+.content-aci .bubble-mine .bubble-meta { color: rgba(244, 244, 245, 0.55); }
+.content-aci .copy-btn { color: inherit; }
+.content-aci .bubble.typing { padding: 10px 2px; }
+.content-aci .typing span { background: var(--rose-pink); }
+
+.content-aci .chat-plan { background: #1B1518; border: 1px solid rgba(244, 143, 177, 0.16); border-radius: 14px; box-shadow: none; }
+.content-aci .chat-plan.risky { background: #1F1518; border-color: rgba(255, 158, 174, 0.4); }
+.content-aci .chat-plan-title { color: #F4F4F5; font-size: 14px; }
+.content-aci .chat-plan .chat-plan-steps { color: #C9C4C9; font-size: 13px; }
+.content-aci .chat-plan .chat-plan-steps li { color: #C9C4C9; }
+.content-aci .chat-plan .btn-primary { background: linear-gradient(135deg, var(--rose-pink), #D81B60); border: none; color: #FFF; }
+.content-aci .chat-plan .btn-outline { background: transparent; border: 1px solid rgba(244, 244, 245, 0.25); color: #E8E8EA; }
+
+.content-aci .chat-empty h3 { color: #F4F4F5; }
+.content-aci .chat-empty-lead, .content-aci .chat-empty p { color: #9B959A; }
+.content-aci .starter { color: #E8E8EA; border-bottom-color: rgba(255, 255, 255, 0.09); }
+.content-aci .starter-list { border-top-color: rgba(255, 255, 255, 0.09); }
+
+.content-aci .composer {
+  margin: 8px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  padding: 6px 6px 6px 20px; border-radius: 999px;
+  background: #1B1518; border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.content-aci .composer:focus-within { border-color: var(--border-focus); box-shadow: 0 0 0 3px rgba(244, 143, 177, 0.12); }
+.content-aci .send-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--rose-pink), #D81B60); color: #fff;
+}
+.content-aci .send-btn:disabled { background: rgba(244, 143, 177, 0.22); color: rgba(255, 255, 255, 0.75); opacity: 1; }
+
+@media (max-width: 700px) {
+  .content-aci { padding-top: 0; }
+  .content-aci .chat-scroll { padding: 10px 12px 8px; gap: 10px; }
+  .content-aci .composer { margin: 6px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
+}
 
 /* ---------- Marketing home ---------- */
 .mkt { max-width: 960px; margin: 0 auto; padding: 8px 16px 32px; display: flex; flex-direction: column; gap: 22px; }
