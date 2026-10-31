@@ -34,7 +34,7 @@ class PaymentUseCaseTest {
     @Test fun confirmedPaymentWithFailedWalletNeverReturnsStaleSuccess() = runBlocking {
         val p = prefs()
         val result = useCase(p) { EconomyResult.Error("offline") }
-            .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner, coinBalance = 19))
+            .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner, coinBalance = java.math.BigDecimal("19")))
         assertTrue(result is PaymentPollResult.Timeout)
         assertTrue((result as PaymentPollResult.Timeout).message.contains("do not pay again"))
         assertFalse(result.message.contains("will update automatically"))
@@ -42,15 +42,15 @@ class PaymentUseCaseTest {
 
     @Test fun onlyFreshAuthoritativeWalletIsDisplayed() = runBlocking {
         val p = prefs()
-        val verified = EconomyProfile(userId = owner, coinBalance = 250)
+        val verified = EconomyProfile(userId = owner, coinBalance = java.math.BigDecimal("250"))
         val result = useCase(p) { requested -> assertEquals(owner, requested); EconomyResult.Success(verified) }
-            .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner, coinBalance = 19))
+            .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner, coinBalance = java.math.BigDecimal("19")))
         assertEquals(verified, (result as PaymentPollResult.Success).profile)
     }
 
     @Test fun anotherOwnersWalletCannotBecomeSuccess() = runBlocking {
         val p = prefs()
-        val result = useCase(p) { EconomyResult.Success(EconomyProfile(userId = "other", coinBalance = 5000)) }
+        val result = useCase(p) { EconomyResult.Success(EconomyProfile(userId = "other", coinBalance = java.math.BigDecimal("5000"))) }
             .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner))
         assertTrue(result is PaymentPollResult.Timeout)
     }
@@ -76,7 +76,7 @@ class PaymentUseCaseTest {
 
     @Test fun logoutDuringWalletRefreshCannotDisplayOldWallet() = runBlocking {
         val p = prefs()
-        val result = useCase(p) { p.clearSession(); EconomyResult.Success(EconomyProfile(userId = owner, coinBalance = 250)) }
+        val result = useCase(p) { p.clearSession(); EconomyResult.Success(EconomyProfile(userId = owner, coinBalance = java.math.BigDecimal("250"))) }
             .pollPaymentStatus("reference", 1, EconomyProfile(userId = owner))
         assertEquals("auth_required", (result as PaymentPollResult.Failed).status)
     }

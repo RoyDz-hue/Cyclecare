@@ -43,7 +43,7 @@ export function validateCosmetic(item) {
   if (!['ARTIFACT', 'FRAME', 'THEME', 'BADGE'].includes(String(item.kind || '').toUpperCase())) return 'Kind must be ARTIFACT, FRAME, THEME or BADGE.';
   if (!item.name || String(item.name).length > 80) return 'Name is required (max 80 chars).';
   const price = Number(item.price_coins);
-  if (!Number.isInteger(price) || price < 0 || price > 1000000) return 'Price must be a whole number of coins (0-1,000,000).';
+  if (!Number.isFinite(price) || price < 0 || price > 1000000 || Math.round(price * 1000) !== price * 1000) return 'Price must be 0-1,000,000 coins with up to 3 decimal places.';
   if (!['CLASSIC', 'RARE', 'EPIC', 'LEGENDARY'].includes(String(item.rarity || '').toUpperCase())) return 'Rarity must be CLASSIC, RARE, EPIC or LEGENDARY.';
   return null;
 }

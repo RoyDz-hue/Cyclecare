@@ -7,6 +7,7 @@ import com.cyclecare.app.data.economy.EconomyResult
 import com.cyclecare.app.data.economy.SupabaseEconomyService
 import com.cyclecare.app.data.economy.UserEconomyTier
 import com.cyclecare.app.security.AuthPreferences
+import java.math.BigDecimal
 
 @Deprecated("Use EarnCoinsUseCase instead per spec §41", ReplaceWith("EarnCoinsUseCase"))
 class MiningUseCase(
@@ -27,7 +28,7 @@ class MiningUseCase(
     suspend fun transferCoins(
         currentProfile: EconomyProfile,
         recipientEmail: String,
-        amount: Long
+        amount: BigDecimal
     ): EconomyResult<EconomyProfile> = delegate.transferCoins(currentProfile, recipientEmail, amount)
 
     suspend fun purchaseArtifact(

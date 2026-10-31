@@ -8,6 +8,7 @@ import com.cyclecare.app.data.economy.ItemCategory
 import com.cyclecare.app.data.economy.SupabaseEconomyService
 import com.cyclecare.app.data.economy.UserEconomyTier
 import com.cyclecare.app.security.AuthPreferences
+import java.math.BigDecimal
 
 class EarnCoinsUseCase(
     private val economyService: SupabaseEconomyService? = null,
@@ -37,7 +38,7 @@ class EarnCoinsUseCase(
     suspend fun transferCoins(
         currentProfile: EconomyProfile,
         recipientEmail: String,
-        amount: Long
+        amount: BigDecimal
     ): EconomyResult<EconomyProfile> {
         return economyService?.transferCoins(currentProfile, recipientEmail, amount)
             ?: EconomyResult.Error("Economy service offline")

@@ -75,7 +75,7 @@ import com.cyclecare.app.ui.components.InteractiveArtifact3D
 fun AtelierScreen(
     profile: EconomyProfile,
     onClaimCoins: () -> Unit,
-    onTransferCoins: (recipientEmail: String, amount: Long) -> Unit,
+    onTransferCoins: (recipientEmail: String, amount: java.math.BigDecimal) -> Unit,
     onUnlockItem: (EconomyItem) -> Unit,
     onEquipItem: (EconomyItem) -> Unit,
     onPurchasePackage: (com.cyclecare.app.data.economy.CoinPurchasePackage) -> Unit,

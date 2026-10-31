@@ -1,5 +1,6 @@
 package com.cyclecare.app.ui.screens
 
+import com.cyclecare.app.util.CoinFormatter
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -516,7 +517,7 @@ fun HomeScreen(
                                     }
                                 }
                                 Text(
-                                    text = "${uiState.economyProfile.coinBalance} coins · ${activeArtifactItem.name} active",
+                                    text = "${CoinFormatter.format(uiState.economyProfile.coinBalance)} coins · ${activeArtifactItem.name} active",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
