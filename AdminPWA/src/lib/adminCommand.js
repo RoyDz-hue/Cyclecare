@@ -67,14 +67,15 @@ export function stepContentLines(step) {
     lines.push({ k: 'Title', v: String(args.title || 'CycleCare Notice') });
     lines.push({ k: 'Message', v: String(args.body || '') });
     if (args.audience) {
-      lines.push({ k: 'Audience', v: String(args.audience).toUpperCase() });
+      const aud = String(args.audience).toUpperCase();
+      lines.push({ k: 'Audience', v: aud === 'ALL' ? 'All members except banned/suspended' : aud });
     } else if (Array.isArray(args.targets) && args.targets.length) {
       const names = Array.isArray(args.target_names) && args.target_names.length === args.targets.length ? args.target_names : null;
       lines.push({ k: 'Audience', v: names ? names.join(', ') : `${args.targets.length} selected member${args.targets.length === 1 ? '' : 's'}` });
     } else {
       lines.push({ k: 'Audience', v: 'ALL' });
     }
-    lines.push({ k: 'Channel', v: 'In-app notice + push (queued)' });
+    lines.push({ k: 'Channel', v: 'In-app notice + push notification' });
     return lines;
   }
   return [];

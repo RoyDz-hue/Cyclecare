@@ -60,8 +60,8 @@ test('stepContentLines shows exact notice content from the bound args', () => {
   assert.deepEqual(lines, [
     { k: 'Title', v: 'Good Morning from CycleCare!' },
     { k: 'Message', v: 'Habari ya asubuhi!' },
-    { k: 'Audience', v: 'ALL' },
-    { k: 'Channel', v: 'In-app notice + push (queued)' },
+    { k: 'Audience', v: 'All members except banned/suspended' },
+    { k: 'Channel', v: 'In-app notice + push notification' },
   ]);
 });
 
