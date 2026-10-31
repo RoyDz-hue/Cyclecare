@@ -1,0 +1,18 @@
+CREATE SCHEMA auth;
+CREATE TABLE auth.users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text);
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULLIF(current_setting('test.uid', true), '')::uuid $$;
+CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT COALESCE(NULLIF(current_setting('test.role', true), ''), 'authenticated') $$;
+CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;
+CREATE TABLE public.profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid, device_id text, status text DEFAULT 'ACTIVE', suspension_reason text, suspended_until timestamptz, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.economy_profiles (user_id text PRIMARY KEY, coin_balance numeric DEFAULT 0, lifetime_earned numeric DEFAULT 0, lifetime_spent numeric DEFAULT 0, tier text DEFAULT 'FREE', rank text DEFAULT 'LUMEN', last_mined_date date, unlocked_items jsonb DEFAULT '[]', artifacts jsonb, status text, suspension_reason text, suspended_until timestamptz, last_penalized_at timestamptz, active_artifact text, active_frame text, active_theme text, active_avatar_art text, active_badge text, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.coin_transactions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, action text NOT NULL, delta numeric NOT NULL, balance_after numeric NOT NULL, metadata jsonb DEFAULT '{}', created_at timestamptz DEFAULT now());
+CREATE TABLE public.mining_records (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_id text, claimed_date date, amount_earned numeric);
+CREATE TABLE public.cyclecare_user_timezones (user_id text PRIMARY KEY, timezone_name text);
+CREATE TABLE public.cosmetic_catalog (item_id text PRIMARY KEY, kind text, name text, description text, price_coins numeric, premium_included boolean DEFAULT false, rarity text, asset_key text, is_active boolean DEFAULT true, sort_order int DEFAULT 0);
+CREATE TABLE public.transactions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text, provider text, currency text, amount numeric, status text DEFAULT 'pending', metadata jsonb DEFAULT '{}', provider_reference text, raw_payload jsonb, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.app_config (key text PRIMARY KEY, value jsonb, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.admin_audit_logs (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, admin_user_id uuid, admin_action text, target_user_id text, details jsonb, performed_by text, created_at timestamptz DEFAULT now());
+CREATE TABLE public.user_notifications (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id uuid, user_id text, target_identifier text, title text, body text, type text, priority text, sender text);
+CREATE TABLE public.in_house_messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text, message text, message_type text, target_audience text, target_user_id text, sent_by text);
+CREATE FUNCTION public.is_cyclecare_admin() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT COALESCE(NULLIF(current_setting('test.is_admin', true), ''), 'true')::boolean $$;
+CREATE FUNCTION public.is_cyclecare_account_restricted(text) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;

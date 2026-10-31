@@ -114,24 +114,15 @@ export default function PricingManager({ controlData, supabaseConfig, onSessionC
 
       <div className="section-head" style={{ marginTop: 12 }}>
         <div>
-          <h3 className="font-editorial section-title"><Sparkles size={18} /> Economy multipliers</h3>
-          <p className="section-sub">Earning rates per tier. 0-100x, server validated.</p>
+          <h3 className="font-editorial section-title"><Sparkles size={18} /> Economy multipliers (retired)</h3>
+          <p className="section-sub">Retired: rates follow the published supply schedule with milestone step-downs.</p>
         </div>
       </div>
       <div className="glass-card">
-        <div className="field-row wrap">
-          {Object.entries(multipliers).map(([key, value]) => (
-            <label key={key} className="input-label" style={{ minWidth: 130, flex: 1 }}>{key}
-              <input type="number" min="0" max="100" step="0.1" className="text-input" value={value}
-                onChange={(e) => { setMultipliers((m) => ({ ...m, [key]: Number(e.target.value) })); markDirty('economy_multipliers'); }} />
-            </label>
-          ))}
-          {Object.keys(multipliers).length === 0 && <p className="section-sub">No multiplier config found on the server yet.</p>}
-        </div>
-        <button type="button" className="btn btn-outline btn-block" disabled={!dirty.economy_multipliers || saving === 'economy_multipliers'}
-          onClick={() => save('economy_multipliers', multipliers, 'Save economy multipliers? This changes coin earning rates.')}>
-          <Save size={16} /> {saving === 'economy_multipliers' ? 'Saving…' : 'Save multipliers'}
-        </button>
+        <p className="section-sub">
+          Earning rates now follow the published supply schedule: the base rate steps down at coin issuance
+          milestones, so this legacy multiplier config no longer drives earnings and cannot be edited here.
+        </p>
       </div>
 
       <div className="section-head" style={{ marginTop: 12 }}>
