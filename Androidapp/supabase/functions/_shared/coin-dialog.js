@@ -1,4 +1,5 @@
 // Explicit coin slots. A confirmation never executes a pending plan.
+import {amountCandidates} from './amount-hygiene.js';
 export function parseCoinRequest(text) {
   const t=text.trim().replace(/^debit\s+amount\s+of\s+/i,'deduct ').replace(/^debit\s+/i,'deduct ');
   let m=t.match(/^(deduct|remove|take)\s+(\d+(?:\.\d+)?)\s*(?:coins?\s*)?from\s+(?:all\s+(?:users?|members?)|everyone|everybody|every\s+(?:user|member))(?:[.,]?\s+(?:reason|because)\s*:?\s*(.+))?$/i);
@@ -43,20 +44,12 @@ export function parseCoinRequest(text) {
   // coin word appears somewhere. The amount is never asked for again when it
   // is already written; scope/verb branches below still decide what it means.
   if(!amt&&/\bcoins?\b/i.test(t)){
-    // Scan on a copy with date shapes blanked, then keep only plausible coin
-    // amounts: no years/long ids, no ordinals ("31st"), no fiat ("500 KES"),
-    // no letter-glued identifiers ("INV-2342"). Zero or several survivors is
-    // ambiguous: better to clarify than to gift a date or a count.
-    const masked=t.replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g,' ').replace(/\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b/g,' ');
-    const cands=[];
-    for(const n of masked.matchAll(/-?\d+(?:\.\d+)?/g)){
-      const num=n[0],i=n.index;
-      if(!num.includes('.')&&num.replace('-','').length>=4)continue; // year / long id
-      if(/^(?:st|nd|rd|th)\b/i.test(masked.slice(i+num.length).trimStart()))continue; // ordinal day
-      if(/^\s*(?:KES|USD|Ksh|shillings?)\b/i.test(masked.slice(i+num.length)))continue; // fiat, not coins
-      if(/[A-Za-z]$/.test(masked.slice(0,i)))continue; // glued to a letter (INV-2342)
-      cands.push(num);
-    }
+    // Shared hygiene scan (amount-hygiene.js): date shapes blanked, then keep
+    // only plausible coin amounts - no years/long ids, ordinals ("31st"),
+    // fiat ("500 KES") or letter-glued identifiers ("INV-2342"). Zero or
+    // several survivors is ambiguous: clarify rather than gift a date or a
+    // count. One implementation serves the parser and the planner gate.
+    const cands=amountCandidates(t);
     if(cands.length===1)amt=[cands[0],cands[0]];
   }
   // Audience scope. Bare forms mean every member (grounded: the member registry

@@ -3,7 +3,7 @@ import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, is
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, validateSteps } from "../_shared/admin-tool-spec.ts";
-import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.ts";
+import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.js";
 import { runVerifier } from "../_shared/admin-verify.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
