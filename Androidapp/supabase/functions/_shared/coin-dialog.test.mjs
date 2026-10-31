@@ -38,3 +38,13 @@ test('bare Yes while awaiting a reason defaults to Admin adjustment, keeps it a 
  assert.equal(s.scope,'all');
  assert.equal(s.delta,3);
 });
+
+test('parseCoinRequest recognizes random-member gifts', () => {
+  assert.deepEqual(parseCoinRequest('Give any random user 2 coins'), { delta: 2, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Gift a random member 5 coins'), { delta: 5, query: null, random: true, reason: null });
+  assert.deepEqual(parseCoinRequest('Send 3 coins to random person, reason welcome bonus'), { delta: 3, query: null, random: true, reason: 'welcome bonus' });
+  assert.deepEqual(parseCoinRequest('Give Kevin 200'), { delta: 200, query: 'Kevin', reason: null }, 'named member unchanged');
+  const all = parseCoinRequest('Gift all users 2 coins each');
+  assert.equal(all.scope, 'all', 'all-scope unchanged');
+  assert.equal(all.random, undefined);
+});

@@ -33,7 +33,12 @@ function makeClients(profiles: any[] = PROFILES) {
         return { data: { success: true, duplicate: giftCalls > 1, recipients: n, total_coins: n * params.p_delta }, error: null };
       }
       if (name === "admin_find_recipients") return { data: [{ user_id: "u-kevin", display_name: "Kevin", email: "kevin@example.com" }], error: null };
-      if (name === "admin_resolve_recipient") return { data: { user_id: "u-kevin", email: "kevin@example.com" }, error: null };
+      if (name === "admin_resolve_recipient") {
+        const email = String(params?.p_email ?? "kevin@example.com");
+        const id = email === "amani@example.com" ? "u-amani" : "u-kevin";
+        return { data: { user_id: id, email }, error: null };
+      }
+      if (name === "admin_random_member") return { data: { user_id: "u-amani", display_name: "Amani", email: "amani@example.com" }, error: null };
       throw new Error("unexpected rpc " + name);
     },
   };
@@ -150,4 +155,20 @@ Deno.test("gift typo then bare Yes: one approval plan, nothing executes", async 
   assertEquals(step.args.recipients, ["u-1", "u-2", "u-3"]);
   assertStringIncludes(step.label, "9 coins in total");
   assertEquals(rpcCalls.filter((c: any) => c.name === "admin_gift_all_coins").length, 0, "proposal never executes");
+});
+
+Deno.test("random-member gift: picks a member, names the pick, proposes one plan, nothing executes", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const r = await coinDialog(admin, userClient, "admin-1", "Give any random user 2 coins");
+  assertEquals(r.type, "plan");
+  assertEquals(r.plan.steps.length, 1);
+  assertEquals(r.plan.steps[0].tool, "adjust_coins");
+  assertEquals(r.plan.steps[0].args.targets, ["u-amani"]);
+  assertEquals(r.plan.steps[0].args.delta, 2);
+  assertEquals(r.plan.steps[0].args.reason, "Admin adjustment");
+  assertStringIncludes(r.plan.steps[0].label, "amani@example.com");
+  assertStringIncludes(r.plan.steps[0].label, "random pick");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_random_member").length, 1);
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_gift_all_coins").length, 0, "nothing executed");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 1);
 });

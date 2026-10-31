@@ -67,3 +67,11 @@ test('appends unrelated rows in order and leaves others untouched', () => {
   const next = applyRealtimeInsert(cur, { id: 'm2', role: 'assistant', kind: 'chat', content: 'B' });
   assert.deepEqual(next.map((m) => m.id), ['m1', 'm2']);
 });
+
+test('realtime copy of a user message replaces its settled local echo, no duplicate bubble', () => {
+  const local = [{ id: 'local-1', echo: true, role: 'user', kind: 'chat', content: 'Give any random user 2 coins', created_at: '2026-10-31T04:18:00Z', pending: false }];
+  const row = { id: 'srv-9', role: 'user', kind: 'chat', content: 'Give any random user 2 coins', created_at: '2026-10-31T04:18:01Z' };
+  const next = applyRealtimeInsert(local, row);
+  assert.equal(next.length, 1, 'one bubble, not two');
+  assert.equal(next[0].id, 'srv-9');
+});

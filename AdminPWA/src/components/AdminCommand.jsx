@@ -192,7 +192,7 @@ export default function AdminCommand({ supabaseConfig, onSessionChange, showNoti
     setThinking(true);
     setPrompt('');
     if (taRef.current) taRef.current.style.height = 'auto';
-    const optimistic = { id: `local-${Date.now()}`, role: 'user', kind: 'chat', content: trimmed, created_at: new Date().toISOString(), pending: true };
+    const optimistic = { id: `local-${Date.now()}`, echo: true, role: 'user', kind: 'chat', content: trimmed, created_at: new Date().toISOString(), pending: true };
     persist([...messages.filter((m) => !m.pending), optimistic]);
     try {
       const res = await commandMessage(supabaseConfig, trimmed, onSessionChange);

@@ -67,6 +67,11 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
      return reply("That choice isn't unique. Reply with a listed number, one exact email, or say cancel. No change was made.");
    }
  }
+ if(!st.recipient&&st.random){
+   const {data:pick,error:pickErr}=await userClient.rpc("admin_random_member",{});
+   if(pickErr||!pick?.user_id||!pick?.email)return reply("I couldn't pick a member just now. No change has been made.");
+   st.recipient={user_id:String(pick.user_id),email:String(pick.email),display_name:pick.display_name?String(pick.display_name):String(pick.email)};
+ }
  if(!st.recipient){
    if(isConfirmation(text)&&st.candidates?.length!==1)return reply("Please choose a specific account by email from the list, or say cancel. No change has been made.");
    const {data,error}=await userClient.rpc("admin_find_recipients",{p_query:st.query});
@@ -83,8 +88,9 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  // Resolve account again through exact email before proposal. Never trust stored identifiers.
  const {data:bound,error}=await userClient.rpc("admin_resolve_recipient",{p_email:st.recipient.email});
  if(error||bound?.user_id!==st.recipient.user_id)return reply("The account changed or couldn't be confirmed. Please cancel and start again. No change was made.");
- const steps=[{tool:"adjust_coins",label:`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}. Reason: ${st.reason}`,args:{targets:[bound.user_id],delta:st.delta,reason:st.reason}}];
- const prompt=`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}. Reason: ${st.reason}`;
+ const actionText=`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}${st.random?" (random pick)":""}. Reason: ${st.reason}`;
+ const steps=[{tool:"adjust_coins",label:actionText,args:{targets:[bound.user_id],delta:st.delta,reason:st.reason}}];
+ const prompt=actionText;
  const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:prompt,p_plan:{steps}});
  if(proposeError)return reply("I couldn't prepare the change safely. Nothing was changed; please cancel and try again.");
  st.run_id=proposed.run_id;st.awaiting="approval";await save();
