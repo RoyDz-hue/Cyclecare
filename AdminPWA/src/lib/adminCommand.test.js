@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildLocalSuggestions, describeStep, stepContentLines, planRiskLevel, stepKind, planCardState, PLAN_OUTCOME } from './adminCommand.js';
+import SPEC from './adminToolSpec.json' with { type: 'json' };
 
 test('stepKind classifies tools', () => {
   assert.equal(stepKind('get_user_insights'), 'READ');
@@ -69,7 +70,23 @@ test('stepContentLines shows recipient names for custom lists and ignores other 
   const named = stepContentLines({ tool: 'send_notice', args: { body: 'Hi', targets: ['u1', 'u2'], target_names: ['Amina', 'Brian'] } });
   assert.equal(named.find((l) => l.k === 'Audience').v, 'Amina, Brian');
   const lines = stepContentLines({ tool: 'send_notice', args: { body: 'Hi', targets: ['u1', 'u2'] } });
-  assert.equal(lines.find((l) => l.k === 'Audience').v, '2 selected members');
+  assert.equal(lines.find((l) => l.k === 'Audience').v, '2 selected');
   assert.equal(lines.find((l) => l.k === 'Title').v, 'CycleCare Notice');
   assert.deepEqual(stepContentLines({ tool: 'adjust_coins', args: {} }), []);
+});
+
+test('PWA spec mirror is identical to the edge function spec data', async () => {
+  const { readFileSync } = await import('node:fs');
+  const edge = JSON.parse(readFileSync(new URL('../../../Androidapp/supabase/functions/admin-tool-spec-data.json', import.meta.url), 'utf8'));
+  const pwa = JSON.parse(readFileSync(new URL('./adminToolSpec.json', import.meta.url), 'utf8'));
+  assert.deepEqual(pwa, edge, 'PWA and edge capability specs drifted');
+});
+
+test('every WRITE/RISKY tool gets real review content on the card, not just a label', () => {
+  const fullArgs = { targets: ['u1'], target_names: ['Amina'], delta: -4.1, reason: 'r', title: 't', body: 'b', audience: 'ALL', status: 'ACTIVE', tier: 'FREE', enabled: true, persona_id: 'p1', item_id: 'i1', artifact_name: 'Rose Obelisk', action: 'REMOVE', packages: [{ id: 'p1' }], price_coins: 10, is_active: true, daily_post_cap: 3, focus: 'all' };
+  for (const spec of SPEC.tools) {
+    if (spec.kind === 'READ') continue;
+    const lines = stepContentLines({ tool: spec.name, args: fullArgs });
+    assert.ok(lines.length > 0, `${spec.name}: review card would show only a label`);
+  }
 });

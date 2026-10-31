@@ -57,28 +57,48 @@ export function describeStep(step) {
   }
 }
 
-// Exact content a step will send/write, shown on the review card so approval
-// is informed by the bound args (what executes), not just a summary label.
-export function stepContentLines(step) {
-  const tool = step?.tool || '';
-  const args = step?.args || {};
-  if (tool === 'send_notice') {
-    const lines = [];
-    lines.push({ k: 'Title', v: String(args.title || 'CycleCare Notice') });
-    lines.push({ k: 'Message', v: String(args.body || '') });
-    if (args.audience) {
-      const aud = String(args.audience).toUpperCase();
-      lines.push({ k: 'Audience', v: aud === 'ALL' ? 'All members except banned/suspended' : aud });
-    } else if (Array.isArray(args.targets) && args.targets.length) {
-      const names = Array.isArray(args.target_names) && args.target_names.length === args.targets.length ? args.target_names : null;
-      lines.push({ k: 'Audience', v: names ? names.join(', ') : `${args.targets.length} selected member${args.targets.length === 1 ? '' : 's'}` });
-    } else {
-      lines.push({ k: 'Audience', v: 'ALL' });
-    }
-    lines.push({ k: 'Channel', v: 'In-app notice + push notification' });
-    return lines;
+// Exact content a step will send/write, driven by the shared capability spec
+// (adminToolSpec.json, mirrored from the edge function) so the review card
+// shows the bound args for ANY tool, not a hardcoded few.
+import SPEC_DATA from './adminToolSpec.json' with { type: 'json' };
+const SPEC_BY_NAME = new Map(SPEC_DATA.tools.map((t) => [t.name, t]));
+
+function formatReviewValue(key, value, args) {
+  if (value === undefined || value === null || value === '') return null;
+  if (key === 'audience') {
+    const aud = String(value).toUpperCase();
+    if (aud === 'ALL') return 'All members except banned/suspended';
+    if (Array.isArray(args.targets) && args.targets.length) return null; // names line covers it
+    return aud;
   }
-  return [];
+  if (key === 'target_names') return Array.isArray(value) && value.length ? value.join(', ') : null;
+  if (key === 'targets') {
+    if (Array.isArray(args.target_names) && args.target_names.length) return null; // names shown instead
+    return Array.isArray(value) ? `${value.length} selected` : null;
+  }
+  if (key === 'delta') return `${Math.abs(Number(value))} coins`;
+  if (key === 'packages') return Array.isArray(value) ? `${value.length} packages` : null;
+  if (key === 'enabled' || key === 'is_active') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value);
+}
+
+export function stepContentLines(step) {
+  const spec = SPEC_BY_NAME.get(step?.tool || '');
+  if (!spec) return [];
+  const args = { ...(step?.args || {}) };
+  if (step?.tool === 'send_notice' && !args.title) args.title = 'CycleCare Notice'; // executor default - show what will actually send
+  const lines = [];
+  const seen = new Set();
+  for (const field of spec.reviewFields) {
+    if (seen.has(field.label)) continue;
+    const v = formatReviewValue(field.key, args[field.key], args);
+    if (v === null) continue;
+    seen.add(field.label);
+    lines.push({ k: field.label, v });
+  }
+  if (step?.tool === 'send_notice') lines.push({ k: 'Channel', v: 'In-app notice + push notification' });
+  return lines;
 }
 
 export function buildLocalSuggestions(insights) {
