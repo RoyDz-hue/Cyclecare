@@ -108,7 +108,7 @@ export function expressedNegative(text, amount) {
 // or when the plan's direction contradicts the only cue present, the request
 // is ambiguous and must clarify - never guess a direction at any confidence.
 export const DECREASE_CUES = /\b(?:negative|minus|diminish(?:es|ed|ing)?|reduc(?:es|ed|ing|tion|tions)|decreas(?:es|ed|ing)|lower(?:s|ed|ing)?|less|shrink(?:s|ing)?|deduct(?:s|ed|ing|ion)?|debit(?:s|ed|ing)?|subtract(?:s|ed|ing|ion)?|penalt(?:y|ies)|charge[sd]?|dock(?:s|ed|ing)?|claw\s*back|tak(?:e|en|ing)|took|remov(?:e|es|ed|ing|al)|cut(?:s|ting)?|slash(?:es|ed|ing)?)\b/i;
-export const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing))\b/i;
+export const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|git|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing)|pay(?:s|ing)?|drop(?:s|ped|ping)?|entitle(?:s|d|ment)?|bless(?:es|ed|ing)?|shower(?:s|ed|ing)?|receiv(?:e|es|ed|ing)|get(?:s|ting)?)\b/i;
 
 // A negative coin plan is also grounded by a deduction verb ("take", "deduct",
 // "remove", ...) - the word "negative" is not the only way to take coins away.
@@ -184,6 +184,11 @@ export function signMismatchProblem(text, tool, amount) {
   if (dec && inc) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';
   if (dec && !negativePlan) return 'your message says the balance is reduced, but this plan adds coins';
   if (inc && negativePlan) return 'your message adds or allocates coins, but this plan takes them away';
+  // A positive plan is never the DEFAULT: with no written increase ground at
+  // all (no sign, no amount-attached cue, no give/allocate wording), direction
+  // is ungrounded - clarify instead of gifting by assumption. Negative plans
+  // reach here only when no cues exist; they came from a deduction reading.
+  if (!negativePlan && !inc) return 'I cannot tell whether to add or deduct coins - say exactly which';
   return null;
 }
 

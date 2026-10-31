@@ -88,6 +88,22 @@ Deno.test("direction is amount-attached, not a bag-of-words vote (Roy 12:14 + co
   assertEquals(signMismatchProblem("take 3 coins from ann@x.com", "adjust_coins", -3), null);
 });
 
+Deno.test("a positive plan is never the ungrounded default (Roy 12:30)", () => {
+  // No sign, no cue, no give verb: a gift plan is blocked at proposal...
+  assertEquals(
+    signMismatchProblem("Liquidate all users with 4 coins each", "gift_all_coins", 4),
+    "I cannot tell whether to add or deduct coins - say exactly which");
+  // ...and at execution through the backstop.
+  assertEquals(
+    coinWriteGuardProblem("Liquidate all users with 4 coins each", "gift_all_coins", 4),
+    "This plan no longer passes safety validation: I cannot tell whether to add or deduct coins - say exactly which. Please ask again - nothing was executed.");
+  // A negative plan from the same ungrounded wording came from a deduction
+  // reading (planner semantics) and is not vetoed by the positive-default rule.
+  assertEquals(signMismatchProblem("Liquidate all users with 4 coins each", "deduct_all_coins", 4), null);
+  // Grounded gifts still pass.
+  assertEquals(signMismatchProblem("gift everyone 4 coins", "gift_all_coins", 4), null);
+});
+
 Deno.test("coinWriteGuardProblem is the execute-time backstop", () => {
   // Legacy run: original words were never bound - fail closed, fresh review.
   assertEquals(coinWriteGuardProblem(null, "gift_all_coins", 3),

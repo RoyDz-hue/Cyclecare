@@ -68,17 +68,21 @@ export function parseCoinRequest(text) {
   // CLOSEST in front of the amount decides ("a diminishing balance of 2 coins"
   // is a deduction even when an audience-attachment verb like "allocated"
   // appears earlier). Losing this flips the action's direction.
-  const amountWordSign=(idx,literal)=>{
-    if(literal&&literal.startsWith('-'))return 1; // sign already in the number
+  const amountCue=(idx,literal)=>{
+    if(literal&&literal.startsWith('-'))return 'dec'; // sign already in the number
     const before=t.slice(0,idx);
-    if(/(?:negative|minus)\s*$/i.test(before))return -1;
+    if(/(?:negative|minus)\s*$/i.test(before))return 'dec';
     const win=before.slice(-48);
     const lastEnd=(re)=>{const g=new RegExp(re.source,'gi');let m2,last=-1;while((m2=g.exec(win))!==null)last=g.lastIndex;return last;};
     const d=lastEnd(DECREASE_CUES),i=lastEnd(INCREASE_CUES);
-    return d>=0&&d>i?-1:1;
+    if(d<0&&i<0)return null; // NO direction ground: never default to positive
+    return d>i?'dec':'inc';
   };
-  let wordSign=1;
-  if(amt&&amtIndex>0)wordSign=amountWordSign(amtIndex,amt[1]);
+  let cue=null;
+  if(amt&&amtIndex>0)cue=amountCue(amtIndex,amt[1]);
+  // A typed "-4.1" already carries its sign in the number; a dec CUE negates
+  // only an unsigned literal. Never double-negate.
+  let wordSign=(cue==='dec'&&amt&&!String(amt[1]).startsWith('-'))?-1:1;
   // The amount can sit away from the word "coins" ("Valued at -4.1 each
   // donate to all users coins"): read the exact signed number as long as a
   // coin word appears somewhere. The amount is never asked for again when it
@@ -90,7 +94,7 @@ export function parseCoinRequest(text) {
     // several survivors is ambiguous: clarify rather than gift a date or a
     // count. One implementation serves the parser and the planner gate.
     const cands=amountCandidates(t);
-    if(cands.length===1){amt=[cands[0],cands[0]];const ci=t.indexOf(cands[0]);if(ci>0)wordSign=amountWordSign(ci,cands[0]);}
+    if(cands.length===1){amt=[cands[0],cands[0]];const ci=t.indexOf(cands[0]);if(ci>0){cue=amountCue(ci,cands[0]);wordSign=(cue==='dec'&&!String(cands[0]).startsWith('-'))?-1:1;}}
   }
   // Audience scope. Bare forms mean every member (grounded: the member registry
   // is exactly the all-users population). ANY adjective qualifier ("eligible",
@@ -106,11 +110,20 @@ export function parseCoinRequest(text) {
   // A qualifier anywhere on the audience wins over any bare/totality wording in
   // the same message: "per extant eligible user ... per-capita" is still a
   // qualified audience, so subset is checked first.
+  // A positive result needs positive GROUNDING (a give verb or an increase cue
+  // attached to the amount). Distribution markers alone ("each", "per user")
+  // carry no direction: unknown wording returns null so the semantics planner
+  // interprets it under budget instead of the parser guessing a gift.
+  const ungroundedPositive=(d)=>d>0&&!giveVerb&&cue!=='inc';
   if(amt&&qualifiedScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s]/i.test(t))){
-    return {scope:'subset',delta:wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0,query:null,reason:null};
+    const sd=wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0;
+    if(ungroundedPositive(sd))return null;
+    return {scope:'subset',delta:sd,query:null,reason:null};
   }
   if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
-    return {scope:'all',delta:wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0,query:null,reason:null};
+    const ad=wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0;
+    if(ungroundedPositive(ad))return null;
+    return {scope:'all',delta:ad,query:null,reason:null};
   }
   if(amt&&(giveVerb||deduct)&&/\b(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))\b/i.test(t)){
     // "any user" delegates the recipient choice: a random single member. A
@@ -118,7 +131,9 @@ export function parseCoinRequest(text) {
     // deduction. Single-recipient and all-member deductions both go through
     // the same review card as gifts (bulk deductions added Oct 31).
     const d=wordSign*Number(amt[1])||0;
-    return {delta:(deduct&&!giveVerb)?-Math.abs(d):d,query:null,random:true,reason:null};
+    const rd=(deduct&&!giveVerb)?-Math.abs(d):d;
+    if(ungroundedPositive(rd))return null;
+    return {delta:rd,query:null,random:true,reason:null};
   }
   return null;
 }

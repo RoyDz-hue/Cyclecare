@@ -154,3 +154,15 @@ test('amount-attached direction: the cue bound to the amount decides (Roy 12:14,
   assert.deepEqual(parseCoinRequest('Apply a reduction of 2 coins each to all users'),
     { scope: 'all', delta: -2, query: null, reason: null });
 });
+
+test('ungrounded direction is never a positive default (Roy 12:30 "Liquidate" defect)', () => {
+  // Unknown effect words are not the parser's to guess: null -> semantics planner.
+  assert.equal(parseCoinRequest('Liquidate all users with 4 coins each'), null);
+  assert.equal(parseCoinRequest('Tokenize each person with 2 coins'), null);
+  assert.equal(parseCoinRequest('2 coins each to all users'), null);
+  assert.equal(parseCoinRequest('From all user freeze all their balnces'), null);
+  // Grounded positives and negatives still parse deterministically.
+  assert.deepEqual(parseCoinRequest('Gift 4 coins to all users'), { scope: 'all', delta: 4, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Directive therefore, allocated to all users a diminishing balance of 2 coins each'),
+    { scope: 'all', delta: -2, query: null, reason: null });
+});
