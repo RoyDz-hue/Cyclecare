@@ -1,6 +1,7 @@
 // Testable Admin Command flow: coin dialog, step execution and message persistence.
 // Imported by admin-command/index.ts and exercised directly by mocked Deno tests.
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "./coin-dialog.js";
+import { signMismatchProblem } from "./amount-hygiene.js";
 
 // Decimal Precision Rules: coins carry up to 3 decimals, handled EXACTLY.
 // String(n) is the shortest round-trip form, so its fraction length is the true
@@ -43,7 +44,7 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    return {success:true,type:"clarify",message:msg};
  }
  if(fresh?.scope==="all"||(!fresh&&active?.scope==="all"&&!active?.cancelled)){
-   let gst=fresh?{scope:"all",delta:fresh.delta,reason:fresh.reason??null,awaiting:"reason"}:applyCoinReply(active,text);
+   let gst=fresh?{scope:"all",delta:fresh.delta,reason:fresh.reason??null,awaiting:"reason",prompt:text}:applyCoinReply(active,text);
    const deduct=typeof gst.delta==="number"&&gst.delta<0;
    const amount=Math.abs(gst.delta);
    if(typeof gst.delta!=="number"||Number.isNaN(gst.delta)||amount<1||amount>10000){
@@ -68,14 +69,25 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    const label=deduct
      ?`Deduct ${amount} coins from each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`
      :`Gift ${amount} coins to each of the ${snapshot.length} members (${total} coins in total). Reason: ${gst.reason}`;
+   // The administrator's original words are the immutable source of truth for
+   // this plan. The label is a derived review summary; the prompt binds the
+   // verbatim request so the execute-time sign guard can re-ground it later.
+   const originalText=(fresh?text:String(active?.prompt??text)).trim();
+   const signProblem=signMismatchProblem(originalText,tool,amount);
+   if(signProblem){
+     await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+     const msg=`I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
+     await persistMessage(admin,adminId,"assistant","chat",msg);
+     return {success:true,type:"clarify",message:msg};
+   }
    const steps=[{tool,label,args:{delta:amount,reason:gst.reason,run_key:crypto.randomUUID(),recipients:snapshot}}];
-   const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:steps[0].label,p_plan:{steps}});
+   const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:originalText,p_plan:{steps,original_prompt:originalText}});
    if(proposeError){const msg=`I couldn't prepare the ${deduct?"deduction":"gift"} safely. Nothing was changed; please try again or say cancel.`;await persistMessage(admin,adminId,"assistant","chat",msg);return {success:true,type:"clarify",message:msg};}
    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
    await persistMessage(admin,adminId,"assistant","plan",steps[0].label,proposed.run_id,{steps,requires_approval:true});
    return {success:true,type:"plan",run_id:proposed.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
  }
- let st=fresh?{...fresh,recipient:null,awaiting:"recipient"}:applyCoinReply(active,text);
+ let st=fresh?{...fresh,recipient:null,awaiting:"recipient",prompt:text}:applyCoinReply(active,text);
  const save=async()=>{const {error}=await admin.from("admin_coin_dialog_state").upsert({admin_user_id:adminId,state:st,updated_at:new Date().toISOString()});if(error)throw new Error("Pending request could not be saved");};
  const reply=async(message:string)=>{
    if(message===st.lastQuestion){
@@ -127,9 +139,14 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  const {data:bound,error}=await userClient.rpc("admin_resolve_recipient",{p_email:st.recipient.email});
  if(error||bound?.user_id!==st.recipient.user_id)return reply("The account changed or couldn't be confirmed. Please cancel and start again. No change was made.");
  const actionText=`${st.delta<0?"Deduct":"Grant"} ${Math.abs(st.delta)} coins ${st.delta<0?"from":"to"} ${bound.email}${st.random?" (random pick)":""}. Reason: ${st.reason}`;
+ // Sign is semantics: the plan's direction must match the administrator's own
+ // words before a card is even proposed.
+ const originalText=(fresh?text:String(active?.prompt??st?.prompt??text)).trim();
+ const signProblem=signMismatchProblem(originalText,"adjust_coins",st.delta);
+ if(signProblem)return reply(`I can't prepare that safely: ${signProblem}. Please restate the exact amount - no change was made.`);
  const steps=[{tool:"adjust_coins",label:actionText,args:{targets:[bound.user_id],delta:st.delta,reason:st.reason}}];
- const prompt=actionText;
- const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:prompt,p_plan:{steps}});
+ const prompt=originalText;
+ const {data:proposed,error:proposeError}=await userClient.rpc("admin_command_propose",{p_prompt:prompt,p_plan:{steps,original_prompt:originalText}});
  if(proposeError)return reply("I couldn't prepare the change safely. Nothing was changed; please cancel and try again.");
  st.run_id=proposed.run_id;st.awaiting="approval";await save();
  await persistMessage(admin,adminId,"assistant","plan",steps[0].label,st.run_id,{steps,requires_approval:true});

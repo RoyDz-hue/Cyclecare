@@ -36,9 +36,38 @@ export function parseCoinRequest(text) {
   if(/^(?:cancel|abort|undo|reverse|revert|stop|forget|hold\s+off|hold\s+on|hang\s+on|wait)\b/i.test(t))return null; // cancellation/reversal/deferral intent, not a gift
   // "5 or 10 coins" is a choice between amounts: never pick one.
   if(/-?\d+(?:\.\d+)?\s+or\s+-?\d+(?:\.\d+)?\s*coins?\b/i.test(t)||/\bcoins?\s+of\s+-?\d+(?:\.\d+)?\s+or\s+-?\d+(?:\.\d+)?/i.test(t))return null;
+  // Decimal-word amounts are never rounded or truncated: "two point five
+  // coins" is 2.5, not 2 and not 5. Words-after-point are unsupported, so the
+  // whole phrase fails closed (clarify) instead of silently changing the
+  // written amount. Same for a bare leading-dot decimal (".5 coins").
+  if(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|zero|\d+)\s+point\s+(?:[a-z]+|\d+)/i.test(t))return null;
+  if(/\bpoint\s+(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i.test(t))return null;
+  if(/(?<![\d.])\.\d+\s*coins?\b/i.test(t))return null;
   const WORDNUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  // Fail closed on contradictory amounts: two different signed coin amounts
+  // written in one message ("three coins ... five coins", "-3 ... 3") mean the
+  // amount is ambiguous. Never guess one; clarify through the null path.
+  {
+    const signedForms=[];
+    for(const m2 of t.matchAll(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/gi)){
+      let sgn=m2[1].startsWith('-')?-1:1;
+      if(sgn>0&&/(?:negative|minus)\s*$/i.test(t.slice(0,m2.index)))sgn=-1;
+      signedForms.push(sgn*Math.abs(Number(m2[1])));
+    }
+    for(const m2 of t.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/gi)){
+      const sgn=/(?:negative|minus)\s*$/i.test(t.slice(0,m2.index))?-1:1;
+      signedForms.push(sgn*WORDNUM[m2[1].toLowerCase()]);
+    }
+    if(new Set(signedForms).size>1)return null;
+  }
   let amt=t.match(/(-?\d+(?:\.\d+)?)[\s-]*coins?\b/i);
-  if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w)amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];}
+  let amtIndex=amt?amt.index:-1;
+  if(!amt){const w=t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+coins?\b/i);if(w){amt=[w[0],String(WORDNUM[w[1].toLowerCase()])];amtIndex=w.index;}}
+  // Sign is semantics: "negative three" and "minus 3" are DEDUCTIONS, never
+  // gifts. The word "negative"/"minus" directly before the amount negates it,
+  // exactly as a typed "-3" would. Losing this flips the action's direction.
+  let wordSign=1;
+  if(amt&&amtIndex>0&&/(?:negative|minus)\s*$/i.test(t.slice(0,amtIndex)))wordSign=-1;
   // The amount can sit away from the word "coins" ("Valued at -4.1 each
   // donate to all users coins"): read the exact signed number as long as a
   // coin word appears somewhere. The amount is never asked for again when it
@@ -50,7 +79,7 @@ export function parseCoinRequest(text) {
     // several survivors is ambiguous: clarify rather than gift a date or a
     // count. One implementation serves the parser and the planner gate.
     const cands=amountCandidates(t);
-    if(cands.length===1)amt=[cands[0],cands[0]];
+    if(cands.length===1){amt=[cands[0],cands[0]];const ci=t.indexOf(cands[0]);if(ci>0&&/(?:negative|minus)\s*$/i.test(t.slice(0,ci)))wordSign=-1;}
   }
   // Audience scope. Bare forms mean every member (grounded: the member registry
   // is exactly the all-users population). ANY adjective qualifier ("eligible",
@@ -67,17 +96,17 @@ export function parseCoinRequest(text) {
   // the same message: "per extant eligible user ... per-capita" is still a
   // qualified audience, so subset is checked first.
   if(amt&&qualifiedScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s]/i.test(t))){
-    return {scope:'subset',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
+    return {scope:'subset',delta:wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0,query:null,reason:null};
   }
   if(amt&&allScope&&(giveVerb||deduct||/\beach\b/i.test(t)||/\bper[-\s](?:user|member)\b/i.test(t))){
-    return {scope:'all',delta:(deduct&&!giveVerb?-1:1)*Number(amt[1]),query:null,reason:null};
+    return {scope:'all',delta:wordSign*(deduct&&!giveVerb?-1:1)*Number(amt[1])||0,query:null,reason:null};
   }
   if(amt&&(giveVerb||deduct)&&/\b(?:(?:any\s+|a\s+)?random\s+(?:user|member|person)|any\s+(?:user|member|person))\b/i.test(t)){
     // "any user" delegates the recipient choice: a random single member. A
     // signed amount is preserved (give -5 = deduct 5); a deduct verb forces a
     // deduction. Single-recipient and all-member deductions both go through
     // the same review card as gifts (bulk deductions added Oct 31).
-    const d=Number(amt[1]);
+    const d=wordSign*Number(amt[1])||0;
     return {delta:(deduct&&!giveVerb)?-Math.abs(d):d,query:null,random:true,reason:null};
   }
   return null;

@@ -3,7 +3,7 @@ import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, is
 import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
 import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps, resolveWorkflowGate, runWritesSequential } from "../_shared/admin-command-flow.ts";
 import { buildToolCatalog, matchWorkflow, validateSteps } from "../_shared/admin-tool-spec.ts";
-import { amountSourceFlags, amountSourceProblem } from "../_shared/amount-hygiene.js";
+import { amountSourceFlags, amountSourceProblem, signMismatchProblem, coinWriteGuardProblem } from "../_shared/amount-hygiene.js";
 import { nextAttemptGrant, REQUEST_BUDGET } from "../_shared/ai-cost.ts";
 import { composeMissingClarify, filterActuallyMissing, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
 import { runVerifier } from "../_shared/admin-verify.ts";
@@ -253,6 +253,18 @@ async function executeRun(admin: any, userClient: any, runId: string, adminId: s
     .update({ status: "executing" }).eq("id", runId).eq("status", "approved").select("id").maybeSingle();
   if (claimError || !claimed) return { status: "already_started", steps: [] };
   const steps: any[] = run.plan?.steps ?? [];
+  // Execute-time sign backstop: re-ground every coin-moving write against the
+  // run's ORIGINAL wording. A legacy run whose original words were never bound
+  // (plan has no original_prompt) cannot be re-checked: it fails closed and
+  // asks for a fresh review instead of trusting the derived label.
+  const originalPrompt = typeof run.plan?.original_prompt === "string" ? run.plan.original_prompt : null;
+  for (const step of steps) {
+    const guard = coinWriteGuardProblem(originalPrompt, String(step?.tool ?? ""), Number(step?.args?.delta));
+    if (guard) {
+      await admin.from("admin_command_runs").update({status:"failed", error:guard}).eq("id", runId);
+      return { status:"failed", steps:[{ok:false,label:guard}] };
+    }
+  }
   try { await bindRecipients(userClient, steps, run.prompt, false); }
   catch {
     await admin.from("admin_command_runs").update({status:"failed", error:"Recipient identity could not be confirmed"}).eq("id", runId);
@@ -553,9 +565,15 @@ serve(async (req: Request) => {
           await persistMessage(admin, userId, "assistant", "chat", msg);
           return jsonResponse({ success: true, type: "clarify", message: msg });
         }
+        const signProblem = signMismatchProblem(chatPrompt, String(step?.tool ?? ""), value as number);
+        if (signProblem) {
+          const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
+          await persistMessage(admin, userId, "assistant", "chat", msg);
+          return jsonResponse({ success: true, type: "clarify", message: msg });
+        }
       }
     }
-    const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
+    const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps, original_prompt: chatPrompt } });
     if (proposeError) {
       void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
       await persistMessage(admin, userId, "assistant", "chat", `I couldn't prepare that safely: ${proposeError.message}`);
@@ -648,6 +666,12 @@ serve(async (req: Request) => {
         await persistMessage(admin, userId, "assistant", "chat", msg);
         return jsonResponse({ success: true, type: "clarify", message: msg });
       }
+      const signProblem = signMismatchProblem(String(prompt), String(step?.tool ?? ""), value as number);
+      if (signProblem) {
+        const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "clarify", message: msg });
+      }
     }
   }
   let resolvedEmails: string[] = [];
@@ -666,7 +690,7 @@ serve(async (req: Request) => {
     const n = Array.isArray(gift?.args?.recipients) ? gift.args.recipients.length : null;
     planNote = `The gift goes to the ${n ?? "current"} members on record right now; the announcement reaches everyone at send time, which can include members who join in between.`;
   }
-  const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: prompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps } });
+  const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: prompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps, original_prompt: prompt } });
   if (proposeError) {
     void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
     return jsonResponse({ error: proposeError.message, plan_rejected: true }, 422);

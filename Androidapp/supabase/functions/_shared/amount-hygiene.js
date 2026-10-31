@@ -72,3 +72,65 @@ export function amountSourceProblem(flags) {
   if (flags.includes('identifier')) return 'that number reads as part of an identifier, not a coin amount';
   return null;
 }
+
+// ---- Signed-amount semantics -------------------------------------------
+// Sign is meaning: "negative three" is a deduction, "+3" is a gift. A plan
+// whose signed coin effect contradicts the admin's own words is unsafe at
+// ANY confidence; these guards bind the plan's sign to the original text.
+
+const WORD_FOR_NUM = { 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine', 10: 'ten' };
+const NEG_MARKER = /(?:negative|minus|neg)\s*$/i;
+
+// Every written form of |amount| (digits and single-word numbers) and whether
+// a negative marker directly precedes it.
+export function expressedNegative(text, amount) {
+  if (!Number.isFinite(amount)) return false;
+  const abs = Math.abs(amount);
+  const forms = [String(abs)];
+  if (Number.isInteger(abs) && WORD_FOR_NUM[abs]) forms.push(WORD_FOR_NUM[abs]);
+  const t = String(text);
+  for (const form of forms) {
+    const rx = new RegExp(`(^|[^\\d.])${form.replace('.', '\\.')}(?![\\d.])`, 'gi');
+    let m;
+    while ((m = rx.exec(t)) !== null) {
+      const idx = m.index + m[1].length;
+      const before = t.slice(0, idx);
+      if (NEG_MARKER.test(before)) return true;
+      if (form === String(abs) && /\-\s*$/.test(before)) return true; // typed "-3"
+    }
+  }
+  return false;
+}
+
+// A negative coin plan is also grounded by a deduction verb ("take", "deduct",
+// "remove", ...) - the word "negative" is not the only way to take coins away.
+export function expressedDeduction(text) {
+  return /\b(?:deduct|take|took|remove|removed|subtract|debit|charge|reduce|dock|deducting)\b/i.test(String(text));
+}
+
+// Proposal-gate check for tools whose delta SIGN is the operation direction
+// (gift_all_coins must be positive; adjust_coins carries its own sign).
+// deduct_all_coins takes a positive magnitude - a negative phrasing is
+// CONSISTENT with it, so it is not checked here.
+export function signMismatchProblem(text, tool, amount) {
+  if (tool !== 'gift_all_coins' && tool !== 'adjust_coins') return null;
+  if (!Number.isFinite(amount) || amount === 0) return null;
+  const neg = expressedNegative(text, amount);
+  if (amount > 0 && neg) return 'you wrote a negative amount - that would take coins away, but this plan adds them';
+  if (amount < 0 && !neg && !expressedDeduction(text)) return 'the plan takes coins away, but you did not write a negative amount or a deduction';
+  return null;
+}
+
+// Execute-time backstop: the run's ORIGINAL wording is re-checked before any
+// coin moves. A run whose original words were never bound (legacy canonical
+// prompts) cannot be grounded: refuse execution and require a fresh review
+// rather than pretend the rewritten label protects it.
+export function coinWriteGuardProblem(originalPrompt, tool, delta) {
+  if (tool !== 'gift_all_coins' && tool !== 'deduct_all_coins' && tool !== 'adjust_coins') return null;
+  if (typeof originalPrompt !== 'string' || !originalPrompt.trim()) {
+    return 'This plan predates amount-sign validation, so it cannot be re-checked safely. Please ask again - nothing was executed.';
+  }
+  const mismatch = signMismatchProblem(originalPrompt, tool, delta);
+  if (mismatch) return `This plan no longer passes safety validation: ${mismatch}. Please ask again - nothing was executed.`;
+  return null;
+}

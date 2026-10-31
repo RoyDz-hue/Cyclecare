@@ -115,3 +115,30 @@ test('an unrelated number is never treated as the coin amount (offline ambiguity
   // Instruction prose containing "coins" is never a recipient name.
   assert.equal(parseCoinRequest('Credit coins to all users today 2026'), null);
 });
+
+test('sign is semantics: negative/minus wording is a deduction, never a gift (Roy 11:56 defect)', () => {
+  // Roy's exact message: the buggy run proposed Gift +3. It must parse as -3.
+  assert.deepEqual(parseCoinRequest('Gift all users a surprise bal of negative three coins each'),
+    { scope: 'all', delta: -3, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Gift all users minus 3 coins'), { scope: 'all', delta: -3, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Give everyone negative two coins'), { scope: 'all', delta: -2, query: null, reason: null });
+  // Positive wording stays positive - word and digit forms, both distinct.
+  assert.deepEqual(parseCoinRequest('Gift all users three coins'), { scope: 'all', delta: 3, query: null, reason: null });
+  assert.deepEqual(parseCoinRequest('Gift all users 3 coins'), { scope: 'all', delta: 3, query: null, reason: null });
+});
+
+test('negative zero and decimal words fail closed (no silent round or change)', () => {
+  // "negative 0" parses to 0; the flow rejects it (amount < 1) with a clarify.
+  const zero = parseCoinRequest('Gift all users negative 0 coins');
+  assert.equal(zero && zero.delta, 0);
+  // Decimal words are not word-numbers: never round "two point five" to 2.
+  assert.equal(parseCoinRequest('Gift all users negative two point five coins'), null);
+  assert.equal(parseCoinRequest('Gift all users two point five coins'), null);
+});
+
+test('contradictory amounts fail closed; a repeated amount is fine', () => {
+  assert.equal(parseCoinRequest('Gift all users three coins, actually five coins'), null);
+  assert.equal(parseCoinRequest('Gift 3 coins to all users, make it 5 coins'), null);
+  assert.equal(parseCoinRequest('Gift -3 coins to all users, yes 3 coins'), null);
+  assert.deepEqual(parseCoinRequest('Gift 3 coins to all users, exactly 3 coins'), { scope: 'all', delta: 3, query: null, reason: null });
+});
