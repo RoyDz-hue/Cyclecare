@@ -35,6 +35,13 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
    return {success:true,type:"clarify",message:"That looks like a changed amount or recipient, not a reason. I cleared the earlier request. Please state the new coin action in full; no change was made."};
  }
  if(active?.cancelled&&!fresh)return null;
+ if(fresh?.scope==="subset"){
+   await retire(previous?.state?.run_id);
+   await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);
+   const msg="That points to a specific group of members, and I can't pick a group by description safely. To gift every member, say gift all users 2 coins (your amount); to gift specific members, name them one at a time. No change has been made.";
+   await persistMessage(admin,adminId,"assistant","chat",msg);
+   return {success:true,type:"clarify",message:msg};
+ }
  if(fresh?.scope==="all"||(!fresh&&active?.scope==="all"&&!active?.cancelled)){
    if(fresh&&fresh.delta<0){
      await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",adminId);

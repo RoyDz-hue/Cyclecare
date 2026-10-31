@@ -111,6 +111,9 @@ async function planWithProviders(admin: any, userId: string, system: string, use
 function namedRecipient(text: string): string | null {
   const coin=parseCoinRequest(text);
   if(coin)return coin.query;
+  // A message carrying a coin amount and a giving verb is an action intent,
+  // never a member name - even when the parser cannot resolve its scope.
+  if(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i.test(text)&&/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits|deduct|debit|remove)\b/i.test(text))return null;
   const match = text.match(/\b(?:give|grant|gift|award|credit|deduct(?:\s+from)?|ban|suspend)\s+(.+?)(?=\s+\d|\s+(?:some|coins|a gift|an artifact)\b|[.!?]|$)/i);
   const name = match?.[1]?.trim();
   // A real name is short and comma-free; longer prose after a verb is part of

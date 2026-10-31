@@ -345,9 +345,29 @@ Deno.test("Roy's 08:12 promulgation (per extant eligible user, per-capita) propo
   assertEquals(out?.plan?.steps?.[0]?.args?.delta, 2.05, "2.05 preserved exactly");
 });
 
-Deno.test("prose after a coin verb is never mistaken for a member name", async () => {
+Deno.test("Roy's pasted 3.5 variant of the same directive also proposes a plan with the exact amount", async () => {
+  const { admin, userClient } = makeClients();
+  const out = await coinDialog(admin, userClient, "admin-1",
+    "Yooh, I hereby promulgate an unequivocal, non-negotiable operational mandate authorising the immediate initiation, orchestration, and consummation of a universally scoped, cardinality-complete micro-denomination credit-allocation protocol, pursuant to which an invariant-preserving entitlement of precisely 3.5 coins per extant eligible user shall be systematically instantiated, atomically committed, and recursively propagated throughout the entirety of the active-user ecosystem.\n\nExecution shall be governed by strict transactional consistency, deterministic allocation semantics, idempotent state-transition guarantees, referential integrity, and absolute exclusion of duplication anomalies, partial-commit inconsistencies, allocation asymmetries, or any other computationally induced deviations from the prescribed per-capita entitlement.\n\nFurthermore, I expect the resulting ledger mutations to be exhaustively reconciled against the authoritative user registry, with every individual credit event independently verifiable, persistently auditable, and epistemically irreproachable.");
+  assertEquals(out?.type, "plan");
+  assertEquals(out?.plan?.steps?.[0]?.tool, "gift_all_coins");
+  assertEquals(out?.plan?.steps?.[0]?.args?.delta, 3.5, "3.5 preserved exactly");
+});
+
+Deno.test("audience adjectives are filters, never decoration: qualified scopes are subsets unless the message claims totality", async () => {
   const { parseCoinRequest } = await import("./coin-dialog.js");
-  assertEquals(parseCoinRequest("Credit 2.05 coins per extant eligible user")?.scope, "all");
-  assertEquals(parseCoinRequest("Gift 1 coin per capita")?.scope, "all");
-  assertEquals(parseCoinRequest("Disburse 3 coins each paying member")?.scope, "all");
+  assertEquals(parseCoinRequest("Credit 2.05 coins per extant eligible user")?.scope, "subset", "eligible is a qualifier, not all members");
+  assertEquals(parseCoinRequest("Disburse 3 coins each paying member")?.scope, "subset", "paying members are a subset");
+  assertEquals(parseCoinRequest("Gift all paying members 5 coins")?.scope, "subset", "all OF a subset is still a subset");
+  assertEquals(parseCoinRequest("Gift 1 coin per capita")?.scope, "all", "per capita is the whole population");
+  assertEquals(parseCoinRequest("Gift 2 coins to all our users")?.scope, "all");
+  assertEquals(parseCoinRequest("Give 4 coins to every member")?.scope, "all");
+});
+
+Deno.test("a subset directive clarifies and never proposes a plan", async () => {
+  const { admin, userClient, rpcCalls } = makeClients();
+  const out = await coinDialog(admin, userClient, "admin-1", "Disburse 3 coins each paying member");
+  assertEquals(out?.type, "clarify");
+  assertStringIncludes(out?.message, "specific group");
+  assertEquals(rpcCalls.filter((c) => c.name === "admin_command_propose").length, 0, "no proposal for a guessed audience");
 });
