@@ -1,6 +1,6 @@
 import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
 import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
-import { coinDialog, executeStep, giftAllVerified, normalizeSteps, persistMessage, planHasMultipleWrites } from "../_shared/admin-command-flow.ts";
+import { coinDialog, executeStep, giftAllVerified, persistMessage, planHasMultipleWrites, prepareGiftAllSteps } from "../_shared/admin-command-flow.ts";
 import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
 // Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
 // Flow: prompt -> planner (existing provider chain) -> validated plan card
@@ -477,8 +477,17 @@ serve(async (req: Request) => {
       return jsonResponse({ success: true, type: planned.kind, message: planned.text });
     }
     // Action/analysis plan: run it through the same policy-gated propose flow.
-    const steps = normalizeSteps((planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
-      tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} })));
+    let steps: any[];
+    try {
+      steps = await prepareGiftAllSteps(admin, (planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
+        tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} })));
+    } catch (e) {
+      const msg = e instanceof Error && e.message === "bad_delta"
+        ? "Choose a gift between 1 and 10,000 coins for each member, with up to 3 decimal places. No change has been made."
+        : "I couldn't prepare the member list safely. No change was made.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
     // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
     // never proposed, so a single approval can never silently execute several changes.
     if (await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
@@ -530,8 +539,17 @@ serve(async (req: Request) => {
     await persistMessage(admin, userId, "assistant", "chat", planned.text);
     return jsonResponse({ success: true, type: planned.kind, message: planned.text });
   }
-  const steps = normalizeSteps((planned.plan.steps as any[]).slice(0, 15).map((s: any) => ({
-    tool: String(s?.tool ?? ""), label: String(s?.label ?? s?.tool ?? "").slice(0, 140), args: (s?.args && typeof s.args === "object") ? s.args : {} })));
+  let steps: any[];
+  try {
+    steps = await prepareGiftAllSteps(admin, (planned.plan.steps as any[]).slice(0, 15).map((s: any) => ({
+      tool: String(s?.tool ?? ""), label: String(s?.label ?? s?.tool ?? "").slice(0, 140), args: (s?.args && typeof s.args === "object") ? s.args : {} })));
+  } catch (e) {
+    const msg = e instanceof Error && e.message === "bad_delta"
+      ? "Choose a gift between 1 and 10,000 coins for each member, with up to 3 decimal places. No change has been made."
+      : "I couldn't prepare the member list safely. No change was made.";
+    await persistMessage(admin, userId, "assistant", "chat", msg);
+    return jsonResponse({ success: true, type: "chat", message: msg });
+  }
   let resolvedEmails: string[] = [];
   try { resolvedEmails = await bindRecipients(userClient, steps, prompt, true); }
   catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }

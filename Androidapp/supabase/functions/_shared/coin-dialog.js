@@ -16,7 +16,8 @@ export function parseCoinRequest(text) {
   // enforces the 3-decimal limit without rounding.
   // Questions are never directives: "did you give all users 5 coins?" asks
   // about the past, it does not order a gift. Skip the fallback for them.
-  if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|can|could|will|would|should|has|have|had|am)\b/i.test(t))return null;
+  if(/^(?:who|what|what's|how|how's|when|why|which|did|do|does|is|are|was|were|has|have|had|am)\b/i.test(t))return null;
+  if(/^(?:can|could|will|would|should|shall)\s+(?:i|we)\b/i.test(t))return null; // advice-seeking ("should I gift...?"), not a directive. "Can you gift...?" IS a directive and falls through.
   const amt=t.match(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i);
   const allScope=/\b(?:all\s+(?:[\w-]+\s+){0,3}(?:users?|members?)|everyone|everybody|every\s+(?:[\w-]+\s+){0,2}(?:user|member)|each\s+(?:user|member)|per[-\s]user|per[-\s]member|the\s+whole\s+(?:community|team)|across\s+(?:[\w-]+\s+){0,4}(?:users?|members?))\b/i.test(t);
   const deduct=/\b(?:deduct|deduction|debit|remove|take\s+back|take|claw\s*back)\b/i.test(t);

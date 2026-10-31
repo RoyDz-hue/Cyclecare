@@ -290,6 +290,9 @@ Deno.test("per-user / each user / hyphenated amount phrasings parse as all-scope
   assertEquals(parseCoinRequest("Gift 2 coins to each user")?.scope, "all");
   assertEquals(parseCoinRequest("Allocation of a 3.25-coin grant to all eligible members")?.delta, 3.25);
   assertEquals(parseCoinRequest("Credit 10 coins across all our users")?.scope, "all");
+  assertEquals(parseCoinRequest("Can you gift everyone 2 coins?")?.scope, "all", "polite imperative is a directive, never a typed-confirmation loop");
+  assertEquals(parseCoinRequest("Can you gift everyone 2 coins?")?.delta, 2);
+  assertEquals(parseCoinRequest("Could you disburse 1.5 coins per user please")?.scope, "all");
 });
 
 Deno.test("questions about coins are never parsed as gift directives", async () => {
@@ -297,15 +300,38 @@ Deno.test("questions about coins are never parsed as gift directives", async () 
   assertEquals(parseCoinRequest("Did you give all users 5 coins?"), null);
   assertEquals(parseCoinRequest("How many coins does Kevin have?"), null);
   assertEquals(parseCoinRequest("What is the price of 100 coins?"), null);
-  assertEquals(parseCoinRequest("Can you gift everyone 2 coins?"), null, "a request phrased as a question is not a directive");
+  assertEquals(parseCoinRequest("Should I gift all users 2 coins?"), null, "advice-seeking is not a directive");
+  assertEquals(parseCoinRequest("Can we gift everyone 2 coins?"), null, "first-person phrasing is deliberation, not a directive");
 });
 
-Deno.test("normalizeSteps fills the gift run key and lets SQL snapshot recipients", async () => {
-  const { normalizeSteps } = await import("./admin-command-flow.ts");
-  const [st] = normalizeSteps([{ tool: "gift_all_coins", label: "Gift 4.6 coins to every member", args: { delta: 4.6, reason: "Test" } }]);
+Deno.test("prepareGiftAllSteps freezes the reviewed membership and exact total into the plan", async () => {
+  const { prepareGiftAllSteps } = await import("./admin-command-flow.ts");
+  const { admin } = makeClients();
+  const [st] = await prepareGiftAllSteps(admin, [{ tool: "gift_all_coins", label: "Gift coins to all members", args: { delta: 4.6, reason: "Test" } }]);
   assertEquals(typeof st.args.run_key, "string");
   assertEquals(st.args.run_key.length > 0, true, "idempotency key is never empty");
-  assertEquals("recipients" in st.args, false, "absent recipients lets SQL snapshot atomically");
-  const other = normalizeSteps([{ tool: "adjust_coins", label: "x", args: { targets: ["u"], delta: 1 } }]);
+  assertEquals(st.args.recipients, ["u-1", "u-2", "u-3"], "the approved set is frozen at propose time");
+  assertEquals(st.label, "Gift 4.6 coins to each of the 3 members (13.8 coins in total). Reason: Test", "the review card carries the exact count and total, no float dust");
+  const other = await prepareGiftAllSteps(admin, [{ tool: "adjust_coins", label: "x", args: { targets: ["u"], delta: 1 } }]);
   assertEquals(other[0].args.run_key, undefined, "other tools untouched");
+});
+
+Deno.test("prepareGiftAllSteps rejects an impossible delta before any plan is proposed", async () => {
+  const { prepareGiftAllSteps } = await import("./admin-command-flow.ts");
+  const { admin } = makeClients();
+  for (const delta of [3.4567, 0, 10001, Number.NaN]) {
+    let threw = false;
+    try { await prepareGiftAllSteps(admin, [{ tool: "gift_all_coins", label: "x", args: { delta } }]); }
+    catch (e) { threw = e instanceof Error && e.message === "bad_delta"; }
+    assertEquals(threw, true, `delta ${delta} rejected at propose time`);
+  }
+});
+
+Deno.test("prepareGiftAllSteps fails safe when the member list cannot be read", async () => {
+  const { prepareGiftAllSteps } = await import("./admin-command-flow.ts");
+  const badAdmin: any = { from: () => ({ select: async () => ({ data: null, error: { message: "down" } }) }) };
+  let threw = false;
+  try { await prepareGiftAllSteps(badAdmin, [{ tool: "gift_all_coins", label: "x", args: { delta: 2 } }]); }
+  catch (e) { threw = e instanceof Error && e.message === "member_list_unavailable"; }
+  assertEquals(threw, true, "no plan without a snapshot");
 });

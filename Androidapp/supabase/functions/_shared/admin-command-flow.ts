@@ -127,17 +127,36 @@ export async function coinDialog(admin:any,userClient:any,adminId:string,text:st
  return {success:true,type:"plan",run_id:st.run_id,requires_approval:true,summary:steps[0].label,plan:{steps}};
 }
 
-// Planner-emitted gift_all_coins steps carry only {delta, reason}. Fill the
-// idempotency run key here and leave recipients absent so the SQL function
-// snapshots the membership atomically at execution time.
-export function normalizeSteps(steps: any[]): any[] {
-  return (steps ?? []).map((st: any) => {
-    if (String(st?.tool ?? "") !== "gift_all_coins") return st;
+// Planner-emitted gift_all_coins steps carry only {delta, reason}. Bind them to
+// the SAME guarantees as the deterministic gift path BEFORE the plan is
+// proposed: validate the delta, snapshot the membership, freeze the recipient
+// list into the plan and rewrite the label with the exact count and total, so
+// what the administrator reviews on the card is exactly what executes. A member
+// joining after approval is NOT gifted; a member leaving makes the post-execution
+// read-back fail closed ("Accepted but not confirmed") instead of drifting.
+// Throws Error("bad_delta") or Error("member_list_unavailable") for the caller
+// to turn into a safe chat reply.
+export async function prepareGiftAllSteps(admin: any, steps: any[]): Promise<any[]> {
+  const out: any[] = [];
+  for (const st of steps ?? []) {
+    if (String(st?.tool ?? "") !== "gift_all_coins") { out.push(st); continue; }
     const args = (st?.args && typeof st.args === "object") ? { ...st.args } : {};
     if (typeof args.run_key !== "string" || !args.run_key.trim()) args.run_key = crypto.randomUUID();
-    if (!Array.isArray(args.recipients) || !args.recipients.length) delete args.recipients;
-    return { ...st, args };
-  });
+    const delta = Number(args.delta);
+    if (!Number.isFinite(delta) || delta < 1 || delta > 10000 || coinDecimals(delta) > 3) throw new Error("bad_delta");
+    if (!Array.isArray(args.recipients) || !args.recipients.length) {
+      const { data: profs, error } = await admin.from("profiles").select("user_id,device_id,id");
+      if (error || !Array.isArray(profs)) throw new Error("member_list_unavailable");
+      const snapshot = profs.map((p: any) => String(p.user_id || p.device_id || p.id));
+      if (!snapshot.length || snapshot.length > 5000) throw new Error("member_list_unavailable");
+      args.recipients = snapshot;
+    }
+    const reason = typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : "Admin adjustment";
+    args.reason = reason;
+    const total = coinMilli(delta) * args.recipients.length / 1000; // exact: integer milli-units
+    out.push({ ...st, label: `Gift ${delta} coins to each of the ${args.recipients.length} members (${total} coins in total). Reason: ${reason}`, args });
+  }
+  return out;
 }
 
 export function giftAllVerified(result: any, args: any): boolean {
