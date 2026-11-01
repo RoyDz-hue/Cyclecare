@@ -87,7 +87,7 @@ class ScreensScreenshotTest {
             uiState = freeState,
             onConsultCare = {},
             onEditCareLog = {},
-            onEnableAiProcessing = {},
+            onEnableAiProcessing = { _ -> },
             onRefreshAiManifest = {},
             onGenerateCareImage = { _, _ -> },
             onOpenVault = {},

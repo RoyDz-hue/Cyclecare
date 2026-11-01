@@ -728,7 +728,7 @@ class CycleCareViewModel(
             // where the sharing description is shown before any processor
             // receipt exists. Keep the switch off until that flow completes.
             _uiState.value = _uiState.value.copy(
-                aiSharingDirectionMessage = "Expert answers stay off here. On the Ask tab, tap Allow after reviewing what gets shared - you can revoke anytime.")
+                aiSharingDirectionMessage = "Expert answers stay off here. On the Ask tab, review who answers and what gets shared, then tap Allow - you can revoke anytime.")
         } else {
             // Compatibility callers (including cloud-health deletion) must
             // revoke provider receipts as well as the aggregate UI switch.
@@ -773,17 +773,21 @@ class CycleCareViewModel(
         }
     }
 
-    /**
-     * One-tap AI enable from the chat consent card: grants every provider the
-     * server manifest marks eligible. Without a manifest or server receipt no
-     * consent is marked, so the toggle stays off and the care consent card keeps
-     * showing. Revocation and per-provider detail stay in Settings.
+        /**
+     * Allow-tap from the consent card: grant exactly the providers displayed as
+     * eligible in the rendered manifest snapshot. A missing or changed snapshot
+     * fails closed and refreshes the card instead of granting.
      */
-    fun enableAiProcessingForAllProviders() {
-        val manifest = _uiState.value.aiProcessorManifest
-        val providers = manifest?.providers?.filter { it.eligible }?.map { it.id }
-            ?: listOf("COHERE", "GEMINI", "OPENROUTER", "LAJIWA")
-        providers.forEach { setAiProviderSharingAllowed(it, true) }
+    fun enableDisplayedAiProviders(displayedManifestRevision: String?) {
+        when (val decision = com.cyclecare.app.domain.ai.decideAiConsentTap(
+            displayedManifestRevision, _uiState.value.aiProcessorManifest)) {
+            is com.cyclecare.app.domain.ai.AiConsentTapDecision.FailClosed -> {
+                refreshAiProcessorManifest()
+                _uiState.value = _uiState.value.copy(careSavedReviewMessage = decision.reason)
+            }
+            is com.cyclecare.app.domain.ai.AiConsentTapDecision.Enable ->
+                decision.providerIds.forEach { setAiProviderSharingAllowed(it, true) }
+        }
     }
 
     fun refreshAiProcessorManifest() {

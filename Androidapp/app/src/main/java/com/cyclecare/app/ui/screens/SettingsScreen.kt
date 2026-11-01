@@ -774,7 +774,7 @@ fun SettingsScreenContent(
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = "Off by default. Allow from the Ask tab after reviewing what is shared; revoke anytime here.",
+                                    text = "Off by default. On the Ask tab, review who answers and what is shared, then allow; revoke anytime here.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

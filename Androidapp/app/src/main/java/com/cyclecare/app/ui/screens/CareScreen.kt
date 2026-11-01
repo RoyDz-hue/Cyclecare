@@ -73,7 +73,7 @@ fun CareScreen(
         uiState = uiState,
         onConsultCare = viewModel::consultCare,
         onEditCareLog = viewModel::editCareLog,
-        onEnableAiProcessing = viewModel::enableAiProcessingForAllProviders,
+        onEnableAiProcessing = { revision -> viewModel.enableDisplayedAiProviders(revision) },
         onRefreshAiManifest = viewModel::refreshAiProcessorManifest,
         onGenerateCareImage = viewModel::generateCareImage,
         onOpenVault = { viewModel.setVaultOpen(true) },
@@ -90,7 +90,7 @@ fun CareScreenContent(
     uiState: CycleUiState,
     onConsultCare: (String) -> Unit,
     onEditCareLog: (String) -> Unit,
-    onEnableAiProcessing: () -> Unit,
+    onEnableAiProcessing: (String?) -> Unit,
     onRefreshAiManifest: () -> Unit,
     onGenerateCareImage: (CareImageStyle, String) -> Unit,
     onOpenVault: () -> Unit,
@@ -140,10 +140,11 @@ fun CareScreenContent(
                 item(key = "ai_consent") {
                     AiConsentCard(
                         onAllow = {
-                            onRefreshAiManifest()
-                            onEnableAiProcessing()
+                            onEnableAiProcessing(uiState.aiProcessorManifest?.manifestRevision)
                         },
-                        onNotNow = { aiConsentDismissed = true }
+                        onNotNow = { aiConsentDismissed = true },
+                        uiState = uiState,
+                        onRefreshAiManifest = onRefreshAiManifest
                     )
                 }
             }
@@ -277,8 +278,11 @@ fun CareScreenContent(
 @Composable
 private fun AiConsentCard(
     onAllow: () -> Unit,
-    onNotNow: () -> Unit
+    onNotNow: () -> Unit,
+    uiState: CycleUiState,
+    onRefreshAiManifest: () -> Unit
 ) {
+    LaunchedEffect(Unit) { onRefreshAiManifest() }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
         modifier = Modifier.fillMaxWidth().testTag("care_ai_consent_card")
@@ -289,9 +293,33 @@ private fun AiConsentCard(
                 "CycleCare can answer with expert guidance online. Your question and relevant cycle context are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
                 style = MaterialTheme.typography.bodySmall
             )
+            val manifest = uiState.aiProcessorManifest
+            when {
+                manifest == null && uiState.isLoadingAiProcessorManifest ->
+                    Text("Checking who can answer…", style = MaterialTheme.typography.bodySmall)
+                manifest == null ->
+                    Text("Online answers are unavailable right now. Nothing was enabled.", style = MaterialTheme.typography.bodySmall)
+                else -> {
+                    Text("Who answers you online:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                    manifest.providers.forEach { provider ->
+                        if (provider.eligible && provider.consentEnabled) {
+                            Text("• ${provider.displayName} (${provider.model})" +
+                                if (provider.processors.isNotEmpty())
+                                    " - via " + provider.processors.joinToString(", ") { it.name }
+                                else "",
+                                style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("• ${provider.displayName} - unavailable" +
+                                if (provider.unavailableReason.isNotBlank()) ": ${provider.unavailableReason}" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = onNotNow, modifier = Modifier.testTag("care_ai_consent_dismiss")) { Text("Not now") }
-                Button(onClick = onAllow, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow expert answers") }
+                Button(onClick = onAllow, enabled = uiState.aiProcessorManifest != null, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow expert answers") }
             }
         }
     }
