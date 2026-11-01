@@ -158,7 +158,9 @@ fun HomeScreenContent(
             .statusBarsPadding()
             .testTag("home_screen_content")
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        // Keep the last card clear of the floating Ask-CycleCare button
+        // (56dp FAB + 16dp margin, shown to premium/admin users).
+        contentPadding = PaddingValues(top = 12.dp, bottom = if (canUseDirectAi) 96.dp else 28.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         if (urgentNotification != null) {
