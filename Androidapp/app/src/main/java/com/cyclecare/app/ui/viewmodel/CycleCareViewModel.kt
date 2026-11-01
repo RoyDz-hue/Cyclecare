@@ -743,7 +743,7 @@ class CycleCareViewModel(
         )
     }
 
-    fun setAiProviderSharingAllowed(provider: String, enabled: Boolean) {
+    fun setAiProviderSharingAllowed(provider: String, enabled: Boolean, expectedSnapshot: com.cyclecare.app.domain.ai.AiProcessorManifest? = null) {
         val owner = authPreferences.effectiveUserId
         if (!enabled) {
             // Revoke locally before network I/O; the pending queue survives offline operation.
@@ -764,6 +764,17 @@ class CycleCareViewModel(
             val token = authPreferences.accessToken
             val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.cyclecare.app.domain.ai.ConsentResult.Failure("Sign in to enable your CycleCare Expert")
             val manifest = (manifestResult as? com.cyclecare.app.domain.ai.ConsentResult.Success)?.manifest
+            // The fresh manifest must still match what the user was shown; a changed
+            // fingerprint/revision/set aborts and re-displays instead of granting
+            // against unseen terms.
+            if (manifest != null && expectedSnapshot != null &&
+                !com.cyclecare.app.domain.ai.aiConsentBindingEqual(expectedSnapshot, manifest)) {
+                if (owner == authPreferences.effectiveUserId) {
+                    _uiState.value = _uiState.value.copy(aiProcessorManifest = manifest,
+                        careSavedReviewMessage = "The provider list changed. Review it again before allowing.")
+                }
+                return@launch
+            }
             val result = if (manifest != null) processorConsentService.setConsent(token!!, manifest, provider, true) else manifestResult
             if (owner != authPreferences.effectiveUserId) return@launch
             if (result is com.cyclecare.app.domain.ai.ConsentResult.Success) authPreferences.setProviderConsent(provider, true)
@@ -789,7 +800,7 @@ class CycleCareViewModel(
                 _uiState.value = _uiState.value.copy(careSavedReviewMessage = decision.reason)
             }
             is com.cyclecare.app.domain.ai.AiConsentTapDecision.Enable ->
-                decision.providerIds.forEach { setAiProviderSharingAllowed(it, true) }
+                decision.providerIds.forEach { setAiProviderSharingAllowed(it, true, expectedSnapshot = displayedManifest) }
         }
     }
 

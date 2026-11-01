@@ -40,13 +40,17 @@ private fun binding(m: AiProcessorManifest): Pair<Triple<String, Int, String>, L
  * fingerprint changes - fails closed and the card re-renders fresh
  * information instead of granting.
  */
+/** True only when two manifest snapshots bind identically, field-for-field. */
+fun aiConsentBindingEqual(a: AiProcessorManifest?, b: AiProcessorManifest?): Boolean =
+    a != null && b != null && binding(a) == binding(b)
+
 fun decideAiConsentTap(displayed: AiProcessorManifest?, current: AiProcessorManifest?): AiConsentTapDecision {
     if (displayed == null) {
         return AiConsentTapDecision.FailClosed("Review who can answer before allowing. Nothing was enabled.")
     }
     val live = current
         ?: return AiConsentTapDecision.FailClosed("The provider list is unavailable. Nothing was enabled.")
-    if (binding(displayed) != binding(live)) {
+    if (!aiConsentBindingEqual(displayed, live)) {
         return AiConsentTapDecision.FailClosed("The provider list changed. Review it again before allowing.")
     }
     val ids = displayed.providers.filter { it.eligible && it.consentEnabled }.map { it.id }
