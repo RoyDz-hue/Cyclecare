@@ -28,7 +28,7 @@ enum class CyclePhase(
         subtitle = "Peak Fertility",
         description = "Luteinizing hormone surge triggers the release of a mature ovum.",
         colorHex = 0xFF9B6B2C, // Muted brass
-        advice = "Highest fertility window. Confidence and communication naturally peak."
+        advice = "Highest fertility window. Energy and mood vary from person to person; notice what is true for you."
     ),
     LUTEAL(
         title = "Luteal Phase",
