@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -118,6 +120,7 @@ fun SettingsScreen(
 @Composable
 fun SettingsScreenContent(
     uiState: CycleUiState,
+    listState: LazyListState = rememberLazyListState(),
     onNavigateBack: () -> Unit,
     onLoadSyncConflicts: () -> Unit,
     onBuildDataExportPdf: () -> ByteArray,
@@ -205,6 +208,7 @@ fun SettingsScreenContent(
         )
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 20.dp),
