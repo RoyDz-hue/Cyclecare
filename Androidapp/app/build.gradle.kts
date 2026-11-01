@@ -67,6 +67,7 @@ android {
 
   buildTypes {
     release {
+      buildConfigField("boolean", "ALLOW_SCREEN_CAPTURE", "false")
       isCrunchPngs = false
       isMinifyEnabled = true
       isShrinkResources = true
@@ -77,6 +78,7 @@ android {
       // Separate install/data namespace: this debug build won't replace the production app.
       applicationIdSuffix = ".debug"
       versionNameSuffix = "-debug"
+      buildConfigField("boolean", "ALLOW_SCREEN_CAPTURE", "true")
       // No bridge endpoint is committed to the repo. Developers pass their own
       // single-user bridge via: ./gradlew -Pcyclecare.debugBridgeUrl=https://...
       // The previously committed *.us2.manus.computer endpoint must be retired.
@@ -99,6 +101,10 @@ android {
         // CI builds leave the APK unsigned; sign locally with apksigner using the vault keystore.
         signingConfig = null
       }
+      // Sharing builds stay non-debuggable: AGP compiles debuggable variants
+      // through R8's debug mode, which silently disables obfuscation.
+      isDebuggable = false
+      buildConfigField("boolean", "ALLOW_SCREEN_CAPTURE", "true")
       // Local sandboxes that cannot run R8 can build with -PnoMinify (larger APK, same features).
       val noMinify = project.hasProperty("noMinify")
       isMinifyEnabled = !noMinify
