@@ -47,3 +47,43 @@ workflows:
     artifacts:
       - Androidapp/app/build/outputs/apk/**/*.apk
       - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
+  cyclecare-goldens:
+    name: CycleCare golden refresh (Paparazzi, JDK21)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Route org.robolectric via Google-hosted Maven Central mirror
+        script: |
+          set -e
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+          settingsEvaluated { settings ->
+              settings.dependencyResolutionManagement.repositories {
+                  exclusiveContent {
+                      forRepository {
+                          maven {
+                              name = 'GoogleCloudStorageMavenCentralMirror'
+                              url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                          }
+                      }
+                      filter { includeGroup('org.robolectric') }
+                  }
+              }
+          }
+          GRADLE
+      - name: Record stale goldens only (7 renders)
+        script: |
+          set -e
+          cd Androidapp
+          chmod +x gradlew
+          export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+          ./gradlew recordPaparazziDebug -Ppaparazzi \
+            --tests "com.cyclecare.app.ui.ScreensScreenshotTest.careEntryState" \
+            --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
+            --tests "com.cyclecare.app.ui.CareConsentScreenshotTest"
+    artifacts:
+      - Androidapp/app/src/test/snapshots/images/*.png
