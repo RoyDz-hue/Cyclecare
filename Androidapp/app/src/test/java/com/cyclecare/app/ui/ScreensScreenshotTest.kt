@@ -10,7 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
-import com.android.ide.common.rendering.api.SessionParams.ScreenOrientation
+import com.android.resources.ScreenOrientation
 import com.cyclecare.app.AskFloatingBubble
 import com.cyclecare.app.CycleCareBottomBar
 import com.cyclecare.app.data.economy.EconomyProfile
@@ -94,7 +94,10 @@ class ScreensScreenshotTest {
             onEnableAiProcessing = {},
             onRefreshAiManifest = {},
             onGenerateCareImage = { _, _ -> },
-            onOpenVault = {}
+            onOpenVault = {},
+            onClearChatHistory = {},
+            onCancelCareLog = {},
+            onConfirmCareLog = {}
         )
     }
 
