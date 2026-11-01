@@ -44,7 +44,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -156,6 +155,38 @@ fun VaultEconomyScreen(
         }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        BoxWithConstraints {
+        // Narrow viewports: secondary balance details collapse behind a
+        // disclosure and the tab selector leads, so Hub content and tabs are
+        // usable inside the actual viewport and artifacts surface sooner.
+        val compactHub = maxWidth < 300.dp
+        var showBalanceDetails by remember { mutableStateOf(false) }
+        val tabSelector: @Composable () -> Unit = {
+            // Scrollable so every label keeps its full legible width on
+            // narrow viewports instead of splitting mid-word.
+            ScrollableTabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                edgePadding = 0.dp,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp))
+            ) {
+                Tab(
+                    selected = selectedTabIndex == 0,
+                    onClick = { selectedTabIndex = 0 },
+                    text = { Text("Artifacts", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+                )
+                Tab(
+                    selected = selectedTabIndex == 1,
+                    onClick = { selectedTabIndex = 1 },
+                    text = { Text("Frames & Themes", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+                )
+                Tab(
+                    selected = selectedTabIndex == 2,
+                    onClick = { selectedTabIndex = 2 },
+                    text = { Text("Coin Store", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+                )
+            }
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -166,6 +197,9 @@ fun VaultEconomyScreen(
             contentPadding = PaddingValues(bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (compactHub) {
+                item { tabSelector() }
+            }
             // Card 1: Balance & Mining Hub
             item {
                 Card(
@@ -285,6 +319,7 @@ fun VaultEconomyScreen(
                                 }
                             }
 
+                            if (!compactHub || showBalanceDetails) {
                             Spacer(modifier = Modifier.height(10.dp))
 
                             // Gentle Progress Info Banner
@@ -325,6 +360,7 @@ fun VaultEconomyScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            }
 
                             Spacer(modifier = Modifier.height(8.dp))
 
@@ -360,37 +396,23 @@ fun VaultEconomyScreen(
                                     Text("Claim Daily Coins", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                                 }
                             }
+                            if (compactHub) {
+                                TextButton(
+                                    onClick = { showBalanceDetails = !showBalanceDetails },
+                                    modifier = Modifier.testTag("hub_balance_details_toggle")
+                                ) {
+                                    Text(if (showBalanceDetails) "Hide balance details" else "Balance details")
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Tabs (Plain English)
-            item {
-                // Scrollable so every label keeps its full legible width on
-                // narrow viewports instead of splitting mid-word.
-                ScrollableTabRow(
-                    selectedTabIndex = selectedTabIndex,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    edgePadding = 0.dp,
-                    modifier = Modifier.clip(RoundedCornerShape(14.dp))
-                ) {
-                    Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = { selectedTabIndex = 0 },
-                        text = { Text("Artifacts", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = { selectedTabIndex = 1 },
-                        text = { Text("Frames & Themes", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 2,
-                        onClick = { selectedTabIndex = 2 },
-                        text = { Text("Coin Store", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
-                    )
-                }
+            // Tabs (Plain English); narrow viewports get the selector above
+            // the balance card instead (see compactHub).
+            if (!compactHub) {
+                item { tabSelector() }
             }
 
             // TAB 0: Artifacts
@@ -782,6 +804,7 @@ fun VaultEconomyScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
         }
 
         }
