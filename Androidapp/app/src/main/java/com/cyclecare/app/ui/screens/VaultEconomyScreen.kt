@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -189,11 +191,7 @@ fun VaultEconomyScreen(
                             .padding(20.dp)
                     ) {
                         Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            val balanceBlock: @Composable () -> Unit = {
                                 Column {
                                     Text(
                                         text = "BALANCE",
@@ -216,10 +214,13 @@ fun VaultEconomyScreen(
                                     }
                                 }
 
-                                // Tier & Multiplier Badge, with the page help
-                                // action beside it in genuinely reserved
-                                // horizontal space (embedded mode only; the
-                                // standalone page keeps help in its top bar).
+                                }
+                            }
+                            // Tier & Multiplier Badge, with the page help
+                            // action beside it in genuinely reserved
+                            // horizontal space (embedded mode only; the
+                            // standalone page keeps help in its top bar).
+                            val badgeBlock: @Composable () -> Unit = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (embedded) {
                                     IconButton(
@@ -262,8 +263,31 @@ fun VaultEconomyScreen(
                                 }
                                 }
                             }
+                            // Wide cards: balance left, badge cluster right.
+                            // Narrow cards: stack so neither side is squeezed.
+                            BoxWithConstraints {
+                                if (maxWidth < 300.dp) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        balanceBlock()
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) { badgeBlock() }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        balanceBlock()
+                                        badgeBlock()
+                                    }
+                                }
+                            }
 
-                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             // Gentle Progress Info Banner
                             Box(
@@ -295,7 +319,7 @@ fun VaultEconomyScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             // Lifetime stats on their own line
                             Text(
@@ -304,7 +328,7 @@ fun VaultEconomyScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             // Action buttons: two balanced, equal-width targets
                             Row(
@@ -345,25 +369,28 @@ fun VaultEconomyScreen(
 
             // Tabs (Plain English)
             item {
-                TabRow(
+                // Scrollable so every label keeps its full legible width on
+                // narrow viewports instead of splitting mid-word.
+                ScrollableTabRow(
                     selectedTabIndex = selectedTabIndex,
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    edgePadding = 0.dp,
                     modifier = Modifier.clip(RoundedCornerShape(14.dp))
                 ) {
                     Tab(
                         selected = selectedTabIndex == 0,
                         onClick = { selectedTabIndex = 0 },
-                        text = { Text("Artifacts", fontWeight = FontWeight.Bold) }
+                        text = { Text("Artifacts", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                     )
                     Tab(
                         selected = selectedTabIndex == 1,
                         onClick = { selectedTabIndex = 1 },
-                        text = { Text("Frames & Themes", fontWeight = FontWeight.Bold) }
+                        text = { Text("Frames & Themes", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                     )
                     Tab(
                         selected = selectedTabIndex == 2,
                         onClick = { selectedTabIndex = 2 },
-                        text = { Text("Coin Store", fontWeight = FontWeight.Bold) }
+                        text = { Text("Coin Store", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                     )
                 }
             }

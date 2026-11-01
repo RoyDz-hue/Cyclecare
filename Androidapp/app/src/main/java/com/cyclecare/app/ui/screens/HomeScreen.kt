@@ -530,11 +530,15 @@ fun HomeScreenContent(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
+                                    // Title yields (weighted + ellipsized); the
+                                    // badge always gets its full intrinsic
+                                    // width so the tier name never wraps or clips.
                                     Text(
                                         text = "CycleCare rewards",
                                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
                                     )
                                     Surface(
                                         shape = CircleShape,
@@ -545,7 +549,6 @@ fun HomeScreenContent(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF8C6222),
                                             maxLines = 1,
-                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
