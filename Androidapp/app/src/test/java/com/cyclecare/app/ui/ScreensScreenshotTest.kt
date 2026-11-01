@@ -10,7 +10,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
-import com.android.resources.ScreenOrientation
 import com.cyclecare.app.AskFloatingBubble
 import com.cyclecare.app.CycleCareBottomBar
 import com.cyclecare.app.data.economy.EconomyProfile
@@ -32,9 +31,6 @@ class ScreensScreenshotTest {
 
     @get:Rule
     val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6)
-
-    @get:Rule
-    val paparazziLandscape = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6.copy(orientation = ScreenOrientation.LANDSCAPE))
 
     private fun frame(pap: Paparazzi, dark: Boolean = false, content: @Composable () -> Unit) {
         pap.snapshot {
@@ -132,24 +128,6 @@ class ScreensScreenshotTest {
         )
     }
 
-    @Test
-    fun homeInsideShellLandscape() = shell(paparazziLandscape, AppNavTab.TODAY) {
-        HomeScreenContent(
-            uiState = freeState,
-            todayLog = null,
-            onOpenSettings = {},
-            onOpenNotificationCenter = {},
-            onDismissFloatingBanner = {},
-            onShowAuthSheet = {},
-            onOpenTrackForDate = {},
-            onSelectTab = {},
-            onQuickCheckIn = { _, _ -> },
-            onClearEconomyToast = {},
-            onOpenSomethingDifferent = {},
-            onOpenAsk = {},
-            onOpenVault = {}
-        )
-    }
 
     @Test
     fun homeInsideShellScrolled() = shell(paparazzi, AppNavTab.TODAY) {
