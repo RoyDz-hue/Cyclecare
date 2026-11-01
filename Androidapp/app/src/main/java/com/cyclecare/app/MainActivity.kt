@@ -595,7 +595,11 @@ internal fun AskFloatingBubble(onClick: () -> Unit, persistPosition: Boolean = t
         val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(minY)
         var offsetX by remember { mutableFloatStateOf(prefs?.getFloat("x", Float.NaN) ?: Float.NaN) }
         var offsetY by remember { mutableFloatStateOf(prefs?.getFloat("y", Float.NaN) ?: Float.NaN) }
-        val x = if (offsetX.isNaN()) maxX else offsetX.coerceIn(marginPx, maxX)
+        // Default rest: half-docked on the right edge (a peek handle), so the
+        // bubble's initial position never covers readable text or tappable
+        // actions. Dragging pulls it out and a dragged position persists.
+        val peekX = constraints.maxWidth.toFloat() - bubblePx / 2f
+        val x = if (offsetX.isNaN()) peekX else offsetX.coerceIn(marginPx, maxX)
         val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(minY, maxY)
 
         Surface(
@@ -620,7 +624,7 @@ internal fun AskFloatingBubble(onClick: () -> Unit, persistPosition: Boolean = t
                         // Read the state values, not the composed x/y: the
                         // gesture lambda outlives the composition that
                         // produced them, so captured x/y would be stale.
-                        val curX = if (offsetX.isNaN()) maxX else offsetX
+                        val curX = if (offsetX.isNaN()) peekX else offsetX
                         val curY = if (offsetY.isNaN()) maxY else offsetY
                         offsetX = (curX + dragAmount.x).coerceIn(marginPx, maxX)
                         offsetY = (curY + dragAmount.y).coerceIn(minY, maxY)
