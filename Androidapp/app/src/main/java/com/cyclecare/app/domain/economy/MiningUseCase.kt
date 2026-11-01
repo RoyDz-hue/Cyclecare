@@ -53,5 +53,5 @@ class MiningUseCase(
 
     suspend fun reviveStreak(
         currentProfile: EconomyProfile
-    ): EconomyResult<EconomyProfile> = EconomyResult.Error("Streak mechanics are deprecated per spec §48. Your daily rewards are always available in the Atelier.")
+    ): EconomyResult<EconomyProfile> = EconomyResult.Error("Streak mechanics are deprecated per spec §48. Your daily rewards are always available in the Hub.")
 }

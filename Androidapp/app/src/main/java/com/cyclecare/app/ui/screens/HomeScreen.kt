@@ -570,7 +570,7 @@ fun HomeScreenContent(
                             }
                         }
                         TextButton(onClick = { onSelectTab(AppNavTab.ATELIER) }) {
-                            Text("View Atelier")
+                            Text("View Hub")
                         }
                     }
                 }
