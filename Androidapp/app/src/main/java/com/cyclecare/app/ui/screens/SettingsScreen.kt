@@ -786,6 +786,12 @@ fun SettingsScreenContent(
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
                         }
+                        if (!uiState.isAiSharingAllowed) {
+                            uiState.aiSharingDirectionMessage?.let {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
