@@ -857,7 +857,7 @@ fun SettingsScreenContent(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Private by design. Never sold, never shared.",
+                            text = "Private by design. Your records stay on this device unless you choose otherwise. Expert answers send only your question and relevant cycle context, and only while you allow them - off by default, revocable anytime.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
