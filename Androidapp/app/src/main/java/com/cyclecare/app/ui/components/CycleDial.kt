@@ -75,7 +75,7 @@ fun CycleDial(
 
     Box(
         modifier = modifier
-            .size(228.dp)
+            .size(200.dp)
             .testTag("cycle_dial_component")
             .clip(CircleShape)
             .clickable(role = Role.Button, onClickLabel = "Open cycle calendar", onClick = onClick)
@@ -144,7 +144,7 @@ fun CycleDial(
         }
 
         Surface(
-            modifier = Modifier.size(164.dp),
+            modifier = Modifier.size(144.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surface
         ) {
@@ -164,13 +164,23 @@ fun CycleDial(
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    if (prediction == null) "No estimate yet" else if (daysUntilPeriod == 0) "Period estimate · around today" else "Period estimate · $daysUntilPeriod days",
+                    if (prediction == null) "No estimate yet" else "Period estimate",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
                 )
+                if (prediction != null) {
+                    Text(
+                        if (daysUntilPeriod == 0) "around today" else "in $daysUntilPeriod days",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }

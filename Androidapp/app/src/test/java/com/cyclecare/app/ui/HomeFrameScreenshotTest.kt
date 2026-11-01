@@ -98,8 +98,7 @@ class HomeFrameScreenshotTest {
                     onClearEconomyToast = {},
                     onOpenSomethingDifferent = {},
                     onOpenAsk = {},
-                    onOpenVault = {},
-                    onAskCare = {}
+                    onOpenVault = {}
                 )
               }
             }
@@ -125,8 +124,7 @@ class HomeFrameScreenshotTest {
                     onClearEconomyToast = {},
                     onOpenSomethingDifferent = {},
                     onOpenAsk = {},
-                    onOpenVault = {},
-                    onAskCare = {}
+                    onOpenVault = {}
                 )
               }
             }

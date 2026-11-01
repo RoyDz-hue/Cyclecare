@@ -34,11 +34,9 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,10 +91,6 @@ fun HomeScreen(
         onOpenSomethingDifferent = viewModel::openSomethingDifferentSheet,
         onOpenAsk = viewModel::openAsk,
         onOpenVault = { viewModel.setVaultOpen(true) },
-        onAskCare = { question ->
-            viewModel.openAsk()
-            viewModel.consultCare(question, includeFullContext = true)
-        },
         modifier = modifier
     )
 }
@@ -123,7 +117,6 @@ fun HomeScreenContent(
     onOpenSomethingDifferent: () -> Unit,
     onOpenAsk: () -> Unit,
     onOpenVault: () -> Unit,
-    onAskCare: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val prediction = uiState.todayPrediction
@@ -131,9 +124,6 @@ fun HomeScreenContent(
     val unreadCount = uiState.notifications.count { !it.isRead }
     val safety = SafetyEngine.evaluate(todayLog)
     val selectedMood = todayLog?.moodLevel ?: ""
-    val canUseDirectAi = uiState.isAdmin || uiState.economyProfile.tier == UserEconomyTier.PREMIUM
-    var showPremiumChatDialog by remember { mutableStateOf(false) }
-    var premiumChatPrompt by remember { mutableStateOf("") }
     var showPlansDialog by remember { mutableStateOf(false) }
     var showCommunityCirclesDialog by remember { mutableStateOf(false) }
     val currentDateText = uiState.currentDate.format(DateTimeFormatter.ofPattern("EEEE, MMM d"))
@@ -158,9 +148,7 @@ fun HomeScreenContent(
             .statusBarsPadding()
             .testTag("home_screen_content")
             .padding(horizontal = 20.dp),
-        // Keep the last card clear of the floating Ask-CycleCare button
-        // (56dp FAB + 16dp margin, shown to premium/admin users).
-        contentPadding = PaddingValues(top = 12.dp, bottom = if (canUseDirectAi) 96.dp else 28.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         if (urgentNotification != null) {
@@ -381,7 +369,7 @@ fun HomeScreenContent(
                         cycleLength = uiState.settings.averageCycleLength,
                         periodDuration = uiState.settings.periodDuration,
                         daysUntilPeriod = uiState.daysUntilNextPeriod,
-                        modifier = Modifier.size(228.dp),
+                        modifier = Modifier.size(200.dp),
                         onClick = { onSelectTab(AppNavTab.CYCLE) }
                     )
                     Text(
@@ -655,16 +643,6 @@ fun HomeScreenContent(
         }
     }
 
-    if (canUseDirectAi) {
-        FloatingActionButton(
-            onClick = { showPremiumChatDialog = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag("premium_direct_ai_fab"),
-            containerColor = MaterialTheme.colorScheme.primary
-        ) {
-            Icon(Icons.Default.AutoAwesome, contentDescription = "Chat with your CycleCare Expert", tint = MaterialTheme.colorScheme.onPrimary)
-        }
-    }
-
     if (showCommunityCirclesDialog) {
         AlertDialog(
             onDismissRequest = { showCommunityCirclesDialog = false },
@@ -711,36 +689,7 @@ fun HomeScreenContent(
         )
     }
 
-    if (showPremiumChatDialog) {
-        AlertDialog(
-            onDismissRequest = { showPremiumChatDialog = false },
-            title = { Text("CycleCare Expert") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Your question is sent with your saved cycle preferences and recent entries to tailor the guidance. This is educational support, not a diagnosis.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        value = premiumChatPrompt,
-                        onValueChange = { premiumChatPrompt = it.take(600) },
-                        modifier = Modifier.fillMaxWidth().testTag("premium_direct_ai_prompt"),
-                        label = { Text("What would you like help with?") },
-                        minLines = 3
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = premiumChatPrompt.isNotBlank(),
-                    onClick = {
-                        val question = premiumChatPrompt.trim()
-                        premiumChatPrompt = ""
-                        showPremiumChatDialog = false
-                        onAskCare(question)
-                    }
-                ) { Text("Ask CycleCare") }
-            },
-            dismissButton = { TextButton(onClick = { showPremiumChatDialog = false }) { Text("Cancel") } }
-        )
-    }
+
     }
 }
 
