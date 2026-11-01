@@ -7,6 +7,11 @@ import com.cyclecare.app.data.model.DayPrediction
 import com.cyclecare.app.data.model.TodayAttentionItem
 import com.cyclecare.app.data.notification.UserNotification
 import com.cyclecare.app.ui.screens.HomeScreenContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
 import com.cyclecare.app.ui.theme.CycleCareTheme
 import com.cyclecare.app.ui.viewmodel.CycleUiState
 import org.junit.Rule
@@ -69,9 +74,9 @@ class HomeFrameScreenshotTest {
             notifications = listOf(
                 UserNotification(
                     id = "n-urgent",
-                    title = "Please check in",
-                    body = "We noticed a missed day. A quick check-in keeps your estimates accurate.",
-                    type = "CARE",
+                    title = "New sign-in on your account",
+                    body = "If this wasn't you, open your inbox to secure your account.",
+                    type = "SECURITY",
                     priority = "URGENT",
                     isRead = false
                 )
@@ -79,6 +84,7 @@ class HomeFrameScreenshotTest {
         )
         paparazzi.snapshot {
             CycleCareTheme(darkTheme = false, dynamicColor = false) {
+              Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 HomeScreenContent(
                     uiState = state,
                     todayLog = null,
@@ -95,6 +101,7 @@ class HomeFrameScreenshotTest {
                     onOpenVault = {},
                     onAskCare = {}
                 )
+              }
             }
         }
     }
@@ -104,6 +111,7 @@ class HomeFrameScreenshotTest {
         val state = baseState(com.cyclecare.app.data.economy.UserEconomyTier.PREMIUM)
         paparazzi.snapshot {
             CycleCareTheme(darkTheme = false, dynamicColor = false) {
+              Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 HomeScreenContent(
                     uiState = state,
                     todayLog = null,
@@ -120,6 +128,7 @@ class HomeFrameScreenshotTest {
                     onOpenVault = {},
                     onAskCare = {}
                 )
+              }
             }
         }
     }
