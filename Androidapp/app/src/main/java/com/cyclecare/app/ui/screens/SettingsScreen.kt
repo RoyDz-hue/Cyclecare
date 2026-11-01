@@ -65,6 +65,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,15 +110,21 @@ fun SettingsScreen(
         selectedResolution = null
         viewModel.loadSyncConflicts()
     }
+    val exportScope = androidx.compose.runtime.rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
         if (uri != null) {
-            val exported = runCatching {
-                val stream = context.contentResolver.openOutputStream(uri) ?: error("No file stream")
-                stream.use { it.write(viewModel.buildDataExportPdf()) }
+            // Build and write the PDF off the UI thread: years of daily logs make
+            // page rendering expensive enough to freeze the screen.
+            exportScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val exported = runCatching {
+                    val bytes = viewModel.buildDataExportPdf()
+                    val stream = context.contentResolver.openOutputStream(uri) ?: error("No file stream")
+                    stream.use { it.write(bytes) }
+                }
+                exportMessage = if (exported.isSuccess) "Your cycle data was exported." else "Could not save the export. Please try again."
             }
-            exportMessage = if (exported.isSuccess) "Your cycle data was exported." else "Could not save the export. Please try again."
         }
     }
 
