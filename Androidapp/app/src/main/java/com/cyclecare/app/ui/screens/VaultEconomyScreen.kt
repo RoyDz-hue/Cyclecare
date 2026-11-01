@@ -417,25 +417,15 @@ fun VaultEconomyScreen(
                                     .padding(20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    // Static underlay of the same artifact: if the
-                                    // interactive 3D layer cannot draw on a device
-                                    // (GPU/driver limits), the artifact is never blank.
-                                    androidx.compose.foundation.Image(
-                                        painter = androidx.compose.ui.res.painterResource(id = selectedArtifactForDetail.drawableRes),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(240.dp)
-                                    )
-                                    InteractiveArtifact3D(
-                                        drawableRes = selectedArtifactForDetail.drawableRes,
-                                        // Expanded, unobstructed viewport (was a cramped 180dp box).
-                                        size = 260.dp,
-                                        auraColor = Color(selectedArtifactForDetail.auraColorHex),
-                                        isInteractive = true,
-                                        enableIdleRotation = true,
-                                        harmonicPitchHz = selectedArtifactForDetail.harmonicPitchHz
-                                    )
-                                }
+                                InteractiveArtifact3D(
+                                    drawableRes = selectedArtifactForDetail.drawableRes,
+                                    // Expanded, unobstructed viewport (was a cramped 180dp box).
+                                    size = 260.dp,
+                                    auraColor = Color(selectedArtifactForDetail.auraColorHex),
+                                    isInteractive = true,
+                                    enableIdleRotation = true,
+                                    harmonicPitchHz = selectedArtifactForDetail.harmonicPitchHz
+                                )
 
                                 Spacer(modifier = Modifier.height(12.dp))
 
