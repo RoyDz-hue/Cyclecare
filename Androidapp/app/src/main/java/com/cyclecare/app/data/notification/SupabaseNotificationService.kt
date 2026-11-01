@@ -14,6 +14,7 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 class SupabaseNotificationService(
@@ -120,7 +121,9 @@ class SupabaseNotificationService(
                                 title = obj.optString("title", "Official Announcement"),
                                 body = obj.optString("body", ""),
                                 type = obj.optString("type", "OFFICIAL_DISPATCH"),
-                                priority = obj.optString("priority", "URGENT"),
+                                // Urgency must come from an explicit sender-set priority; a missing
+                                // column on a malformed row must never render as urgent.
+                                priority = obj.optString("priority", "NORMAL"),
                                 sender = obj.optString("sender", "CYCLECARE_OFFICIAL"),
                                 actionUrl = obj.optString("action_url").ifBlank { null },
                                 isRead = false,
@@ -178,7 +181,10 @@ class SupabaseNotificationService(
     private fun parseIsoTimestamp(isoString: String?): Long {
         if (isoString.isNullOrBlank()) return System.currentTimeMillis()
         return try {
+            // Supabase timestamps are UTC; parsing without a zone shifts them by
+            // the device offset and breaks "time ago" displays and ordering.
             val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+            format.timeZone = TimeZone.getTimeZone("UTC")
             val clean = if (isoString.length > 19) isoString.substring(0, 19) else isoString
             format.parse(clean)?.time ?: System.currentTimeMillis()
         } catch (_: Exception) {
