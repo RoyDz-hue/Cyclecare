@@ -82,7 +82,9 @@ workflows:
           chmod +x gradlew
           export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
           "$JAVA_HOME/bin/java" -version
-          ./gradlew recordPaparazziDebug -Ppaparazzi \
+          echo "--- $HOME/.gradle/gradle.properties ---"
+          cat "$HOME/.gradle/gradle.properties" 2>/dev/null || echo "(none)"
+          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" recordPaparazziDebug -Ppaparazzi \
             --tests "com.cyclecare.app.ui.ScreensScreenshotTest.careEntryState" \
             --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
             --tests "com.cyclecare.app.ui.CareConsentScreenshotTest"
