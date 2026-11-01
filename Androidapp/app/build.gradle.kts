@@ -65,18 +65,6 @@ android {
     }
   }
 
-  // Paparazzi screenshot tests need the plugin's dependency, which is only
-  // resolved with -Ppaparazzi. They live in src/screenshot/java and join the
-  // unit-test sources only when the property is passed, so plain
-  // testDebugUnitTest always compiles on the documented JDK 17 toolchain.
-  sourceSets {
-    named("test") {
-      if (project.hasProperty("paparazzi")) {
-        java.srcDir("src/screenshot/java")
-      }
-    }
-  }
-
   buildTypes {
     release {
       isCrunchPngs = false
@@ -179,6 +167,10 @@ dependencies {
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
+  // Library only: puts Paparazzi classes on the unit-test classpath so plain
+  // testDebugUnitTest compiles on documented JDK 17. The plugin (which needs
+  // JVM 21 at configuration) is still applied only with -Ppaparazzi.
+  testImplementation("app.cash.paparazzi:paparazzi:2.0.0-alpha05")
   testImplementation(libs.mockwebserver)
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
