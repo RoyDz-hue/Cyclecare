@@ -1,9 +1,27 @@
+// Paparazzi is test-only and requires JVM 21+ at configuration time. Production
+// builds document JDK 17 (BUILD-RECOVERY.md), so the plugin is resolved and
+// applied only when -Ppaparazzi is passed; screenshot runs then require JDK 21.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    if (project.hasProperty("paparazzi")) {
+        dependencies {
+            classpath("app.cash.paparazzi:paparazzi-gradle-plugin:2.0.0-alpha05")
+        }
+    }
+}
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
-    alias(libs.plugins.paparazzi)
+}
+
+if (project.hasProperty("paparazzi")) {
+    apply(plugin = "app.cash.paparazzi")
 }
 
 android {
