@@ -79,7 +79,7 @@ object LayeredChatOrchestrator {
         if (safetyEval.isRedFlag) {
             return@withContext LayeredChatResult(
                 mainResponse = CareResponse(
-                    summary = "Important Clinical Notice: Safety Flag Detected",
+                    summary = "Please seek medical help",
                     whatText = safetyEval.title,
                     understandText = safetyEval.message,
                     careText = safetyEval.actionAdvice,
@@ -182,7 +182,7 @@ object LayeredChatOrchestrator {
 
         // CASE A: Successfully recognized intent (Health, Economy, Payment, or Clinical Article)
         if (hasRecognizedHealth || economyIntent != null || paymentIntent != null || hasArticle) {
-            val article = articles.firstOrNull() ?: CareKnowledgeBase.articles.first()
+            val article = articles.firstOrNull()
 
             val summaryText = buildString {
                 if (economyIntent == EconomyChatIntent.BALANCE_INQUIRY) {
@@ -194,18 +194,18 @@ object LayeredChatOrchestrator {
                     append("M-Pesa checkout is currently unavailable while payment safety review is incomplete. Do not send a payment. ")
                 }
                 if (isEmpty()) {
-                    append(article.question)
+                    append(article?.question ?: "I found possible observations in your note. Review them below before choosing whether to save.")
                 }
             }
 
             return LayeredChatResult(
                 mainResponse = CareResponse(
                     summary = summaryText,
-                    whatText = if (hasRecognizedHealth) "Possible observations found: ${healthParse.items.joinToString(", ") { it.label }}. Review them before choosing whether to save." else article.whatText,
-                    understandText = article.understandText,
-                    careText = article.careText,
-                    watchText = article.watchText,
-                    escalateText = article.escalateText,
+                    whatText = if (hasRecognizedHealth) "Possible observations found: ${healthParse.items.joinToString(", ") { it.label }}. Review them before choosing whether to save." else article?.whatText.orEmpty(),
+                    understandText = article?.understandText.orEmpty(),
+                    careText = article?.careText.orEmpty(),
+                    watchText = article?.watchText.orEmpty(),
+                    escalateText = article?.escalateText.orEmpty(),
                     safetyAlert = if (safetyEval.level != com.cyclecare.app.data.model.SafetyLevel.LOW) safetyEval else null,
                     source = if (hasRecognizedHealth) "Gentle Health Logger" else "Curated Clinical Knowledge"
                 ),
