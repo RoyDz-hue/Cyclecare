@@ -82,7 +82,7 @@ class SupabaseNotificationService(
                             title = obj.optString("title", "CycleCare Official"),
                             body = obj.optString("body", ""),
                             type = obj.optString("type", "SYSTEM"),
-                            priority = obj.optString("priority", "NORMAL"),
+                            priority = explicitPriorityOrNormal(obj.optString("priority", null)),
                             sender = obj.optString("sender", "CYCLECARE_OFFICIAL"),
                             actionUrl = obj.optString("action_url").ifBlank { null },
                             isRead = obj.optBoolean("is_read", false),
@@ -121,9 +121,7 @@ class SupabaseNotificationService(
                                 title = obj.optString("title", "Official Announcement"),
                                 body = obj.optString("body", ""),
                                 type = obj.optString("type", "OFFICIAL_DISPATCH"),
-                                // Urgency must come from an explicit sender-set priority; a missing
-                                // column on a malformed row must never render as urgent.
-                                priority = obj.optString("priority", "NORMAL"),
+                                priority = explicitPriorityOrNormal(obj.optString("priority", null)),
                                 sender = obj.optString("sender", "CYCLECARE_OFFICIAL"),
                                 actionUrl = obj.optString("action_url").ifBlank { null },
                                 isRead = false,
@@ -178,17 +176,36 @@ class SupabaseNotificationService(
         }
     }
 
-    private fun parseIsoTimestamp(isoString: String?): Long {
-        if (isoString.isNullOrBlank()) return System.currentTimeMillis()
-        return try {
-            // Supabase timestamps are UTC; parsing without a zone shifts them by
-            // the device offset and breaks "time ago" displays and ordering.
-            val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            format.timeZone = TimeZone.getTimeZone("UTC")
-            val clean = if (isoString.length > 19) isoString.substring(0, 19) else isoString
-            format.parse(clean)?.time ?: System.currentTimeMillis()
-        } catch (_: Exception) {
-            System.currentTimeMillis()
+}
+
+/** Urgency must come from an explicit sender-set priority; a missing or blank
+ * value must never render as urgent. */
+internal fun explicitPriorityOrNormal(raw: String?): String =
+    raw?.trim()?.takeIf { it.isNotEmpty() }?.uppercase(Locale.US) ?: "NORMAL"
+
+private val ISO_TIMESTAMP_PATTERN =
+    Regex("^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$")
+
+/**
+ * Parses Supabase timestamps deterministically. A string carrying its own
+ * offset (Z or +/-hh:mm) is honored; a bare timestamp is server UTC.
+ * Fractional seconds are dropped. Unparseable input falls back to now.
+ */
+internal fun parseIsoTimestamp(isoString: String?): Long {
+    if (isoString.isNullOrBlank()) return System.currentTimeMillis()
+    return runCatching {
+        val match = ISO_TIMESTAMP_PATTERN.matchEntire(isoString.trim()) ?: return System.currentTimeMillis()
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        format.timeZone = TimeZone.getTimeZone("UTC")
+        var time = format.parse("${match.groupValues[1]}T${match.groupValues[2]}")?.time
+            ?: return System.currentTimeMillis()
+        val zone = match.groupValues[3]
+        if (zone.isNotEmpty() && zone != "Z") {
+            val sign = if (zone.startsWith("-")) -1 else 1
+            val digits = zone.drop(1).replace(":", "")
+            val offsetMs = sign * (digits.substring(0, 2).toInt() * 60 + digits.substring(2, 4).toInt()) * 60_000L
+            time -= offsetMs
         }
-    }
+        time
+    }.getOrElse { System.currentTimeMillis() }
 }
