@@ -83,7 +83,7 @@ fun TrackScreen(
     TrackScreenContent(
         uiState = uiState,
         currentLog = currentLog,
-        onSelectDate = onSelectDate,
+        onSelectDate = viewModel::selectDate,
         onSaveDayLog = viewModel::saveDayLog,
         modifier = modifier
     )
