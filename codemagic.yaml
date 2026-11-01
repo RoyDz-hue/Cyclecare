@@ -75,6 +75,12 @@ workflows:
               }
           }
           GRADLE
+      - name: Capture expanded consent details (interactive, Robolectric)
+        script: |
+          set -e
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --tests "com.cyclecare.app.ui.CareConsentExpandedCaptureTest"
       - name: Record stale goldens only (7 renders)
         script: |
           set -e
@@ -87,3 +93,4 @@ workflows:
             --tests "com.cyclecare.app.ui.CareConsentScreenshotTest"
     artifacts:
       - Androidapp/app/src/test/snapshots/images/*.png
+      - Androidapp/app/build/outputs/captures/*.png
