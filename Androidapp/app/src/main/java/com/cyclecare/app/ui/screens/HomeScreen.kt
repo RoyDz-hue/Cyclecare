@@ -219,27 +219,6 @@ fun HomeScreen(
             }
         }
 
-        // Editorial Greeting
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "TODAY, AT YOUR PACE",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                Text(
-                    text = "A little space to check in.",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "Notice what feels right for you today.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
         // Daily log entry — opens today's log (moved out of Ask, per spec §72).
         item {
             Surface(
@@ -615,7 +594,7 @@ fun HomeScreen(
                 ) {
                     Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) "Learn about Community Circles" else "Open Community Circles")
                 }
-                if (!uiState.isAdmin) {
+                if (!uiState.isAdmin && uiState.economyProfile.tier == UserEconomyTier.FREE) {
                     TextButton(
                         onClick = { showPlansDialog = true },
                         modifier = Modifier.fillMaxWidth().testTag("home_plans_popup_button")
