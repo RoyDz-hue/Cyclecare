@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.cyclecare.app.data.local.CycleDayLog
+import com.cyclecare.app.data.model.DayPrediction
 import com.cyclecare.app.ui.viewmodel.CycleCareViewModel
 import com.cyclecare.app.ui.viewmodel.CycleUiState
 import java.time.YearMonth
