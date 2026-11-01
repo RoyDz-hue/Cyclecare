@@ -1,0 +1,26 @@
+workflows:
+  cyclecare-slim:
+    name: CycleCare slim APK + targeted unit tests
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    scripts:
+      - name: Targeted unit tests (44 methods, 6 classes)
+        script: |
+          set -e
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
+            --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
+            --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
+            --tests "com.cyclecare.app.domain.ai.LayeredChatOrchestratorTest" \
+            --tests "com.cyclecare.app.ui.CoinAmountInputTest" \
+            --tests "com.cyclecare.app.ui.SettingsPinTest"
+      - name: Build unsigned slim APK (arm64, minified)
+        script: |
+          set -e
+          cd Androidapp
+          ./gradlew assembleSlim -PslimApk
+    artifacts:
+      - Androidapp/app/build/outputs/apk/**/*.apk
+      - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
