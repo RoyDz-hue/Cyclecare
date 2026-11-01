@@ -101,13 +101,22 @@ fun CoinTransferDialog(
 
                 OutlinedTextField(
                     value = transferAmountText,
-                    onValueChange = {
-                        transferAmountText = it.filter { ch -> ch.isDigit() }
+                    onValueChange = { raw ->
+                        // Digits and a single decimal point, up to 3 decimal places,
+                        // matching PaymentInputValidator's ^\d+(\.\d{1,3})?$ rule.
+                        val kept = raw.filter { ch -> ch.isDigit() || ch == '.' }
+                        val firstDot = kept.indexOf('.')
+                        transferAmountText = if (firstDot < 0) {
+                            kept.take(12)
+                        } else {
+                            (kept.substring(0, firstDot) +
+                                "." + kept.substring(firstDot + 1).filter { ch -> ch.isDigit() }.take(3)).take(16)
+                        }
                         errorMessage = null
                     },
                     label = { Text("Coins to Send") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("transfer_amount_input"),
