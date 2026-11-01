@@ -66,19 +66,13 @@ android {
   }
 
   // Paparazzi screenshot tests need the plugin's dependency, which is only
-  // resolved with -Ppaparazzi. Exclude them from plain unit-test compilation
-  // so testDebugUnitTest builds without the property.
+  // resolved with -Ppaparazzi. They live in src/screenshot/java and join the
+  // unit-test sources only when the property is passed, so plain
+  // testDebugUnitTest always compiles on the documented JDK 17 toolchain.
   sourceSets {
     named("test") {
-      if (!project.hasProperty("paparazzi")) {
-        java {
-          exclude("com/cyclecare/app/ui/CheckoutScreenshotTest.kt")
-          exclude("com/cyclecare/app/ui/ChromeScreenshotTest.kt")
-          exclude("com/cyclecare/app/ui/HomeFrameScreenshotTest.kt")
-          exclude("com/cyclecare/app/ui/LandscapeShellScreenshotTest.kt")
-          exclude("com/cyclecare/app/ui/ScreensScreenshotTest.kt")
-          exclude("com/cyclecare/app/ui/ShellFrameScreenshotTest.kt")
-        }
+      if (project.hasProperty("paparazzi")) {
+        java.srcDir("src/screenshot/java")
       }
     }
   }

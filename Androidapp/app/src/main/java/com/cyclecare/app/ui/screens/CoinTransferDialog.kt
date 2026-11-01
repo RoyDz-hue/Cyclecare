@@ -102,17 +102,12 @@ fun CoinTransferDialog(
                 OutlinedTextField(
                     value = transferAmountText,
                     onValueChange = { raw ->
-                        // Digits and a single decimal point, up to 3 decimal places,
-                        // matching PaymentInputValidator's ^\d+(\.\d{1,3})?$ rule.
-                        val kept = raw.filter { ch -> ch.isDigit() || ch == '.' }
-                        val firstDot = kept.indexOf('.')
-                        transferAmountText = if (firstDot < 0) {
-                            kept.take(12)
-                        } else {
-                            (kept.substring(0, firstDot) +
-                                "." + kept.substring(firstDot + 1).filter { ch -> ch.isDigit() }.take(3)).take(16)
-                        }
-                        errorMessage = null
+                        // Never silently rewrite a money amount into a different
+                        // one: accept only unambiguous input, keep anything else
+                        // as typed and say clearly what is wrong.
+                        val (accepted, rejection) = sanitizeCoinAmountInput(raw)
+                        transferAmountText = accepted
+                        errorMessage = rejection
                     },
                     label = { Text("Coins to Send") },
                     singleLine = true,
@@ -187,4 +182,24 @@ fun CoinTransferDialog(
             }
         }
     )
+}
+
+private val COIN_AMOUNT_SHAPE = Regex("^\\d*(\\.\\d{0,3})?$")
+
+/**
+ * Accepts only unambiguous coin amounts: digits with at most one decimal point
+ * and up to 3 decimals (leading/trailing spaces trimmed). Anything else -
+ * minus signs, commas, letters, a second dot - is kept exactly as typed with a
+ * clear rejection instead of being stripped into a different amount.
+ * Returns the text to show and a rejection message (null when acceptable).
+ */
+internal fun sanitizeCoinAmountInput(raw: String): Pair<String, String?> {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "" to null
+    if (trimmed.length > 16) return trimmed to "Amount is too long."
+    if (!COIN_AMOUNT_SHAPE.matches(trimmed)) {
+        return trimmed to "Use digits and at most one decimal point, for example 12.5."
+    }
+    if (trimmed.startsWith(".")) return trimmed to "Start the amount with a digit, for example 0.5."
+    return trimmed to null
 }
