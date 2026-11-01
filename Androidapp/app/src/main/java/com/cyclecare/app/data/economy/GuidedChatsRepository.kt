@@ -70,14 +70,15 @@ class GuidedChatsRepository {
         return true
     }
 
-    /** Joins a live circle and loads its full message stream. Empty list on failure. */
-    suspend fun loadLiveMessages(service: CommunityGuidesService, channel: GuidedChatChannel): List<GuidedChatMessage> {
-        val topicId = channel.serverTopicId ?: return emptyList()
+    /** Joins a live circle and loads its full message stream. Null on failure so
+     * the caller can show an honest load-failure state instead of an empty circle. */
+    suspend fun loadLiveMessages(service: CommunityGuidesService, channel: GuidedChatChannel): List<GuidedChatMessage>? {
+        val topicId = channel.serverTopicId ?: return null
         return try {
             service.ensureMembership(topicId)
             service.fetchMessages(topicId)
         } catch (_: Exception) {
-            emptyList()
+            null
         }
     }
 
@@ -94,42 +95,9 @@ class GuidedChatsRepository {
         }
     }
 
-    private val inMemoryMessages = mutableMapOf<String, MutableList<GuidedChatMessage>>(
-        "circle_luteal_rest" to mutableListOf(
-            GuidedChatMessage(
-                channelId = "circle_luteal_rest",
-                senderAlias = "Gentle Dawn",
-                content = "Setting earlier evening wind-down boundaries this week has made a world of difference for my luteal fatigue.",
-                timestampMs = System.currentTimeMillis() - 7200000,
-                isSelf = false
-            ),
-            GuidedChatMessage(
-                channelId = "circle_luteal_rest",
-                senderAlias = "Quiet Meadow",
-                content = "Warm chamomile tea and magnesium before bed really helps ease the physical restlessness.",
-                timestampMs = System.currentTimeMillis() - 3600000,
-                isSelf = false
-            )
-        ),
-        "circle_ovulation_vitality" to mutableListOf(
-            GuidedChatMessage(
-                channelId = "circle_ovulation_vitality",
-                senderAlias = "Sunlit Amber",
-                content = "Taking advantage of this follicular-to-ovulation energy surge to reorganize my studio workspace!",
-                timestampMs = System.currentTimeMillis() - 5400000,
-                isSelf = false
-            )
-        ),
-        "circle_sovereign_sanctuary" to mutableListOf(
-            GuidedChatMessage(
-                channelId = "circle_sovereign_sanctuary",
-                senderAlias = "Serene Willow",
-                content = "Remembering that we do not have to be at 100% capacity every day of the month is so liberating.",
-                timestampMs = System.currentTimeMillis() - 8640000,
-                isSelf = false
-            )
-        )
-    )
+    // Offline circles start empty: no fabricated member posts. Messages a user
+    // writes while offline stay on this device only, as their own words.
+    private val inMemoryMessages = mutableMapOf<String, MutableList<GuidedChatMessage>>()
 
     fun getMessages(channelId: String): List<GuidedChatMessage> {
         return inMemoryMessages[channelId]?.toList() ?: emptyList()

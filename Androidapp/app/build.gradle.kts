@@ -66,12 +66,19 @@ android {
   }
 
   // Paparazzi screenshot tests need the plugin's dependency, which is only
-  // resolved with -Ppaparazzi. Exclude them from plain unit-test builds so
-  // testDebugUnitTest compiles without the property.
+  // resolved with -Ppaparazzi. Exclude them from plain unit-test compilation
+  // so testDebugUnitTest builds without the property.
   sourceSets {
-    getByName("test") {
+    named("test") {
       if (!project.hasProperty("paparazzi")) {
-        java.exclude("com/cyclecare/app/ui/*ScreenshotTest.kt")
+        java {
+          exclude("com/cyclecare/app/ui/CheckoutScreenshotTest.kt")
+          exclude("com/cyclecare/app/ui/ChromeScreenshotTest.kt")
+          exclude("com/cyclecare/app/ui/HomeFrameScreenshotTest.kt")
+          exclude("com/cyclecare/app/ui/LandscapeShellScreenshotTest.kt")
+          exclude("com/cyclecare/app/ui/ScreensScreenshotTest.kt")
+          exclude("com/cyclecare/app/ui/ShellFrameScreenshotTest.kt")
+        }
       }
     }
   }

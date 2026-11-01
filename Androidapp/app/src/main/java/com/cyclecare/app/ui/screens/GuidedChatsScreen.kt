@@ -114,7 +114,11 @@ fun GuidedChatsScreen(
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     )
                     Text(
-                        text = if (selectedChannel != null) "Live Circle Reflection" else "Supportive, guided discussion spaces",
+                        text = if (selectedChannel != null) {
+                            if (selectedChannel?.serverTopicId != null) "Live Circle Reflection" else "Circle Reflection"
+                        } else {
+                            "Supportive, guided discussion spaces"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -210,11 +214,18 @@ fun GuidedChatsScreen(
                 }
 
                 // Load the live stream for server-backed circles and swap it in.
-                LaunchedEffect(selectedChannel.id) {
+                // Null means the load failed: show an honest state with retry,
+                // never substitute local or sample content for live messages.
+                var liveRetry by remember { mutableStateOf(0) }
+                var liveFailed by remember(selectedChannel.id) { mutableStateOf(false) }
+                LaunchedEffect(selectedChannel.id, liveRetry) {
                     val service = communityGuidesService ?: return@LaunchedEffect
                     if (selectedChannel.serverTopicId == null) return@LaunchedEffect
                     val live = repository.loadLiveMessages(service, selectedChannel)
-                    if (live.isNotEmpty()) {
+                    if (live == null) {
+                        liveFailed = true
+                    } else {
+                        liveFailed = false
                         messages.clear()
                         messages.addAll(live)
                     }
@@ -240,11 +251,50 @@ fun GuidedChatsScreen(
                         )
                     }
 
+                    if (liveFailed) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "The live circle could not be reached just now.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(onClick = { liveRetry++ }) {
+                                Text("Try again")
+                            }
+                        }
+                    } else if (messages.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = if (selectedChannel.serverTopicId != null) {
+                                    "No reflections here yet. Yours could be the first."
+                                } else {
+                                    "You are offline. Reflections you write stay on this device until the live circle is reachable."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     // Live Messages List
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .weight(if (liveFailed || messages.isEmpty()) 0f else 1f)
                             .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
