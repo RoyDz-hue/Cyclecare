@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -73,7 +76,7 @@ fun CareScreen(
         uiState = uiState,
         onConsultCare = viewModel::consultCare,
         onEditCareLog = viewModel::editCareLog,
-        onEnableAiProcessing = { revision -> viewModel.enableDisplayedAiProviders(revision) },
+        onEnableAiProcessing = { displayed -> viewModel.enableDisplayedAiProviders(displayed) },
         onRefreshAiManifest = viewModel::refreshAiProcessorManifest,
         onGenerateCareImage = viewModel::generateCareImage,
         onOpenVault = { viewModel.setVaultOpen(true) },
@@ -90,7 +93,7 @@ fun CareScreenContent(
     uiState: CycleUiState,
     onConsultCare: (String) -> Unit,
     onEditCareLog: (String) -> Unit,
-    onEnableAiProcessing: (String?) -> Unit,
+    onEnableAiProcessing: (com.cyclecare.app.domain.ai.AiProcessorManifest?) -> Unit,
     onRefreshAiManifest: () -> Unit,
     onGenerateCareImage: (CareImageStyle, String) -> Unit,
     onOpenVault: () -> Unit,
@@ -140,7 +143,7 @@ fun CareScreenContent(
                 item(key = "ai_consent") {
                     AiConsentCard(
                         onAllow = {
-                            onEnableAiProcessing(uiState.aiProcessorManifest?.manifestRevision)
+                            onEnableAiProcessing(uiState.aiProcessorManifest)
                         },
                         onNotNow = { aiConsentDismissed = true },
                         uiState = uiState,
@@ -313,6 +316,26 @@ private fun AiConsentCard(
                                 if (provider.unavailableReason.isNotBlank()) ": ${provider.unavailableReason}" else "",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    var showPolicyDetails by rememberSaveable { mutableStateOf(false) }
+                    TextButton(onClick = { showPolicyDetails = !showPolicyDetails },
+                        modifier = Modifier.testTag("care_ai_consent_details")) {
+                        Text(if (showPolicyDetails) "Hide privacy policies" else "Details & privacy policies")
+                    }
+                    if (showPolicyDetails) {
+                        val uriHandler = LocalUriHandler.current
+                        manifest.providers.filter { it.eligible && it.consentEnabled }.forEach { provider ->
+                            provider.processors.forEach { processor ->
+                                Text(
+                                    "${processor.name} privacy policy",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clickable { uriHandler.openUri(processor.policyUrl) }
+                                        .testTag("care_ai_policy_${provider.id}_${processor.id}")
+                                )
+                            }
                         }
                     }
                 }

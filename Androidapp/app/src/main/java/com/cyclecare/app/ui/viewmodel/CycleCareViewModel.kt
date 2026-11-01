@@ -775,12 +775,15 @@ class CycleCareViewModel(
 
         /**
      * Allow-tap from the consent card: grant exactly the providers displayed as
-     * eligible in the rendered manifest snapshot. A missing or changed snapshot
-     * fails closed and refreshes the card instead of granting.
+     * eligible in the rendered manifest snapshot. The rendered snapshot object
+     * is compared with live state field-for-field; any change - even under the
+     * same manifest revision - fails closed and refreshes the card instead of
+     * granting. Each grant additionally re-validates a fresh manifest and a
+     * server receipt per provider.
      */
-    fun enableDisplayedAiProviders(displayedManifestRevision: String?) {
+    fun enableDisplayedAiProviders(displayedManifest: com.cyclecare.app.domain.ai.AiProcessorManifest?) {
         when (val decision = com.cyclecare.app.domain.ai.decideAiConsentTap(
-            displayedManifestRevision, _uiState.value.aiProcessorManifest)) {
+            displayedManifest, _uiState.value.aiProcessorManifest)) {
             is com.cyclecare.app.domain.ai.AiConsentTapDecision.FailClosed -> {
                 refreshAiProcessorManifest()
                 _uiState.value = _uiState.value.copy(careSavedReviewMessage = decision.reason)
