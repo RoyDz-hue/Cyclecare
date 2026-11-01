@@ -82,8 +82,14 @@ workflows:
           chmod +x gradlew
           export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
           "$JAVA_HOME/bin/java" -version
-          echo "--- $HOME/.gradle/gradle.properties ---"
-          cat "$HOME/.gradle/gradle.properties" 2>/dev/null || echo "(none)"
+          for f in "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties" "$HOME/.gradle/gradle.properties"; do
+            if [ -f "$f" ]; then
+              echo "java keys in $f:"
+              grep -E '^[[:space:]]*(org\.gradle\.java\.home|org\.gradle\.java\.installations\.[a-z-]+|org\.gradle\.jvm\.version|java\.home)' "$f" || echo "(none)"
+            else
+              echo "(no $f)"
+            fi
+          done
           ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" recordPaparazziDebug -Ppaparazzi \
             --tests "com.cyclecare.app.ui.ScreensScreenshotTest.careEntryState" \
             --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
