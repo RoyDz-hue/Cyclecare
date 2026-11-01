@@ -171,4 +171,7 @@ tasks.withType<Test>().configureEach {
     // daemon and the screenshot renderer do not exhaust memory together.
     maxHeapSize = "448m"
     jvmArgs("-XX:+UseSerialGC", "-XX:MaxMetaspaceSize=256m")
+    // layoutlib holds native image buffers; a fresh JVM per test class stops
+    // them accumulating across the render matrix in this 2GB sandbox.
+    forkEvery = 1
 }
