@@ -169,6 +169,6 @@ tasks.withType<Test>().configureEach {
     reports.html.required = false
     // The build sandbox has ~2GB RAM total: cap the test fork so the Gradle
     // daemon and the screenshot renderer do not exhaust memory together.
-    maxHeapSize = "512m"
-    jvmArgs("-XX:+UseSerialGC", "-XX:MaxMetaspaceSize=320m")
+    maxHeapSize = "448m"
+    jvmArgs("-XX:+UseSerialGC", "-XX:MaxMetaspaceSize=256m")
 }
