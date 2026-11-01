@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -730,7 +731,7 @@ fun SettingsScreen(
 
                         OutlinedButton(
                             onClick = { exportLauncher.launch("cyclecare-data-${java.time.LocalDate.now()}.pdf") },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -747,7 +748,7 @@ fun SettingsScreen(
                         OutlinedButton(
                             onClick = { showUnifiedEraseDialog = true },
                             enabled = !uiState.isDeletingCloudHealth,
-                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("erase_data_button"),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("erase_data_button"),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                         ) {

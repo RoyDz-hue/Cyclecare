@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -395,7 +396,7 @@ fun TrackScreen(
                     savedFeedback = true
                 },
                 enabled = hasAnyEntry,
-                modifier = Modifier.fillMaxWidth().height(52.dp).testTag("save_track_button"),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("save_track_button"),
                 shape = RoundedCornerShape(18.dp)
             ) {
                 Icon(Icons.Default.Check, contentDescription = null)

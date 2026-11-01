@@ -598,7 +598,7 @@ private fun MpesaForm(
             onClick = onSubmit,
             enabled = isOnline && amountKes > 0 && validationMessage == null && phone.isNotBlank() &&
                 PaymentInputValidator.validateKenyanPhoneNumber(phone).isValid,
-            modifier = Modifier.fillMaxWidth().height(54.dp).testTag("pay_mpesa_stk_button"),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("pay_mpesa_stk_button"),
             shape = RoundedCornerShape(17.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
         ) {
@@ -626,7 +626,7 @@ private fun PaypalForm(
         Button(
             onClick = onSubmit,
             enabled = isOnline,
-            modifier = Modifier.fillMaxWidth().height(54.dp).testTag("pay_paypal_express_button"),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("pay_paypal_express_button"),
             shape = RoundedCornerShape(17.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF145DA0),
@@ -753,7 +753,7 @@ private fun SuccessPanel(
         )
         Button(
             onClick = onDismiss,
-            modifier = Modifier.fillMaxWidth().height(52.dp).testTag("payment_success_done_button"),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("payment_success_done_button"),
             shape = RoundedCornerShape(17.dp)
         ) {
             Text("Back to your vault", fontWeight = FontWeight.SemiBold)
