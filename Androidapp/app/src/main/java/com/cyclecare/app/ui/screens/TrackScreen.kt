@@ -80,6 +80,24 @@ fun TrackScreen(
     currentLog: CycleDayLog?,
     modifier: Modifier = Modifier
 ) {
+    TrackScreenContent(
+        uiState = uiState,
+        currentLog = currentLog,
+        onSelectDate = viewModel::selectDate,
+        onSaveDayLog = viewModel::saveDayLog,
+        modifier = modifier
+    )
+}
+
+/** Pure state-and-events daily log editor: renderable without a ViewModel. */
+@Composable
+fun TrackScreenContent(
+    uiState: CycleUiState,
+    currentLog: CycleDayLog?,
+    onSelectDate: (java.time.LocalDate) -> Unit,
+    onSaveDayLog: (CycleDayLog) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val selectedDate = uiState.selectedDate
     val dateText = selectedDate.format(DateTimeFormatter.ofPattern("EEEE, MMM d, yyyy"))
     var selectedFlow by remember { mutableStateOf(currentLog?.flowLevel.orEmpty()) }
@@ -173,7 +191,7 @@ fun TrackScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        IconButton(onClick = { viewModel.selectDate(selectedDate.minusDays(1)) }, modifier = Modifier.size(48.dp)) {
+                        IconButton(onClick = { onSelectDate(selectedDate.minusDays(1)) }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous day")
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -182,7 +200,7 @@ fun TrackScreen(
                                 Text("Today", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
                         }
-                        IconButton(onClick = { viewModel.selectDate(selectedDate.plusDays(1)) }, modifier = Modifier.size(48.dp)) {
+                        IconButton(onClick = { onSelectDate(selectedDate.plusDays(1)) }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next day")
                         }
                     }
@@ -392,7 +410,7 @@ fun TrackScreen(
         ) {
             Button(
                 onClick = {
-                    viewModel.saveDayLog(candidateLog)
+                    onSaveDayLog(candidateLog)
                     savedFeedback = true
                 },
                 enabled = hasAnyEntry,

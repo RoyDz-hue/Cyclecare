@@ -61,6 +61,26 @@ fun CycleScreen(
     logsMap: Map<String, CycleDayLog>,
     modifier: Modifier = Modifier
 ) {
+    CycleScreenContent(
+        uiState = uiState,
+        logsMap = logsMap,
+        predictionForDate = viewModel::getPredictionForDate,
+        onSelectDate = viewModel::selectDate,
+        onOpenTrackForDate = viewModel::openTrackForDate,
+        modifier = modifier
+    )
+}
+
+/** Pure state-and-events cycle calendar: renderable without a ViewModel. */
+@Composable
+fun CycleScreenContent(
+    uiState: CycleUiState,
+    logsMap: Map<String, CycleDayLog>,
+    predictionForDate: (java.time.LocalDate) -> DayPrediction?,
+    onSelectDate: (java.time.LocalDate) -> Unit,
+    onOpenTrackForDate: (java.time.LocalDate) -> Unit,
+    modifier: Modifier = Modifier
+) {
     var displayedMonth by remember { mutableStateOf(YearMonth.from(uiState.selectedDate)) }
     val selectedDate = uiState.selectedDate
     val today = uiState.currentDate
@@ -96,7 +116,7 @@ fun CycleScreen(
                 }
                 if (selectedDate != today) {
                     TextButton(onClick = {
-                        viewModel.selectDate(today)
+                        onSelectDate(today)
                         displayedMonth = YearMonth.from(today)
                     }) {
                         Text("Jump to today")
@@ -214,17 +234,17 @@ fun CycleScreen(
                                     val dayNumber = cellIndex - startOffset + 1
                                     if (dayNumber in 1..daysInMonth) {
                                         val date = displayedMonth.atDay(dayNumber)
-                                        val prediction = viewModel.getPredictionForDate(date)
+                                        val prediction = predictionForDate(date)
                                         val hasLog = logsMap.containsKey(date.toString())
                                         val isSelected = date == selectedDate
                                         val isToday = date == today
                                         val isPeriodEstimate = prediction?.isPeriod == true
                                         val isFertileEstimate = prediction?.isFertile == true || prediction?.isOvulation == true
                                         val previousPrediction = if (prediction != null && column > 0 && dayNumber > 1) {
-                                            viewModel.getPredictionForDate(date.minusDays(1))
+                                            predictionForDate(date.minusDays(1))
                                         } else null
                                         val nextPrediction = if (prediction != null && column < 6 && dayNumber < daysInMonth) {
-                                            viewModel.getPredictionForDate(date.plusDays(1))
+                                            predictionForDate(date.plusDays(1))
                                         } else null
                                         val samePeriodOnLeft = isPeriodEstimate && previousPrediction?.isPeriod == true
                                         val sameFertileWindowOnLeft = isFertileEstimate &&
@@ -278,7 +298,7 @@ fun CycleScreen(
                                                 .clickable(
                                                     role = Role.Button,
                                                     onClickLabel = "Select ${date.format(DateTimeFormatter.ofPattern("MMMM d"))}"
-                                                ) { viewModel.selectDate(date) }
+                                                ) { onSelectDate(date) }
                                                 .semantics { contentDescription = label }
                                                 .padding(2.dp)
                                                 .testTag("calendar_day_$dayNumber"),
@@ -359,7 +379,7 @@ fun CycleScreen(
                         )
                     }
                     Button(
-                        onClick = { viewModel.openTrackForDate(selectedDate) },
+                        onClick = { onOpenTrackForDate(selectedDate) },
                         modifier = Modifier.fillMaxWidth().height(48.dp).testTag("edit_selected_day_button"),
                         shape = RoundedCornerShape(16.dp)
                     ) {
