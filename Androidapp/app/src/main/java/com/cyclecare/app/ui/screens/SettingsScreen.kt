@@ -857,7 +857,7 @@ fun SettingsScreenContent(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Private by design. Expert answers are optional: when you allow them, your question, recent cycle context and chat history are sent to CycleCare's server to answer you. Off by default - revoke anytime.",
+                            text = "Private by design. Expert answers are optional: when you allow them, your question, recent cycle context and chat history leave this device to produce the answer. Off by default - revoke anytime.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
