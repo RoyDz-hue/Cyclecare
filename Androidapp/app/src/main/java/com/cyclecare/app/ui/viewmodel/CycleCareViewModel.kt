@@ -723,7 +723,10 @@ class CycleCareViewModel(
         // Compatibility path for existing callers. The care UI uses the explicit
         // provider mutation below and never infers consent from server selection.
         if (enabled) {
-            authPreferences.isAiSharingAllowed = true
+            // Route through the manifest + server-receipt flow. A local-only
+            // aggregate grant would hide the care consent card while no provider
+            // has a current receipt, stranding online answers in fail-closed.
+            enableAiProcessingForAllProviders()
         } else {
             // Compatibility callers (including cloud-health deletion) must
             // revoke provider receipts as well as the aggregate UI switch.
@@ -769,9 +772,9 @@ class CycleCareViewModel(
 
     /**
      * One-tap AI enable from the chat consent card: grants every provider the
-     * server manifest marks eligible (or every known provider while the
-     * manifest is unavailable, letting receipts resolve on the next consult).
-     * Revocation and per-provider detail stay in Settings.
+     * server manifest marks eligible. Without a manifest or server receipt no
+     * consent is marked, so the toggle stays off and the care consent card keeps
+     * showing. Revocation and per-provider detail stay in Settings.
      */
     fun enableAiProcessingForAllProviders() {
         val manifest = _uiState.value.aiProcessorManifest
