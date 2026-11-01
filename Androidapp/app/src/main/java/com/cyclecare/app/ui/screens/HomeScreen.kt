@@ -575,7 +575,12 @@ fun HomeScreenContent(
                                 }
                             }
                         }
-                        TextButton(onClick = { onSelectTab(AppNavTab.ATELIER) }) {
+                        // End padding keeps this target clear of the floating
+                        // Ask bubble's 48dp docked lane wherever the card rests.
+                        TextButton(
+                            onClick = { onSelectTab(AppNavTab.ATELIER) },
+                            modifier = Modifier.padding(end = 48.dp)
+                        ) {
                             Text("View Hub")
                         }
                     }
