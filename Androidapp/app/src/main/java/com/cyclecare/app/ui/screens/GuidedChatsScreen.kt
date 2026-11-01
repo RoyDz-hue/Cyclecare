@@ -88,7 +88,6 @@ fun GuidedChatsScreen(
     val channels = remember(channelsVersion) { repository.availableChannels }
     val selectedChannel = channels.find { it.id == selectedChannelId }
 
-    val isUserAllowedAccess = isAdmin || profile.tier == UserEconomyTier.SUPPORTER || profile.tier == UserEconomyTier.PREMIUM || true
 
     Scaffold(
         topBar = {

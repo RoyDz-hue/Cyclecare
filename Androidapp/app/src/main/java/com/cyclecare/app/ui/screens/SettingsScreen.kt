@@ -610,17 +610,34 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedTextField(
                                 value = tempPin,
-                                onValueChange = {
-                                    if (it.length <= 4) {
-                                        tempPin = it
-                                        viewModel.saveQuickUnlockPin(it)
-                                    }
+                                onValueChange = { raw ->
+                                    // Draft only: typing never changes the active passcode.
+                                    tempPin = raw.filter { ch -> ch.isDigit() }.take(4)
                                 },
-                                label = { Text("Set 4-Digit Passcode") },
+                                label = { Text("New 4-Digit Passcode") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    if (isCompletePin(tempPin)) {
+                                        viewModel.saveQuickUnlockPin(tempPin)
+                                        tempPin = ""
+                                    }
+                                },
+                                enabled = isCompletePin(tempPin),
+                                modifier = Modifier.testTag("save_pin_button"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Save New Passcode")
+                            }
+                            Text(
+                                text = "Your current passcode stays active until you save a complete new one. Use the switch above to remove passcode lock.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
@@ -989,3 +1006,6 @@ private fun RankCoinsRow(uiState: CycleUiState) {
         )
     }
 }
+
+/** A complete passcode is exactly 4 digits. Partial drafts are never valid. */
+internal fun isCompletePin(pin: String): Boolean = pin.length == 4 && pin.all { it.isDigit() }
