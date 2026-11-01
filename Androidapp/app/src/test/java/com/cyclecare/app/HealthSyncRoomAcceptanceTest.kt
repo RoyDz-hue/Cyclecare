@@ -25,7 +25,7 @@ class HealthSyncRoomAcceptanceTest {
     private fun open(name: String): CycleCareDatabase {
         context.getDatabasePath(name).parentFile?.mkdirs()
         return Room.databaseBuilder(context, CycleCareDatabase::class.java, name)
-            .allowMainThreadQueries().addMigrations(CycleCareDatabase.createMigration5To6(), CycleCareDatabase.createMigration6To7(), CycleCareDatabase.createMigration7To8())
+            .allowMainThreadQueries().addMigrations(CycleCareDatabase.createMigration5To6(), CycleCareDatabase.createMigration6To7(), CycleCareDatabase.createMigration7To8(), CycleCareDatabase.createMigration8To9())
             .build().also { handles += it }
     }
     private fun name() = "room-sync-unit-${UUID.randomUUID()}".also { names += it }
@@ -33,7 +33,7 @@ class HealthSyncRoomAcceptanceTest {
         "2026-10-19", "UPSERT", 0, revision, "{\"date\":\"2026-10-19\"}", "a".repeat(64), 7)
     @After fun cleanup() { handles.forEach { if (it.isOpen) it.close() }; names.forEach { context.deleteDatabase(it) } }
 
-    @Test fun fiveToSevenMigrationPreservesHealthRowsAndValidatesActualIndexes() = runBlocking {
+    @Test fun fiveToNineMigrationPreservesHealthRowsAndValidatesActualIndexes() = runBlocking {
         val file = name(); val initial = open(file)
         initial.cycleDao().insertOrUpdateLog(CycleDayLog("2026-10-19", notes = "migration fixture"))
         initial.close()
@@ -41,12 +41,29 @@ class HealthSyncRoomAcceptanceTest {
             // Base health tables are unchanged from v5. Remove only the newly introduced tables.
             listOf("health_sync_conflicts", "health_sync_outbox", "health_sync_revisions", "health_sync_cursors")
                 .forEach { old.execSQL("DROP TABLE $it") }
+            // The fresh create above built the latest (v9) schema. A real v5
+            // database also predates the v9 onboarding column, so rebuild
+            // onboarding_profiles at its actual historical v8 shape - the
+            // entity as of the commit before the v9 bump (a2d180f), i.e. all
+            // columns except lastPeriodEndDateString. Bundled SQLite predates
+            // ALTER TABLE DROP COLUMN, so use create-copy-drop-rename.
+            old.execSQL("CREATE TABLE onboarding_profiles_v8 (`id` INTEGER NOT NULL PRIMARY KEY, `isCompleted` INTEGER NOT NULL, `completedAtTimestamp` INTEGER NOT NULL, `isAgeVerified` INTEGER NOT NULL, `isTermsAgreed` INTEGER NOT NULL, `accountMode` TEXT NOT NULL, `selectedGoalsCsv` TEXT NOT NULL, `lastPeriodDateString` TEXT NOT NULL, `approximatePeriodChoice` TEXT NOT NULL, `cycleLengthOption` TEXT NOT NULL, `cycleLengthDays` INTEGER NOT NULL, `periodDurationDays` INTEGER NOT NULL, `remindFertileWindow` INTEGER NOT NULL, `typicalSymptomsCsv` TEXT NOT NULL, `typicalEnergy` TEXT NOT NULL, `typicalSleepQuality` TEXT NOT NULL, `hasCompletedDeepBaseline` INTEGER NOT NULL)")
+            old.execSQL("INSERT INTO onboarding_profiles_v8 SELECT id, isCompleted, completedAtTimestamp, isAgeVerified, isTermsAgreed, accountMode, selectedGoalsCsv, lastPeriodDateString, approximatePeriodChoice, cycleLengthOption, cycleLengthDays, periodDurationDays, remindFertileWindow, typicalSymptomsCsv, typicalEnergy, typicalSleepQuality, hasCompletedDeepBaseline FROM onboarding_profiles")
+            old.execSQL("DROP TABLE onboarding_profiles")
+            old.execSQL("ALTER TABLE onboarding_profiles_v8 RENAME TO onboarding_profiles")
+            // One concrete v8-era row to prove onboarding data survives the
+            // migration chain and the new v9 column receives its default.
+            old.execSQL("INSERT INTO onboarding_profiles (id, isCompleted, completedAtTimestamp, isAgeVerified, isTermsAgreed, accountMode, selectedGoalsCsv, lastPeriodDateString, approximatePeriodChoice, cycleLengthOption, cycleLengthDays, periodDurationDays, remindFertileWindow, typicalSymptomsCsv, typicalEnergy, typicalSleepQuality, hasCompletedDeepBaseline) VALUES (1, 1, 1700000000000, 1, 1, 'PRIVATE', 'track', '2026-10-12', 'EXACT', 'REGULAR', 29, 6, 0, 'cramps', 'steady', 'good', 1)")
             old.execSQL("PRAGMA user_version=5")
             old.execSQL("UPDATE room_master_table SET identity_hash='v5-migration-fixture'")
         }
         val migrated = open(file)
         assertEquals("migration fixture", migrated.cycleDao().getLogByDate("2026-10-19")?.notes)
-        assertEquals(8, migrated.openHelper.writableDatabase.version)
+        assertEquals(9, migrated.openHelper.writableDatabase.version)
+        val profile = migrated.onboardingDao().getProfile()
+        assertEquals("2026-10-12", profile?.lastPeriodDateString)
+        assertEquals(29, profile?.cycleLengthDays)
+        assertEquals("", profile?.lastPeriodEndDateString)
         assertTrue(migrated.healthSyncDao().pending("owner-a").isEmpty())
         assertTrue(migrated.healthSyncDao().conflicts("owner-a").isEmpty())
     }
