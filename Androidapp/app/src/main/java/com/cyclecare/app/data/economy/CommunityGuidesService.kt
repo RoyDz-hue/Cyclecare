@@ -11,9 +11,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,19 +35,11 @@ class CommunityGuidesService(
 
     val currentUserId: String? get() = authPreferences.userId?.trim()?.takeIf { it.isNotEmpty() }
 
-    private fun isoTimestamp(raw: String?): Long {
-        if (raw.isNullOrBlank()) return System.currentTimeMillis()
-        val patterns = listOf("yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX", "yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX")
-        for (pattern in patterns) {
-            try {
-                val fmt = SimpleDateFormat(pattern, Locale.US)
-                fmt.timeZone = TimeZone.getTimeZone("UTC")
-                val parsed = fmt.parse(raw)
-                if (parsed != null) return parsed.time
-            } catch (_: Exception) { }
-        }
-        return System.currentTimeMillis()
-    }
+    // Strict shared parsing: honors offsets and fraction precision, and returns
+    // 0 for unparseable input so a malformed message sorts oldest in the
+    // oldest-first stream instead of masquerading as the freshest.
+    private fun isoTimestamp(raw: String?): Long =
+        com.cyclecare.app.data.notification.parseIsoTimestamp(raw)
 
     private suspend fun authedRequest(configure: Request.Builder.() -> Unit): okhttp3.Response? {
         val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return null

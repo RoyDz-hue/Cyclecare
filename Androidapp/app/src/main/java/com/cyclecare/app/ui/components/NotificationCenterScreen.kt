@@ -233,10 +233,14 @@ fun NotificationItemCard(
     }
 
     val timeFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
-    val dateString = try {
+    // A 0 createdAt means the server timestamp was unparseable; say so
+    // explicitly instead of rendering "Jan 1, 1970" as if it were real.
+    val dateString = if (notification.createdAt <= 0L) {
+        "Date unknown"
+    } else try {
         timeFormat.format(Date(notification.createdAt))
     } catch (_: Exception) {
-        ""
+        "Date unknown"
     }
 
     Box(
