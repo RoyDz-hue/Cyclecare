@@ -93,6 +93,7 @@ data class CycleUiState(
     val pendingCareTurnId: String? = null,
     val careContextPreview: String? = null,
     val isAiSharingAllowed: Boolean = false,
+    val aiSharingDirectionMessage: String? = null,
     val aiProviderConsents: Map<String, Boolean> = mapOf("COHERE" to false, "GEMINI" to false, "OPENROUTER" to false, "LAJIWA" to false),
     val aiProcessorManifest: com.cyclecare.app.domain.ai.AiProcessorManifest? = null,
     val isLoadingAiProcessorManifest: Boolean = false,
@@ -727,7 +728,7 @@ class CycleCareViewModel(
             // where the sharing description is shown before any processor
             // receipt exists. Keep the switch off until that flow completes.
             _uiState.value = _uiState.value.copy(
-                careSavedReviewMessage = "Allow expert answers from the Ask tab, where what gets shared is described first. This switch stays off until then.")
+                aiSharingDirectionMessage = "Expert answers stay off here. On the Ask tab, tap Allow after reviewing what gets shared - you can revoke anytime.")
         } else {
             // Compatibility callers (including cloud-health deletion) must
             // revoke provider receipts as well as the aggregate UI switch.
@@ -736,6 +737,7 @@ class CycleCareViewModel(
         }
         _uiState.value = _uiState.value.copy(
             isAiSharingAllowed = authPreferences.isAiSharingAllowed,
+            aiSharingDirectionMessage = if (enabled) _uiState.value.aiSharingDirectionMessage else null,
             aiProviderConsents = authPreferences.providerConsents().mapValues { it.value.granted },
             careContextPreview = null
         )
