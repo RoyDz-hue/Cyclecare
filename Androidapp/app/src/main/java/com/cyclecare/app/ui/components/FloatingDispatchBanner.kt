@@ -51,7 +51,20 @@ fun FloatingDispatchBanner(
 
     val isUrgent = notification.priority.equals("URGENT", ignoreCase = true)
     val accentColor = if (isUrgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    val headerTitle = if (isUrgent) "URGENT OFFICIAL DISPATCH" else "OFFICIAL ANNOUNCEMENT"
+    // Label from the actual notification category - never an invented
+    // authority title. Urgency comes only from the sender-set priority field,
+    // never inferred from the category alone.
+    val categoryLabel = when (notification.type.uppercase()) {
+        "SECURITY" -> "Security alert"
+        "WARNING" -> "Important notice"
+        "CARE" -> "Care reminder"
+        "REWARD", "GIFT" -> "Reward"
+        "PENALTY" -> "Account notice"
+        "OFFICIAL_DISPATCH" -> "CycleCare notice"
+        "ALERT" -> "Alert"
+        else -> "CycleCare notice"
+    }
+    val headerTitle = if (isUrgent) "Urgent - $categoryLabel" else categoryLabel
 
     AnimatedVisibility(
         visible = true,
@@ -109,14 +122,9 @@ fun FloatingDispatchBanner(
                                 text = headerTitle,
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                 color = accentColor,
-                                fontSize = 12.sp
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "• Tap to view",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
@@ -134,9 +142,17 @@ fun FloatingDispatchBanner(
                             text = notification.body,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             fontSize = 12.sp
+                        )
+
+                        Text(
+                            text = "Tap to view in your inbox",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = accentColor,
+                            fontSize = 11.sp,
+                            maxLines = 1
                         )
                     }
 

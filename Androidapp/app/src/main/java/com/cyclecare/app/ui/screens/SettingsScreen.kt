@@ -123,7 +123,14 @@ fun SettingsScreen(
                     val stream = context.contentResolver.openOutputStream(uri) ?: error("No file stream")
                     stream.use { it.write(bytes) }
                 }
-                exportMessage = if (exported.isSuccess) "Your cycle data was exported." else "Could not save the export. Please try again."
+                val failure = exported.exceptionOrNull()
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                exportMessage = when {
+                    exported.isSuccess -> "Your cycle data was exported."
+                    // A failure mid-write can leave an incomplete file at the chosen
+                    // location; say so instead of implying all-or-nothing.
+                    else -> "Could not save the export. If a file was created, it may be incomplete - please try again."
+                }
             }
         }
     }

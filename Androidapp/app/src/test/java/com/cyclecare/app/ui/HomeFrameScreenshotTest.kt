@@ -27,7 +27,7 @@ import java.time.LocalDate
  */
 private val testToday: LocalDate = LocalDate.of(2026, 11, 1)
 
-private fun homeBaseState(tier: com.cyclecare.app.data.economy.UserEconomyTier) = CycleUiState(
+internal fun homeBaseState(tier: com.cyclecare.app.data.economy.UserEconomyTier) = CycleUiState(
     currentDate = testToday,
     selectedDate = testToday,
     hasCycleAnchor = true,

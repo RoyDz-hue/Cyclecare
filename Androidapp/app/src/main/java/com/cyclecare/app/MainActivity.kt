@@ -558,9 +558,13 @@ fun CycleCareBottomBar(
  * bottom-end corner inside the safe content area.
  */
 @Composable
-private fun AskFloatingBubble(onClick: () -> Unit) {
+internal fun AskFloatingBubble(onClick: () -> Unit, persistPosition: Boolean = true) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("ask_bubble_position", android.content.Context.MODE_PRIVATE) }
+    // persistPosition is only false in screenshot tests, where no real
+    // SharedPreferences backend exists; the app always persists.
+    val prefs = remember(persistPosition) {
+        if (persistPosition) context.getSharedPreferences("ask_bubble_position", android.content.Context.MODE_PRIVATE) else null
+    }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val bubblePx = with(density) { 56.dp.toPx() }
@@ -571,8 +575,8 @@ private fun AskFloatingBubble(onClick: () -> Unit) {
         val statusTopPx = WindowInsets.statusBars.getTop(density).toFloat()
         val minY = marginPx + statusTopPx
         val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(minY)
-        var offsetX by remember { mutableFloatStateOf(prefs.getFloat("x", Float.NaN)) }
-        var offsetY by remember { mutableFloatStateOf(prefs.getFloat("y", Float.NaN)) }
+        var offsetX by remember { mutableFloatStateOf(prefs?.getFloat("x", Float.NaN) ?: Float.NaN) }
+        var offsetY by remember { mutableFloatStateOf(prefs?.getFloat("y", Float.NaN) ?: Float.NaN) }
         val x = if (offsetX.isNaN()) maxX else offsetX.coerceIn(marginPx, maxX)
         val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(minY, maxY)
 
@@ -586,7 +590,7 @@ private fun AskFloatingBubble(onClick: () -> Unit) {
                 .pointerInput(maxX, maxY) {
                     detectDragGestures(
                         onDragEnd = {
-                            if (!offsetX.isNaN() && !offsetY.isNaN()) {
+                            if (!offsetX.isNaN() && !offsetY.isNaN() && prefs != null) {
                                 prefs.edit()
                                     .putFloat("x", offsetX.coerceIn(marginPx, maxX))
                                     .putFloat("y", offsetY.coerceIn(minY, maxY))

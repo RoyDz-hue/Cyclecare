@@ -256,58 +256,6 @@ fun HomeScreenContent(
             }
         }
 
-        // Daily log entry — opens today's log (moved out of Ask, per spec §72).
-        item {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .clickable(
-                        role = androidx.compose.ui.semantics.Role.Button,
-                        onClickLabel = "Open daily log"
-                    ) { onOpenTrackForDate(uiState.currentDate) }
-                    .testTag("home_daily_log_entry"),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(42.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Daily log",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = if (todayLog != null) "Today's entry is saved. Tap to review or add more." else "Record how you feel today - symptoms, mood, sleep and notes.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
         if (safety.level != SafetyLevel.LOW) {
             item {
                 val safetyColor = if (safety.isRedFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
@@ -344,26 +292,12 @@ fun HomeScreenContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "YOUR CYCLE RHYTHM",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = phase?.title ?: "Not set",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondaryContainer)
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
+                    Text(
+                        text = "YOUR CYCLE RHYTHM",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     CycleDial(
                         prediction = prediction,
                         cycleLength = uiState.settings.averageCycleLength,
@@ -375,40 +309,22 @@ fun HomeScreenContent(
                     Text(
                         text = when {
                             !uiState.hasCycleAnchor -> "Add an approximate start date and cycle length to see estimates"
+                            uiState.daysUntilNextPeriod > 0 && uiState.cycleStartIsApproximate ->
+                                "Approximate period estimate around $nextPeriodDateText - timing can vary · tap to open calendar"
+                            uiState.daysUntilNextPeriod > 0 ->
+                                "Period estimate around $nextPeriodDateText - a calendar estimate, timing can vary · tap to open calendar"
                             uiState.cycleStartIsApproximate -> "Approximate calendar estimate · tap to open calendar"
                             else -> "Calendar estimate from your entered date · tap to open calendar"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }
         }
 
-        if (uiState.hasCycleAnchor && uiState.daysUntilNextPeriod > 0) {
-            item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().testTag("next_period_estimate_notice"),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "Your period may be approaching around $nextPeriodDateText",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = "A calendar estimate based on the cycle information you chose; timing can vary.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-            }
-        }
-
-        // 1-Tap Reactive Micro Check-In Card
+        // Daily log & quick check-in (one card: open the full log, or log a mood inline)
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth().testTag("micro_check_in_card"),
@@ -420,30 +336,65 @@ fun HomeScreenContent(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button,
+                                onClickLabel = "Open daily log"
+                            ) { onOpenTrackForDate(uiState.currentDate) }
+                            .testTag("home_daily_log_entry")
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("A quick check-in", style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Daily log",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                if (todayLog != null) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.secondaryContainer
+                                    ) {
+                                        Text(
+                                            text = "✓ Saved",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Text(
-                                if (todayLog != null) "Saved in your daily log." else "Optional · choose a quick check-in to add to your log.",
+                                text = if (todayLog != null) "Today's entry is saved. Tap to review or add more." else "Record how you feel today - symptoms, mood, sleep and notes.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (todayLog != null) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Text(
-                                    text = "✓ Saved",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    Text("How are you feeling?", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    Text("How are you feeling? (optional)", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
