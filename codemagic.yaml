@@ -3,6 +3,10 @@ workflows:
     name: CycleCare slim APK + targeted unit tests
     max_build_duration: 90
     instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
     scripts:
       - name: Targeted unit tests (44 methods, 6 classes)
         script: |
