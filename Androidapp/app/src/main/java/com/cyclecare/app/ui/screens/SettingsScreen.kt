@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cyclecare.app.data.model.UserTonePreference
+import com.cyclecare.app.data.local.CycleSettings
 import com.cyclecare.app.data.local.HealthSyncConflictEntity
 import com.cyclecare.app.ui.viewmodel.CycleCareViewModel
 import com.cyclecare.app.ui.viewmodel.CycleUiState
@@ -108,10 +109,12 @@ fun SettingsScreen(
         onSetAiSharingAllowed = { viewModel.setAiSharingAllowed(it) },
         onEraseAllData = { viewModel.eraseAllDataUnified() },
         onResolveSyncConflict = { recordId, keepLocal -> viewModel.resolveSyncConflict(recordId, keepLocal) },
+        onTriggerManualSync = viewModel::triggerManualSync,
         modifier = modifier
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreenContent(
     uiState: CycleUiState,
@@ -130,6 +133,7 @@ fun SettingsScreenContent(
     onSetAiSharingAllowed: (Boolean) -> Unit,
     onEraseAllData: () -> Unit,
     onResolveSyncConflict: (String, Boolean) -> Unit,
+    onTriggerManualSync: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val settings = uiState.settings
@@ -358,7 +362,7 @@ fun SettingsScreenContent(
                         Text(uiState.lastSyncMessage, style = MaterialTheme.typography.bodySmall)
                         if (!uiState.lastSyncSuccess) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedButton(onClick = viewModel::triggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
+                            OutlinedButton(onClick = onTriggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
                                 Text("Check again")
                             }
                         }
@@ -400,7 +404,7 @@ fun SettingsScreenContent(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
-                            onClick = viewModel::loadSyncConflicts,
+                            onClick = onLoadSyncConflicts,
                             enabled = !uiState.isLoadingSyncConflicts && !uiState.isResolvingSyncConflict,
                             modifier = Modifier.testTag("refresh_sync_conflicts_button")
                         ) { Text(if (uiState.isLoadingSyncConflicts) "Checking…" else "Check again") }
