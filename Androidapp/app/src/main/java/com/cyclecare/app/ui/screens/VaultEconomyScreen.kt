@@ -160,8 +160,11 @@ fun VaultEconomyScreen(
                 .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
                 .padding(horizontal = 16.dp),
             // Bottom clearance for the floating Ask bubble so every action
-            // (including Claim Daily Coins) can scroll fully clear of it.
-            contentPadding = PaddingValues(bottom = 80.dp),
+            // (including Claim Daily Coins) can scroll fully clear of it. Top
+            // clearance (embedded only) reserves the floating help action's
+            // corner so it never crowds the balance card's plan badge; it is
+            // plain background, not a visible band.
+            contentPadding = PaddingValues(top = if (embedded) 56.dp else 0.dp, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Card 1: Balance & Mining Hub

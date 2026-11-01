@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cyclecare.app.R
 import com.cyclecare.app.data.economy.EconomyCatalog
@@ -531,7 +532,9 @@ fun HomeScreenContent(
                                 ) {
                                     Text(
                                         text = "CycleCare rewards",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Surface(
                                         shape = CircleShape,
@@ -541,6 +544,8 @@ fun HomeScreenContent(
                                             text = uiState.economyProfile.tier.title,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF8C6222),
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
