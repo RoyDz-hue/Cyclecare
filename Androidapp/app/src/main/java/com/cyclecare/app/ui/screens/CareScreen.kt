@@ -69,6 +69,30 @@ fun CareScreen(
     uiState: CycleUiState,
     modifier: Modifier = Modifier
 ) {
+    CareScreenContent(
+        uiState = uiState,
+        onConsultCare = viewModel::consultCare,
+        onEditCareLog = viewModel::editCareLog,
+        onEnableAiProcessing = viewModel::enableAiProcessingForAllProviders,
+        onRefreshAiManifest = viewModel::refreshAiProcessorManifest,
+        onGenerateCareImage = viewModel::generateCareImage,
+        onOpenVault = { onOpenVault() },
+        modifier = modifier
+    )
+}
+
+/** Pure state-and-events Care screen: renderable without a ViewModel. */
+@Composable
+fun CareScreenContent(
+    uiState: CycleUiState,
+    onConsultCare: (String) -> Unit,
+    onEditCareLog: (String) -> Unit,
+    onEnableAiProcessing: () -> Unit,
+    onRefreshAiManifest: () -> Unit,
+    onGenerateCareImage: (CareImageStyle, String) -> Unit,
+    onOpenVault: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     var queryText by remember(uiState.localDataOwnerKey) { mutableStateOf("") }
     var aiConsentDismissed by remember(uiState.localDataOwnerKey) { mutableStateOf(false) }
     var showImagePaywall by remember(uiState.localDataOwnerKey) { mutableStateOf(false) }
@@ -110,8 +134,8 @@ fun CareScreen(
                 item(key = "ai_consent") {
                     AiConsentCard(
                         onAllow = {
-                            viewModel.refreshAiProcessorManifest()
-                            viewModel.enableAiProcessingForAllProviders()
+                            onRefreshAiManifest()
+                            onEnableAiProcessing()
                         },
                         onNotNow = { aiConsentDismissed = true }
                     )
@@ -152,7 +176,7 @@ fun CareScreen(
                         onStartEdit = { editRawText = draft.rawText; editingDraft = true },
                         onEditChange = { editRawText = it.take(1200) },
                         onCancelEdit = { editingDraft = false },
-                        onApplyEdit = { viewModel.editCareLog(editRawText.trim()); editingDraft = false },
+                        onApplyEdit = { onEditCareLog(editRawText.trim()); editingDraft = false },
                         onCancel = viewModel::cancelCareLog,
                         onConfirm = viewModel::confirmCareLog
                     )
@@ -171,7 +195,7 @@ fun CareScreen(
             onSend = {
                 val question = queryText.trim()
                 if (question.isNotEmpty() && !uiState.isCareLoading && question.length <= 1200) {
-                    viewModel.consultCare(question)
+                    onConsultCare(question)
                     submittedQuestion = question
                 }
             }
@@ -215,7 +239,7 @@ fun CareScreen(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { showImageDialog = false }, enabled = !uiState.isGeneratingCareImage) { Text("Close") }
                         Button(onClick = {
-                            if (premiumOrAdmin) viewModel.generateCareImage(imageStyle, customPrompt.trim())
+                            if (premiumOrAdmin) onGenerateCareImage(imageStyle, customPrompt.trim())
                             else showImagePaywall = true
                         },
                             enabled = !uiState.isGeneratingCareImage,
@@ -235,7 +259,7 @@ fun CareScreen(
                 TextButton(onClick = {
                     showImagePaywall = false
                     showImageDialog = false
-                    viewModel.setVaultOpen(true)
+                    onOpenVault()
                 }) { Text("View plans") }
             },
             dismissButton = { TextButton(onClick = { showImagePaywall = false }) { Text("Not now") } }
