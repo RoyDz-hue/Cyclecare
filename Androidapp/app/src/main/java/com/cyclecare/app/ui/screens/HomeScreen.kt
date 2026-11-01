@@ -79,6 +79,53 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    HomeScreenContent(
+        uiState = uiState,
+        todayLog = todayLog,
+        onOpenSettings = onOpenSettings,
+        onOpenNotificationCenter = { viewModel.setNotificationCenterOpen(true) },
+        onDismissFloatingBanner = viewModel::dismissFloatingBanner,
+        onShowAuthSheet = { viewModel.setShowAuthSheet(true) },
+        onOpenTrackForDate = viewModel::openTrackForDate,
+        onSelectTab = viewModel::selectTab,
+        onQuickCheckIn = viewModel::quickCheckIn,
+        onClearEconomyToast = viewModel::clearEconomyToast,
+        onOpenSomethingDifferent = viewModel::openSomethingDifferentSheet,
+        onOpenAsk = viewModel::openAsk,
+        onOpenVault = { viewModel.setVaultOpen(true) },
+        onAskCare = { question ->
+            viewModel.openAsk()
+            viewModel.consultCare(question, includeFullContext = true)
+        },
+        modifier = modifier
+    )
+}
+
+/**
+ * The pure state-and-events content of the Home frame: every input arrives as
+ * [uiState]/[todayLog] and every action leaves through a callback. Keeping the
+ * screen free of ViewModel calls lets the frame be rendered and verified in
+ * isolation (screenshot tests) and keeps the hierarchy readable.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun HomeScreenContent(
+    uiState: CycleUiState,
+    todayLog: CycleDayLog?,
+    onOpenSettings: () -> Unit,
+    onOpenNotificationCenter: () -> Unit,
+    onDismissFloatingBanner: (String) -> Unit,
+    onShowAuthSheet: () -> Unit,
+    onOpenTrackForDate: (java.time.LocalDate) -> Unit,
+    onSelectTab: (AppNavTab) -> Unit,
+    onQuickCheckIn: (String, String?) -> Unit,
+    onClearEconomyToast: () -> Unit,
+    onOpenSomethingDifferent: () -> Unit,
+    onOpenAsk: () -> Unit,
+    onOpenVault: () -> Unit,
+    onAskCare: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val prediction = uiState.todayPrediction
     val phase = prediction?.phase
     val unreadCount = uiState.notifications.count { !it.isRead }
@@ -118,8 +165,8 @@ fun HomeScreen(
             item {
                 com.cyclecare.app.ui.components.FloatingDispatchBanner(
                     notification = urgentNotification,
-                    onOpenInbox = { viewModel.setNotificationCenterOpen(true) },
-                    onDismiss = { viewModel.dismissFloatingBanner(urgentNotification.id) }
+                    onOpenInbox = onOpenNotificationCenter,
+                    onDismiss = { onDismissFloatingBanner(urgentNotification.id) }
                 )
             }
         }
@@ -145,7 +192,7 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodySmall
                         )
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { viewModel.setShowAuthSheet(true) }) {
+                            TextButton(onClick = onShowAuthSheet) {
                                 Text("Sign in again")
                             }
                         }
@@ -195,7 +242,7 @@ fun HomeScreen(
                         }
                     }) {
                         IconButton(
-                            onClick = { viewModel.setNotificationCenterOpen(true) },
+                            onClick = onOpenNotificationCenter,
                             modifier = Modifier.size(48.dp).testTag("notification_bell_button")
                         ) {
                             Icon(
@@ -228,7 +275,7 @@ fun HomeScreen(
                     .clickable(
                         role = androidx.compose.ui.semantics.Role.Button,
                         onClickLabel = "Open daily log"
-                    ) { viewModel.openTrackForDate(uiState.currentDate) }
+                    ) { onOpenTrackForDate(uiState.currentDate) }
                     .testTag("home_daily_log_entry"),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
             ) {
@@ -297,7 +344,7 @@ fun HomeScreen(
                     .clickable(
                         role = androidx.compose.ui.semantics.Role.Button,
                         onClickLabel = "Open cycle calendar"
-                    ) { viewModel.selectTab(AppNavTab.CYCLE) }
+                    ) { onSelectTab(AppNavTab.CYCLE) }
                     .testTag("today_cycle_snapshot"),
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow
@@ -333,7 +380,7 @@ fun HomeScreen(
                         periodDuration = uiState.settings.periodDuration,
                         daysUntilPeriod = uiState.daysUntilNextPeriod,
                         modifier = Modifier.size(228.dp),
-                        onClick = { viewModel.selectTab(AppNavTab.CYCLE) }
+                        onClick = { onSelectTab(AppNavTab.CYCLE) }
                     )
                     Text(
                         text = when {
@@ -415,7 +462,7 @@ fun HomeScreen(
                             FilterChip(
                                 selected = selectedMood == mood.name,
                                 onClick = {
-                                    viewModel.quickCheckIn(mood.name, todayLog?.energyLevel)
+                                    onQuickCheckIn(mood.name, todayLog?.energyLevel)
                                 },
                                 label = { Text("${mood.emoji} ${mood.displayName}") },
                                 modifier = Modifier.height(48.dp)
@@ -442,7 +489,7 @@ fun HomeScreen(
                                     text = "Dismiss",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.clickable { viewModel.clearEconomyToast() }
+                                    modifier = Modifier.clickable { onClearEconomyToast() }
                                 )
                             }
                         }
@@ -452,11 +499,11 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(onClick = { viewModel.openSomethingDifferentSheet() }) {
+                        TextButton(onClick = onOpenSomethingDifferent) {
                             Text("Something feels different?")
                         }
                         TextButton(onClick = {
-                            viewModel.openTrackForDate(uiState.currentDate)
+                            onOpenTrackForDate(uiState.currentDate)
                         }) {
                             Text("Add details")
                         }
@@ -479,7 +526,7 @@ fun HomeScreen(
                     Text("A NOTE FOR TODAY", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     Text(headline, style = MaterialTheme.typography.titleMedium)
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { viewModel.openAsk() }) {
+                    TextButton(onClick = onOpenAsk) {
                         Text("Explore in Ask")
                     }
                 }
@@ -492,7 +539,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
-                    .clickable { viewModel.setVaultOpen(true) }
+                    .clickable { onOpenVault() }
                     .testTag("open_vault_coin_pill"),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -575,7 +622,7 @@ fun HomeScreen(
                                 }
                             }
                         }
-                        TextButton(onClick = { viewModel.selectTab(AppNavTab.ATELIER) }) {
+                        TextButton(onClick = { onSelectTab(AppNavTab.ATELIER) }) {
                             Text("View Atelier")
                         }
                     }
@@ -631,7 +678,7 @@ fun HomeScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showCommunityCirclesDialog = false
-                    viewModel.setVaultOpen(true)
+                    onOpenVault()
                 }) {
                     Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) "See access options" else "Open Rewards")
                 }
@@ -655,7 +702,7 @@ fun HomeScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showPlansDialog = false
-                    viewModel.setVaultOpen(true)
+                    onOpenVault()
                 }) { Text("Open Rewards") }
             },
             dismissButton = { TextButton(onClick = { showPlansDialog = false }) { Text("Not now") } }
@@ -685,8 +732,7 @@ fun HomeScreen(
                         val question = premiumChatPrompt.trim()
                         premiumChatPrompt = ""
                         showPremiumChatDialog = false
-                        viewModel.openAsk()
-                        viewModel.consultCare(question, includeFullContext = true)
+                        onAskCare(question)
                     }
                 ) { Text("Ask CycleCare") }
             },
