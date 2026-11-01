@@ -774,7 +774,7 @@ fun SettingsScreenContent(
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = "Off by default. Tied to this account; revoke anytime.",
+                                    text = "Off by default. Allow from the Ask tab after reviewing what is shared; revoke anytime here.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

@@ -723,10 +723,11 @@ class CycleCareViewModel(
         // Compatibility path for existing callers. The care UI uses the explicit
         // provider mutation below and never infers consent from server selection.
         if (enabled) {
-            // Route through the manifest + server-receipt flow. A local-only
-            // aggregate grant would hide the care consent card while no provider
-            // has a current receipt, stranding online answers in fail-closed.
-            enableAiProcessingForAllProviders()
+            // Grant nothing from Settings: consent requires the Ask tab card,
+            // where the sharing description is shown before any processor
+            // receipt exists. Keep the switch off until that flow completes.
+            _uiState.value = _uiState.value.copy(
+                careSavedReviewMessage = "Allow expert answers from the Ask tab, where what gets shared is described first. This switch stays off until then.")
         } else {
             // Compatibility callers (including cloud-health deletion) must
             // revoke provider receipts as well as the aggregate UI switch.
