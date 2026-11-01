@@ -98,7 +98,7 @@ fun CycleScreenContent(
             .statusBarsPadding()
             .testTag("cycle_screen_content")
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 92.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {

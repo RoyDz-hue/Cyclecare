@@ -96,7 +96,8 @@ import com.cyclecare.app.ui.screens.MpesaStkPushDialog
 import com.cyclecare.app.ui.screens.OnboardingScreen
 import com.cyclecare.app.ui.screens.SettingsScreen
 import com.cyclecare.app.ui.screens.SomethingDifferentSheet
-import com.cyclecare.app.ui.screens.SpaceScreen
+import com.cyclecare.app.ui.screens.AtelierScreen
+import com.cyclecare.app.ui.screens.GuidedChatsScreen
 import com.cyclecare.app.ui.screens.TrackScreen
 import com.cyclecare.app.ui.screens.VaultEconomyScreen
 import com.cyclecare.app.ui.theme.CycleCareTheme
@@ -378,14 +379,31 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                                 uiState = uiState,
                                 logsMap = logsMap
                             )
-                            AppNavTab.ATELIER -> SpaceScreen(
-                                viewModel = viewModel,
-                                uiState = uiState,
-                                initialTab = 1
+                            // Hub owns the coins/artifacts/store section; Space owns the
+                            // community circles. They are separate screens now - the old
+                            // shared SpaceScreen showed both sections' tabs in both places.
+                            AppNavTab.ATELIER -> AtelierScreen(
+                                profile = uiState.economyProfile,
+                                onClaimCoins = { viewModel.claimCoinsManual() },
+                                onTransferCoins = { recipient, amount -> viewModel.transferCoins(recipient, amount) },
+                                onUnlockItem = { item -> viewModel.unlockArtifact(item) },
+                                onEquipItem = { item -> viewModel.equipItem(item) },
+                                onPurchasePackage = { pkg -> viewModel.openMpesaDialog(pkg) },
+                                onUpgradeTier = { tier -> viewModel.upgradeEconomyTier(tier) },
+                                guidedChatsRepository = viewModel.guidedChatsRepo,
+                                onNavigateBack = { viewModel.selectTab(AppNavTab.TODAY) },
+                                isAdmin = uiState.isAdmin,
+                                communityGuidesService = viewModel.communityGuidesService,
+                                embedded = true
                             )
-                            AppNavTab.SPACE -> SpaceScreen(
-                                viewModel = viewModel,
-                                uiState = uiState
+                            AppNavTab.SPACE -> GuidedChatsScreen(
+                                profile = uiState.economyProfile,
+                                repository = viewModel.guidedChatsRepo,
+                                onNavigateBack = { viewModel.selectTab(AppNavTab.TODAY) },
+                                onUpgradeTierClicked = { tier -> viewModel.upgradeEconomyTier(tier) },
+                                isAdmin = uiState.isAdmin,
+                                communityGuidesService = viewModel.communityGuidesService,
+                                embedded = true
                             )
                         }
                     }

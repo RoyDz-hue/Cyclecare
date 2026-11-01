@@ -166,7 +166,7 @@ fun TrackScreenContent(
     Column(modifier = modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         LazyColumn(
             modifier = Modifier.weight(1f).testTag("track_screen_content"),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 92.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {

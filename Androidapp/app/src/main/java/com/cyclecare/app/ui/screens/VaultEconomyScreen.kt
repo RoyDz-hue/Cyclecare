@@ -163,7 +163,7 @@ fun VaultEconomyScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
                         Text(
-                            text = "Atelier & Rewards",
+                            text = "Hub",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
@@ -194,6 +194,9 @@ fun VaultEconomyScreen(
                 .padding(innerPadding)
                 .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
                 .padding(horizontal = 16.dp),
+            // Bottom clearance for the floating Ask bubble so every action
+            // (including Claim Daily Coins) can scroll fully clear of it.
+            contentPadding = PaddingValues(bottom = 92.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Card 1: Balance & Mining Hub

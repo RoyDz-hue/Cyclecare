@@ -104,7 +104,7 @@ fun CareScreen(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 12.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 92.dp)
         ) {
             if (!uiState.isAiSharingAllowed && !aiConsentDismissed) {
                 item(key = "ai_consent") {
