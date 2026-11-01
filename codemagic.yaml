@@ -8,6 +8,25 @@ workflows:
         - $HOME/.gradle/caches
         - $HOME/.gradle/wrapper
     scripts:
+      - name: Route org.robolectric via Google-hosted Maven Central mirror
+        script: |
+          set -e
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+          settingsEvaluated { settings ->
+              settings.dependencyResolutionManagement.repositories {
+                  exclusiveContent {
+                      forRepository {
+                          maven {
+                              name = 'GoogleCloudStorageMavenCentralMirror'
+                              url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                          }
+                      }
+                      filter { includeGroup('org.robolectric') }
+                  }
+              }
+          }
+          GRADLE
       - name: Targeted unit tests (44 methods, 6 classes)
         script: |
           set -e
