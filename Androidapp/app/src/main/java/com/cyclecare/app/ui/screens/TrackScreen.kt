@@ -83,7 +83,7 @@ fun TrackScreen(
     TrackScreenContent(
         uiState = uiState,
         currentLog = currentLog,
-        onSelectDate = viewModel::selectDate,
+        onSelectDate = onSelectDate,
         onSaveDayLog = viewModel::saveDayLog,
         modifier = modifier
     )
@@ -211,7 +211,7 @@ fun TrackScreenContent(
                 HorizontalWeekDateStrip(
                     selectedDate = selectedDate,
                     todayDate = uiState.currentDate,
-                    onSelectDate = viewModel::selectDate
+                    onSelectDate = onSelectDate
                 )
             }
 

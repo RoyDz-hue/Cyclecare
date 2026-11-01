@@ -76,7 +76,10 @@ fun CareScreen(
         onEnableAiProcessing = viewModel::enableAiProcessingForAllProviders,
         onRefreshAiManifest = viewModel::refreshAiProcessorManifest,
         onGenerateCareImage = viewModel::generateCareImage,
-        onOpenVault = { onOpenVault() },
+        onOpenVault = { viewModel.setVaultOpen(true) },
+        onClearChatHistory = viewModel::clearCareChatHistory,
+        onCancelCareLog = viewModel::cancelCareLog,
+        onConfirmCareLog = viewModel::confirmCareLog,
         modifier = modifier
     )
 }
@@ -91,6 +94,9 @@ fun CareScreenContent(
     onRefreshAiManifest: () -> Unit,
     onGenerateCareImage: (CareImageStyle, String) -> Unit,
     onOpenVault: () -> Unit,
+    onClearChatHistory: () -> Unit,
+    onCancelCareLog: () -> Unit,
+    onConfirmCareLog: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var queryText by remember(uiState.localDataOwnerKey) { mutableStateOf("") }
@@ -120,7 +126,7 @@ fun CareScreenContent(
     ) {
         CareHeader(
             uiState = uiState,
-            onClear = viewModel::clearCareChatHistory,
+            onClear = onClearChatHistory,
             onCreateImage = { showImageDialog = true }
         )
 
@@ -177,8 +183,8 @@ fun CareScreenContent(
                         onEditChange = { editRawText = it.take(1200) },
                         onCancelEdit = { editingDraft = false },
                         onApplyEdit = { onEditCareLog(editRawText.trim()); editingDraft = false },
-                        onCancel = viewModel::cancelCareLog,
-                        onConfirm = viewModel::confirmCareLog
+                        onCancel = onCancelCareLog,
+                        onConfirm = onConfirmCareLog
                     )
                 }
             }
