@@ -595,10 +595,12 @@ internal fun AskFloatingBubble(onClick: () -> Unit, persistPosition: Boolean = t
         val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(minY)
         var offsetX by remember { mutableFloatStateOf(prefs?.getFloat("x", Float.NaN) ?: Float.NaN) }
         var offsetY by remember { mutableFloatStateOf(prefs?.getFloat("y", Float.NaN) ?: Float.NaN) }
-        // Default rest: half-docked on the right edge (a peek handle), so the
-        // bubble's initial position never covers readable text or tappable
-        // actions. Dragging pulls it out and a dragged position persists.
-        val peekX = constraints.maxWidth.toFloat() - bubblePx / 2f
+        // Default rest: docked on the right edge with 48dp of the 56dp circle
+        // visible (a peek handle), so the bubble's initial position never covers
+        // readable text or tappable actions while keeping a full-size touch
+        // target. Dragging pulls it out and a dragged position persists.
+        val minVisiblePx = with(density) { 48.dp.toPx() }
+        val peekX = constraints.maxWidth.toFloat() - minVisiblePx
         val x = if (offsetX.isNaN()) peekX else offsetX.coerceIn(marginPx, maxX)
         val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(minY, maxY)
 
