@@ -91,6 +91,47 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    SettingsScreenContent(
+        uiState = uiState,
+        onNavigateBack = onNavigateBack,
+        onLoadSyncConflicts = { viewModel.loadSyncConflicts() },
+        onBuildDataExportPdf = { viewModel.buildDataExportPdf() },
+        onShowAuthSheet = { viewModel.setShowAuthSheet(true) },
+        onSignOut = { viewModel.signOut() },
+        onOpenVault = { viewModel.setVaultOpen(true) },
+        onUpdateSettings = { viewModel.updateSettings(it) },
+        onUpdateTonePreference = { viewModel.updateTonePreference(it) },
+        onSetSoundEnabled = { viewModel.setSoundEnabled(it) },
+        onSetPinProtectionEnabled = { viewModel.setPinProtectionEnabled(it) },
+        onSaveQuickUnlockPin = { viewModel.saveQuickUnlockPin(it) },
+        onSetFingerprintProtectionEnabled = { viewModel.setFingerprintProtectionEnabled(it) },
+        onSetAiSharingAllowed = { viewModel.setAiSharingAllowed(it) },
+        onEraseAllData = { viewModel.eraseAllDataUnified() },
+        onResolveSyncConflict = { recordId, keepLocal -> viewModel.resolveSyncConflict(recordId, keepLocal) },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun SettingsScreenContent(
+    uiState: CycleUiState,
+    onNavigateBack: () -> Unit,
+    onLoadSyncConflicts: () -> Unit,
+    onBuildDataExportPdf: () -> ByteArray,
+    onShowAuthSheet: () -> Unit,
+    onSignOut: () -> Unit,
+    onOpenVault: () -> Unit,
+    onUpdateSettings: (CycleSettings) -> Unit,
+    onUpdateTonePreference: (UserTonePreference) -> Unit,
+    onSetSoundEnabled: (Boolean) -> Unit,
+    onSetPinProtectionEnabled: (Boolean) -> Unit,
+    onSaveQuickUnlockPin: (String) -> Unit,
+    onSetFingerprintProtectionEnabled: (Boolean) -> Unit,
+    onSetAiSharingAllowed: (Boolean) -> Unit,
+    onEraseAllData: () -> Unit,
+    onResolveSyncConflict: (String, Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val settings = uiState.settings
     val cycleLengthChoice = uiState.onboardingProfile?.cycleLengthOption?.trim()?.lowercase().orEmpty()
     val cycleLengthIsSet = cycleLengthChoice.isNotBlank() && cycleLengthChoice != "unknown" &&
@@ -108,7 +149,7 @@ fun SettingsScreen(
     LaunchedEffect(uiState.localDataOwnerKey) {
         selectedConflict = null
         selectedResolution = null
-        viewModel.loadSyncConflicts()
+        onLoadSyncConflicts()
     }
     val exportScope = androidx.compose.runtime.rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(
@@ -119,7 +160,7 @@ fun SettingsScreen(
             // page rendering expensive enough to freeze the screen.
             exportScope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 val exported = runCatching {
-                    val bytes = viewModel.buildDataExportPdf()
+                    val bytes = onBuildDataExportPdf()
                     val stream = context.contentResolver.openOutputStream(uri) ?: error("No file stream")
                     stream.use { it.write(bytes) }
                 }
@@ -223,7 +264,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(14.dp))
 
                             Button(
-                                onClick = { viewModel.setShowAuthSheet(true) },
+                                onClick = { onShowAuthSheet() },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(48.dp)
@@ -287,7 +328,7 @@ fun SettingsScreen(
                             }
 
                             TextButton(
-                                onClick = { viewModel.signOut() },
+                                onClick = { onSignOut() },
                                 modifier = Modifier.testTag("sign_out_button")
                             ) {
                                 Text(
@@ -389,7 +430,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable {
                             onNavigateBack()
-                            viewModel.setVaultOpen(true)
+                            onOpenVault()
                         }
                         .testTag("open_vault_from_settings_card")
                 ) {
@@ -448,12 +489,12 @@ fun SettingsScreen(
                             valueText = if (cycleLengthIsSet) "${settings.averageCycleLength} days" else "Not set",
                             onDecrease = {
                                 if (settings.averageCycleLength > 21) {
-                                    viewModel.updateSettings(settings.copy(averageCycleLength = settings.averageCycleLength - 1))
+                                    onUpdateSettings(settings.copy(averageCycleLength = settings.averageCycleLength - 1))
                                 }
                             },
                             onIncrease = {
                                 if (settings.averageCycleLength < 45) {
-                                    viewModel.updateSettings(settings.copy(averageCycleLength = settings.averageCycleLength + 1))
+                                    onUpdateSettings(settings.copy(averageCycleLength = settings.averageCycleLength + 1))
                                 }
                             }
                         )
@@ -466,12 +507,12 @@ fun SettingsScreen(
                             valueText = "${settings.periodDuration} days",
                             onDecrease = {
                                 if (settings.periodDuration > 2) {
-                                    viewModel.updateSettings(settings.copy(periodDuration = settings.periodDuration - 1))
+                                    onUpdateSettings(settings.copy(periodDuration = settings.periodDuration - 1))
                                 }
                             },
                             onIncrease = {
                                 if (settings.periodDuration < 10) {
-                                    viewModel.updateSettings(settings.copy(periodDuration = settings.periodDuration + 1))
+                                    onUpdateSettings(settings.copy(periodDuration = settings.periodDuration + 1))
                                 }
                             }
                         )
@@ -511,7 +552,7 @@ fun SettingsScreen(
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                                     .then(if (isSelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier)
-                                    .clickable { viewModel.updateTonePreference(tone) }
+                                    .clickable { onUpdateTonePreference(tone) }
                                     .padding(horizontal = 14.dp, vertical = 10.dp)
                             ) {
                                 Column {
@@ -562,7 +603,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = uiState.isSoundEnabled,
                                 onCheckedChange = { enabled ->
-                                    viewModel.setSoundEnabled(enabled)
+                                    onSetSoundEnabled(enabled)
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
@@ -600,7 +641,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = uiState.isPinEnabled,
                                 onCheckedChange = { enabled ->
-                                    viewModel.setPinProtectionEnabled(enabled)
+                                    onSetPinProtectionEnabled(enabled)
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
@@ -624,7 +665,7 @@ fun SettingsScreen(
                             Button(
                                 onClick = {
                                     if (isCompletePin(tempPin)) {
-                                        viewModel.saveQuickUnlockPin(tempPin)
+                                        onSaveQuickUnlockPin(tempPin)
                                         tempPin = ""
                                     }
                                 },
@@ -655,7 +696,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = uiState.isFingerprintEnabled,
                                 onCheckedChange = { enabled ->
-                                    viewModel.setFingerprintProtectionEnabled(enabled)
+                                    onSetFingerprintProtectionEnabled(enabled)
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
@@ -697,7 +738,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = settings.isDiscreetNotificationMode,
                                 onCheckedChange = { isDiscreet ->
-                                    viewModel.updateSettings(settings.copy(isDiscreetNotificationMode = isDiscreet))
+                                    onUpdateSettings(settings.copy(isDiscreetNotificationMode = isDiscreet))
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
@@ -732,7 +773,7 @@ fun SettingsScreen(
                             }
                             Switch(
                                 checked = uiState.isAiSharingAllowed,
-                                onCheckedChange = { enabled -> viewModel.setAiSharingAllowed(enabled) },
+                                onCheckedChange = { enabled -> onSetAiSharingAllowed(enabled) },
                                 modifier = Modifier.testTag("settings_ai_processing_switch"),
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
@@ -833,7 +874,7 @@ fun SettingsScreen(
                     onClick = {
                         showUnifiedEraseDialog = false
                         onNavigateBack()
-                        viewModel.eraseAllDataUnified()
+                        onEraseAllData()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
@@ -869,7 +910,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.resolveSyncConflict(conflict.recordId, keepLocal)
+                        onResolveSyncConflict(conflict.recordId, keepLocal)
                         selectedConflict = null; selectedResolution = null
                     },
                     enabled = !uiState.isResolvingSyncConflict
