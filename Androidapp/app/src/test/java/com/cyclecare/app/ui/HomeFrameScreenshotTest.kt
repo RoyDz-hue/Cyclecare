@@ -78,7 +78,17 @@ private val urgentSecurityState = homeBaseState(com.cyclecare.app.data.economy.U
     )
 )
 
-private val premiumCalmState = homeBaseState(com.cyclecare.app.data.economy.UserEconomyTier.PREMIUM)
+private val premiumCalmState = homeBaseState(com.cyclecare.app.data.economy.UserEconomyTier.PREMIUM).copy(
+    todayAttentionItem = TodayAttentionItem(
+        id = "a2",
+        category = "Pattern",
+        headline = "Your cramps often ease after day two",
+        message = "This pattern showed up across your last three logged cycles.",
+        whyThisAppeared = "From your own logged symptoms, not general statistics.",
+        careSuggestion = "Noting intensity each day keeps this pattern accurate.",
+        isUrgent = false
+    )
+)
 
 private fun Paparazzi.renderHome(state: CycleUiState, dark: Boolean) {
     snapshot {
@@ -116,6 +126,32 @@ class HomeFrameScreenshotTest {
 
     @Test
     fun homeDarkTheme() = paparazzi.renderHome(premiumCalmState, dark = true)
+
+    @Test
+    fun homeScrolledToLowerCards() {
+        paparazzi.snapshot {
+            CycleCareTheme(darkTheme = false, dynamicColor = false) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    HomeScreenContent(
+                        uiState = premiumCalmState,
+                        todayLog = null,
+                        onOpenSettings = {},
+                        onOpenNotificationCenter = {},
+                        onDismissFloatingBanner = {},
+                        onShowAuthSheet = {},
+                        onOpenTrackForDate = {},
+                        onSelectTab = {},
+                        onQuickCheckIn = { _, _ -> },
+                        onClearEconomyToast = {},
+                        onOpenSomethingDifferent = {},
+                        onOpenAsk = {},
+                        onOpenVault = {},
+                        listState = androidx.compose.foundation.lazy.LazyListState(firstVisibleItemIndex = 3)
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** Same frame at 1.3x font scale: catches text overflow and clipped chips. */

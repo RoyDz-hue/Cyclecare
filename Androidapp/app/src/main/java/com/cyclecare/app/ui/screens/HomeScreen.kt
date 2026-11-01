@@ -117,7 +117,8 @@ fun HomeScreenContent(
     onOpenSomethingDifferent: () -> Unit,
     onOpenAsk: () -> Unit,
     onOpenVault: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
 ) {
     val prediction = uiState.todayPrediction
     val phase = prediction?.phase
@@ -143,12 +144,15 @@ fun HomeScreenContent(
 
     Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .testTag("home_screen_content")
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        // Bottom clearance for the global floating Ask bubble (56dp + margins)
+        // so it never parks on top of the last card's actions by default.
+        contentPadding = PaddingValues(top = 12.dp, bottom = 92.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         if (urgentNotification != null) {
@@ -453,8 +457,10 @@ fun HomeScreenContent(
             }
         }
 
-        // Priority Insight Note Card
-        item {
+        // Priority Insight Note Card - skipped when the top item is plain cycle
+        // status, which the dial card already states once (with its caveat).
+        val showInsightNote = uiState.todayAttentionItem?.category != "Cycle Status"
+        if (showInsightNote) item {
             val attention = uiState.todayAttentionItem
             val headline = attention?.headline ?: phase?.subtitle ?: "Your own rhythm"
             val message = attention?.message ?: phase?.description ?: "Add a few cycle dates to make your estimates more personal."
