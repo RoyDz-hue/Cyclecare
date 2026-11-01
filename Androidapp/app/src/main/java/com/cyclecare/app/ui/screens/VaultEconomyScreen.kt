@@ -213,8 +213,6 @@ fun VaultEconomyScreen(
                                         )
                                     }
                                 }
-
-                                }
                             }
                             // Tier & Multiplier Badge, with the page help
                             // action beside it in genuinely reserved
