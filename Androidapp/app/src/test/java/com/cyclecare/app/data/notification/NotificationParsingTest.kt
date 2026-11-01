@@ -1,7 +1,6 @@
 package com.cyclecare.app.data.notification
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -33,8 +32,13 @@ class NotificationParsingTest {
     }
 
     @Test
-    fun `fractional seconds are dropped`() {
-        assertEquals(utcMillis("2026-10-31T08:15:00"), parseIsoTimestamp("2026-10-31T08:15:00.123456+00:00"))
+    fun `fractional seconds keep millisecond precision for same-second ordering`() {
+        val first = parseIsoTimestamp("2026-10-31T08:15:00.123456+00:00")
+        val second = parseIsoTimestamp("2026-10-31T08:15:00.5Z")
+        assertEquals(utcMillis("2026-10-31T08:15:00") + 123, first)
+        assertEquals(utcMillis("2026-10-31T08:15:00") + 500, second)
+        // The later-created row must sort after the earlier one.
+        assertEquals(true, second > first)
     }
 
     @Test
@@ -49,25 +53,36 @@ class NotificationParsingTest {
     }
 
     @Test
-    fun `invalid input falls back to now`() {
-        val before = System.currentTimeMillis()
-        val parsed = parseIsoTimestamp("not-a-timestamp")
-        assertTrue(parsed in before..System.currentTimeMillis())
+    fun `impossible dates are rejected not rolled over`() {
+        assertEquals(0L, parseIsoTimestamp("2026-13-01T08:15:00Z"))
+        assertEquals(0L, parseIsoTimestamp("2026-02-30T08:15:00Z"))
+        assertEquals(0L, parseIsoTimestamp("2026-10-31T25:15:00Z"))
     }
 
     @Test
-    fun `null and blank fall back to now`() {
-        val before = System.currentTimeMillis()
-        assertTrue(parseIsoTimestamp(null) >= before)
-        assertTrue(parseIsoTimestamp("") >= before)
-        assertTrue(parseIsoTimestamp("   ") >= before)
+    fun `trailing garbage and malformed input are rejected`() {
+        assertEquals(0L, parseIsoTimestamp("2026-10-31T08:15:00Zjunk"))
+        assertEquals(0L, parseIsoTimestamp("not-a-timestamp"))
+        assertEquals(0L, parseIsoTimestamp("2026-10-31 08:15:00"))
     }
 
     @Test
-    fun `absent or blank priority is never urgent`() {
+    fun `null blank and invalid sort oldest instead of masquerading as fresh`() {
+        assertEquals(0L, parseIsoTimestamp(null))
+        assertEquals(0L, parseIsoTimestamp(""))
+        assertEquals(0L, parseIsoTimestamp("   "))
+        // 0 is before any real notification timestamp, so malformed rows sink.
+        assertEquals(true, parseIsoTimestamp("garbage") < parseIsoTimestamp("2020-01-01T00:00:00Z"))
+    }
+
+    @Test
+    fun `absent blank or unknown priority is never urgent`() {
         assertEquals("NORMAL", explicitPriorityOrNormal(null))
         assertEquals("NORMAL", explicitPriorityOrNormal(""))
         assertEquals("NORMAL", explicitPriorityOrNormal("   "))
+        assertEquals("NORMAL", explicitPriorityOrNormal("CRITICAL"))
+        assertEquals("NORMAL", explicitPriorityOrNormal("LOW"))
+        assertEquals("NORMAL", explicitPriorityOrNormal("urgentish"))
     }
 
     @Test

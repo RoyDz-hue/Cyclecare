@@ -178,28 +178,39 @@ class SupabaseNotificationService(
 
 }
 
-/** Urgency must come from an explicit sender-set priority; a missing or blank
- * value must never render as urgent. */
+/** Urgency must come from an explicit sender-set priority; a missing, blank or
+ * unrecognized value must never render as urgent. */
 internal fun explicitPriorityOrNormal(raw: String?): String =
-    raw?.trim()?.takeIf { it.isNotEmpty() }?.uppercase(Locale.US) ?: "NORMAL"
+    when (raw?.trim()?.uppercase(Locale.US)) {
+        "URGENT" -> "URGENT"
+        "HIGH" -> "HIGH"
+        else -> "NORMAL"
+    }
 
 private val ISO_TIMESTAMP_PATTERN =
-    Regex("^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$")
+    Regex("^(\\d{4}-\\d{2}-\\d{2})T(\\d{2}:\\d{2}:\\d{2})(?:\\.(\\d+))?(Z|[+-]\\d{2}:?\\d{2})?$")
 
 /**
  * Parses Supabase timestamps deterministically. A string carrying its own
  * offset (Z or +/-hh:mm) is honored; a bare timestamp is server UTC.
- * Fractional seconds are dropped. Unparseable input falls back to now.
+ * Fractional seconds are kept to millisecond precision because notifications
+ * created within the same second must still order correctly. Strict parsing:
+ * impossible dates and trailing garbage are rejected. Unparseable input
+ * returns 0 so a malformed row sorts oldest instead of masquerading as fresh.
  */
 internal fun parseIsoTimestamp(isoString: String?): Long {
-    if (isoString.isNullOrBlank()) return System.currentTimeMillis()
+    if (isoString.isNullOrBlank()) return 0L
     return runCatching {
-        val match = ISO_TIMESTAMP_PATTERN.matchEntire(isoString.trim()) ?: return System.currentTimeMillis()
+        val match = ISO_TIMESTAMP_PATTERN.matchEntire(isoString.trim()) ?: return 0L
         val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
         format.timeZone = TimeZone.getTimeZone("UTC")
-        var time = format.parse("${match.groupValues[1]}T${match.groupValues[2]}")?.time
-            ?: return System.currentTimeMillis()
-        val zone = match.groupValues[3]
+        format.isLenient = false
+        var time = format.parse("${match.groupValues[1]}T${match.groupValues[2]}")?.time ?: return 0L
+        val fraction = match.groupValues[3]
+        if (fraction.isNotEmpty()) {
+            time += fraction.take(3).padEnd(3, '0').toLong()
+        }
+        val zone = match.groupValues[4]
         if (zone.isNotEmpty() && zone != "Z") {
             val sign = if (zone.startsWith("-")) -1 else 1
             val digits = zone.drop(1).replace(":", "")
@@ -207,5 +218,5 @@ internal fun parseIsoTimestamp(isoString: String?): Long {
             time -= offsetMs
         }
         time
-    }.getOrElse { System.currentTimeMillis() }
+    }.getOrElse { 0L }
 }
