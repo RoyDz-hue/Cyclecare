@@ -86,7 +86,8 @@ workflows:
           set -e
           cd Androidapp
           chmod +x gradlew
-          export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          "$JAVA_HOME/bin/java" -version
           ./gradlew recordPaparazziDebug -Ppaparazzi \
             --tests "com.cyclecare.app.ui.ScreensScreenshotTest.careEntryState" \
             --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
