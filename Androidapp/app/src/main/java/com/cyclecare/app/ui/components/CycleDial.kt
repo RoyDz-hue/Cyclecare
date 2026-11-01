@@ -166,7 +166,7 @@ fun CycleDial(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    if (prediction == null) "No estimate yet" else "Period estimate",
+                    if (prediction == null) "No estimate yet" else "Next period",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
