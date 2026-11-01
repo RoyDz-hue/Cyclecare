@@ -32,7 +32,7 @@ android {
     applicationId = "com.cyclecare.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 5
+    versionCode = 6
     versionName = "1.1"
     buildConfigField("String", "DEBUG_BRIDGE_URL", "\"\"")
 

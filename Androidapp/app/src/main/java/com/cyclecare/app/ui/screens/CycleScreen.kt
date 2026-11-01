@@ -93,12 +93,13 @@ fun CycleScreenContent(
     val monthFormatter = DateTimeFormatter.ofPattern("MMMM yyyy")
 
     LazyColumn(
+        // No statusBarsPadding here: the app shell already applies the top
+        // inset once; a second one was a visible dead band eating the page.
         modifier = modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .testTag("cycle_screen_content")
             .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 92.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {

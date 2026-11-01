@@ -103,7 +103,6 @@ fun VaultEconomyScreen(
 
     var selectedTabIndex by remember { mutableIntStateOf(0) } // 0 = Artifacts, 1 = Frames & Themes, 2 = Coin Store
     var showTransferDialog by remember { mutableStateOf(false) }
-    var showGuidedChatsScreen by remember { mutableStateOf(false) }
     var showHowItWorksDialog by remember { mutableStateOf(false) }
 
     var selectedArtifactForDetail by remember {
@@ -111,43 +110,9 @@ fun VaultEconomyScreen(
     }
     var itemForInsufficientCoins by remember { mutableStateOf<EconomyItem?>(null) }
 
-    if (showGuidedChatsScreen) {
-        GuidedChatsScreen(
-            profile = profile,
-            repository = guidedChatsRepository,
-            onNavigateBack = { showGuidedChatsScreen = false },
-            onUpgradeTierClicked = { tier ->
-                onUpgradeTier(tier)
-            },
-            isAdmin = isAdmin,
-            communityGuidesService = communityGuidesService,
-            embedded = embedded
-        )
-        return
-    }
-
     Scaffold(
         topBar = {
-            if (embedded) {
-                // Inside the Space tab the tab row already names this section; keep only the help action.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    IconButton(
-                        onClick = { showHowItWorksDialog = true },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.HelpOutline,
-                            contentDescription = "How it works",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            } else {
+            if (!embedded) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -188,15 +153,15 @@ fun VaultEconomyScreen(
             }
         }
     ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
                 .padding(horizontal = 16.dp),
             // Bottom clearance for the floating Ask bubble so every action
             // (including Claim Daily Coins) can scroll fully clear of it.
-            contentPadding = PaddingValues(bottom = 92.dp),
+            contentPadding = PaddingValues(bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Card 1: Balance & Mining Hub
@@ -419,8 +384,9 @@ fun VaultEconomyScreen(
                             ) {
                                 InteractiveArtifact3D(
                                     drawableRes = selectedArtifactForDetail.drawableRes,
-                                    // Expanded, unobstructed viewport (was a cramped 180dp box).
-                                    size = 260.dp,
+                                    // Roomy but proportionate viewport: large enough to
+                                    // appreciate, small enough to leave the page breathing room.
+                                    size = 200.dp,
                                     auraColor = Color(selectedArtifactForDetail.auraColorHex),
                                     isInteractive = true,
                                     enableIdleRotation = true,
@@ -542,45 +508,6 @@ fun VaultEconomyScreen(
                     }
                 }
 
-                // Community Circles Shortcut Banner
-                item {
-                    Card(
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showGuidedChatsScreen = true }
-                            .testTag("open_guided_circles_banner")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(18.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Community Circles topic previews",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                                )
-                                Text(
-                                    text = "Browse guided discussion topics. Live group chat is not connected in this build.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
                 // Subtle Contextual Supporter/Premium Upgrade Card
                 if (profile.tier == UserEconomyTier.FREE && !isAdmin) {
                     item {
@@ -605,7 +532,7 @@ fun VaultEconomyScreen(
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Plans list Circle access; this build currently offers topic previews only, not live group chat.",
+                                        text = "Plans include Circle access. Circles now live in the Space tab.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -812,6 +739,25 @@ fun VaultEconomyScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
+
+        if (embedded) {
+            // Help floats over the page: Hub reads as one full page with a
+            // silent structural parent, not a page framed by a visible strip.
+            IconButton(
+                onClick = { showHowItWorksDialog = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                    contentDescription = "How it works",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
         }
     }
 

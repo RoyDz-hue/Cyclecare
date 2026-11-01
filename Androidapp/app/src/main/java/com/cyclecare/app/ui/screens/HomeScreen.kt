@@ -145,14 +145,15 @@ fun HomeScreenContent(
     Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
+        // No statusBarsPadding here: the app shell already applies the top
+        // inset once; a second one was a visible dead band eating the page.
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .testTag("home_screen_content")
             .padding(horizontal = 20.dp),
         // Bottom clearance for the global floating Ask bubble (56dp + margins)
         // so it never parks on top of the last card's actions by default.
-        contentPadding = PaddingValues(top = 12.dp, bottom = 92.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         if (urgentNotification != null) {

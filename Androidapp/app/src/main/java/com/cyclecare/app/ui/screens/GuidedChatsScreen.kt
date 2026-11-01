@@ -140,7 +140,7 @@ fun GuidedChatsScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
                     // Bottom clearance for the floating Ask bubble.
-                    contentPadding = PaddingValues(bottom = 92.dp),
+                    contentPadding = PaddingValues(bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item {
@@ -289,23 +289,28 @@ fun GuidedChatsScreen(
                             )
                         }
                     }
-                    // Live Messages List
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(if (liveFailed || messages.isEmpty()) 0f else 1f)
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(messages) { msg ->
-                            GuidedMessageRow(
-                                message = msg,
-                                onLongPress = {
-                                    if (!msg.isSelf && msg.remoteId != null && !msg.isFlagged) {
-                                        messagePendingFlag = msg
+                    // Live Messages List. ColumnScope.weight rejects 0f
+                    // ("invalid weight 0.0; must be greater than zero"), so the
+                    // list is composed only when it has visible content; the
+                    // empty and failed states above own the free space.
+                    if (!liveFailed && messages.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(messages) { msg ->
+                                GuidedMessageRow(
+                                    message = msg,
+                                    onLongPress = {
+                                        if (!msg.isSelf && msg.remoteId != null && !msg.isFlagged) {
+                                            messagePendingFlag = msg
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
 
