@@ -67,4 +67,68 @@ class SettingsScreenshotTest {
             }
         }
     }
+
+    @Test
+    fun settingsSecurityPinState() {
+        paparazzi.snapshot {
+            CycleCareTheme(darkTheme = false, dynamicColor = false) {
+                CompositionLocalProvider(LocalActivityResultRegistryOwner provides stubRegistryOwner) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    SettingsScreenContent(
+                        uiState = homeBaseState(UserEconomyTier.FREE).copy(isPinEnabled = true),
+                        listState = androidx.compose.foundation.lazy.LazyListState(firstVisibleItemIndex = 8, firstVisibleItemScrollOffset = 2600),
+                        onNavigateBack = {},
+                        onLoadSyncConflicts = {},
+                        onBuildDataExportPdf = { ByteArray(0) },
+                        onShowAuthSheet = {},
+                        onSignOut = {},
+                        onOpenVault = {},
+                        onUpdateSettings = {},
+                        onUpdateTonePreference = {},
+                        onSetSoundEnabled = {},
+                        onSetPinProtectionEnabled = {},
+                        onSaveQuickUnlockPin = {},
+                        onSetFingerprintProtectionEnabled = {},
+                        onSetAiSharingAllowed = {},
+                        onEraseAllData = {},
+                        onResolveSyncConflict = { _, _ -> },
+                        onTriggerManualSync = {}
+                    )
+                }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun settingsExportAndPrivacyState() {
+        paparazzi.snapshot {
+            CycleCareTheme(darkTheme = false, dynamicColor = false) {
+                CompositionLocalProvider(LocalActivityResultRegistryOwner provides stubRegistryOwner) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    SettingsScreenContent(
+                        uiState = homeBaseState(UserEconomyTier.FREE).copy(isPinEnabled = true),
+                        listState = androidx.compose.foundation.lazy.LazyListState(firstVisibleItemIndex = 8, firstVisibleItemScrollOffset = 5200),
+                        onNavigateBack = {},
+                        onLoadSyncConflicts = {},
+                        onBuildDataExportPdf = { ByteArray(0) },
+                        onShowAuthSheet = {},
+                        onSignOut = {},
+                        onOpenVault = {},
+                        onUpdateSettings = {},
+                        onUpdateTonePreference = {},
+                        onSetSoundEnabled = {},
+                        onSetPinProtectionEnabled = {},
+                        onSaveQuickUnlockPin = {},
+                        onSetFingerprintProtectionEnabled = {},
+                        onSetAiSharingAllowed = {},
+                        onEraseAllData = {},
+                        onResolveSyncConflict = { _, _ -> },
+                        onTriggerManualSync = {}
+                    )
+                }
+                }
+            }
+        }
+    }
 }
