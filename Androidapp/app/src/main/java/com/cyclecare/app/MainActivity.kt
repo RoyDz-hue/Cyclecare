@@ -18,7 +18,11 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBarsWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -563,11 +567,15 @@ private fun AskFloatingBubble(onClick: () -> Unit) {
         val bubblePx = with(density) { 56.dp.toPx() }
         val marginPx = with(density) { 16.dp.toPx() }
         val maxX = (constraints.maxWidth.toFloat() - bubblePx - marginPx).coerceAtLeast(marginPx)
-        val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(marginPx)
+        // Keep the bubble below the status bar: this box starts at the top of the
+        // screen under edge-to-edge, so an unclamped drag can park it under the clock.
+        val statusTopPx = WindowInsets.statusBars.getTop(density).toFloat()
+        val minY = marginPx + statusTopPx
+        val maxY = (constraints.maxHeight.toFloat() - bubblePx - marginPx).coerceAtLeast(minY)
         var offsetX by remember { mutableFloatStateOf(prefs.getFloat("x", Float.NaN)) }
         var offsetY by remember { mutableFloatStateOf(prefs.getFloat("y", Float.NaN)) }
         val x = if (offsetX.isNaN()) maxX else offsetX.coerceIn(marginPx, maxX)
-        val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(marginPx, maxY)
+        val y = if (offsetY.isNaN()) maxY else offsetY.coerceIn(minY, maxY)
 
         Surface(
             modifier = Modifier
@@ -582,7 +590,7 @@ private fun AskFloatingBubble(onClick: () -> Unit) {
                             if (!offsetX.isNaN() && !offsetY.isNaN()) {
                                 prefs.edit()
                                     .putFloat("x", offsetX.coerceIn(marginPx, maxX))
-                                    .putFloat("y", offsetY.coerceIn(marginPx, maxY))
+                                    .putFloat("y", offsetY.coerceIn(minY, maxY))
                                     .apply()
                             }
                         }
@@ -594,7 +602,7 @@ private fun AskFloatingBubble(onClick: () -> Unit) {
                         val curX = if (offsetX.isNaN()) maxX else offsetX
                         val curY = if (offsetY.isNaN()) maxY else offsetY
                         offsetX = (curX + dragAmount.x).coerceIn(marginPx, maxX)
-                        offsetY = (curY + dragAmount.y).coerceIn(marginPx, maxY)
+                        offsetY = (curY + dragAmount.y).coerceIn(minY, maxY)
                     }
                 }
                 .semantics(mergeDescendants = true) {
