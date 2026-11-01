@@ -643,7 +643,7 @@ fun HomeScreenContent(
                 ) {
                     Text(if (uiState.economyProfile.tier == UserEconomyTier.FREE && !uiState.isAdmin) "Learn about Community Circles" else "Open Community Circles")
                 }
-                if (!uiState.isAdmin && uiState.economyProfile.tier == UserEconomyTier.FREE) {
+                if (!uiState.isAdmin) {
                     TextButton(
                         onClick = { showPlansDialog = true },
                         modifier = Modifier.fillMaxWidth().testTag("home_plans_popup_button")
