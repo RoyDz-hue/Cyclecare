@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Groups
@@ -36,7 +37,7 @@ fun SpaceScreen(
 ) {
     var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.surface,
@@ -65,7 +66,8 @@ fun SpaceScreen(
                         onNavigateBack = { /* Stay in Space */ },
                         onUpgradeTierClicked = { tier -> viewModel.upgradeEconomyTier(tier) },
                         isAdmin = uiState.isAdmin,
-                        communityGuidesService = viewModel.communityGuidesService
+                        communityGuidesService = viewModel.communityGuidesService,
+                        embedded = true
                     )
                 }
                 1 -> {
@@ -80,7 +82,8 @@ fun SpaceScreen(
                         guidedChatsRepository = viewModel.guidedChatsRepo,
                         onNavigateBack = { selectedTab = 0 },
                         isAdmin = uiState.isAdmin,
-                        communityGuidesService = viewModel.communityGuidesService
+                        communityGuidesService = viewModel.communityGuidesService,
+                        embedded = true
                     )
                 }
             }

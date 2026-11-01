@@ -83,7 +83,8 @@ fun AtelierScreen(
     guidedChatsRepository: GuidedChatsRepository,
     onNavigateBack: () -> Unit,
     isAdmin: Boolean = false,
-    communityGuidesService: CommunityGuidesService? = null
+    communityGuidesService: CommunityGuidesService? = null,
+    embedded: Boolean = false
 ) {
     VaultEconomyScreen(
         profile = profile,
@@ -96,6 +97,7 @@ fun AtelierScreen(
         guidedChatsRepository = guidedChatsRepository,
         onNavigateBack = onNavigateBack,
         isAdmin = isAdmin,
-        communityGuidesService = communityGuidesService
+        communityGuidesService = communityGuidesService,
+        embedded = embedded
     )
 }

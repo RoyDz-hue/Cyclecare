@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -90,7 +91,7 @@ fun CareScreen(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().imePadding().testTag("care_screen_content")
+        modifier = modifier.fillMaxSize().statusBarsPadding().imePadding().testTag("care_screen_content")
     ) {
         CareHeader(
             uiState = uiState,

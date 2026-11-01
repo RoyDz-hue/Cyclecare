@@ -71,7 +71,8 @@ fun GuidedChatsScreen(
     onNavigateBack: () -> Unit,
     onUpgradeTierClicked: (UserEconomyTier) -> Unit,
     isAdmin: Boolean = false,
-    communityGuidesService: CommunityGuidesService? = null
+    communityGuidesService: CommunityGuidesService? = null,
+    embedded: Boolean = false
 ) {
     var selectedChannelId by remember { mutableStateOf<String?>(null) }
     var channelsVersion by remember { mutableStateOf(0) }
@@ -90,10 +91,13 @@ fun GuidedChatsScreen(
 
     Scaffold(
         topBar = {
+            // Embedded inside the Space tab the tab row names the section, so the
+            // directory level needs no chrome; a compact header remains inside a channel.
+            if (!(embedded && selectedChannelId == null)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
+                    .then(if (embedded) Modifier else Modifier.statusBarsPadding())
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -115,13 +119,14 @@ fun GuidedChatsScreen(
                     )
                 }
             }
+            }
         }
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .navigationBarsPadding()
+                .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
                 .imePadding()
         ) {
             if (selectedChannel == null) {

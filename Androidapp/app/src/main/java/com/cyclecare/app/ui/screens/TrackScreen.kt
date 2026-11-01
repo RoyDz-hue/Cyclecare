@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -142,7 +143,7 @@ fun TrackScreen(
         (if (selectedMucus.isNotBlank()) 1 else 0) +
         (if (selectedOvulationTest != "NONE") 1 else 0)
 
-    Column(modifier = modifier.fillMaxSize().imePadding()) {
+    Column(modifier = modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         LazyColumn(
             modifier = Modifier.weight(1f).testTag("track_screen_content"),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp),

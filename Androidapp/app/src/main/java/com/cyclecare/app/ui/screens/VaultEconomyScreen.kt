@@ -85,7 +85,8 @@ fun VaultEconomyScreen(
     guidedChatsRepository: GuidedChatsRepository,
     onNavigateBack: () -> Unit,
     isAdmin: Boolean = false,
-    communityGuidesService: CommunityGuidesService? = null
+    communityGuidesService: CommunityGuidesService? = null,
+    embedded: Boolean = false
 ) {
     val context = LocalContext.current
     var storePackages by remember { mutableStateOf(com.cyclecare.app.data.economy.RemoteCoinPackages.active(context)) }
@@ -119,13 +120,34 @@ fun VaultEconomyScreen(
                 onUpgradeTier(tier)
             },
             isAdmin = isAdmin,
-            communityGuidesService = communityGuidesService
+            communityGuidesService = communityGuidesService,
+            embedded = embedded
         )
         return
     }
 
     Scaffold(
         topBar = {
+            if (embedded) {
+                // Inside the Space tab the tab row already names this section; keep only the help action.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    IconButton(
+                        onClick = { showHowItWorksDialog = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                            contentDescription = "How it works",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            } else {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -163,13 +185,14 @@ fun VaultEconomyScreen(
                     )
                 }
             }
+            }
         }
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .navigationBarsPadding()
+                .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
