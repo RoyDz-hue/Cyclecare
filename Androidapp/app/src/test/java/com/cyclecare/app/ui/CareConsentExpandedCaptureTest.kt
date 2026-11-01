@@ -31,7 +31,7 @@ import org.robolectric.annotation.LooperMode
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w360dp-h800dp")
-@LooperMode(LooperMode.Mode.PAUSED)
+@LooperMode(LooperMode.Mode.INSTRUMENTATION_DETACHED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class CareConsentExpandedCaptureTest {
 
@@ -89,6 +89,7 @@ class CareConsentExpandedCaptureTest {
         compose.onNodeWithTag("care_ai_policy_GEMINI_google").assertIsDisplayed()
         val out = File("build/outputs/captures/care-consent-expanded.png")
         out.parentFile?.mkdirs()
+        compose.waitForIdle()
         FileOutputStream(out).use { stream ->
             compose.onRoot().captureToImage().asAndroidBitmap()
                 .compress(Bitmap.CompressFormat.PNG, 100, stream)
