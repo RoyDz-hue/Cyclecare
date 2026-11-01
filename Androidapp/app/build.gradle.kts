@@ -3,6 +3,7 @@ plugins {
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
+    alias(libs.plugins.paparazzi)
 }
 
 android {
@@ -160,3 +161,10 @@ dependencies {
   "ksp"(libs.moshi.kotlin.codegen)
 }
 
+
+
+// Paparazzi < 2.0 stable uses Gradle internals that moved in Gradle 9 (AGP 9);
+// Google's AGP-9 migration note requires disabling HTML test reports as the workaround.
+tasks.withType<Test>().configureEach {
+    reports.html.required = false
+}
