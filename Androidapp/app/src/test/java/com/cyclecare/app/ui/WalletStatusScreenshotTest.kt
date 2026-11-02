@@ -37,7 +37,7 @@ class WalletStatusScreenshotTest {
         paparazzi.snapshot {
             CycleCareTheme(darkTheme = true, dynamicColor = false) {
                 Box(modifier = Modifier.background(MaterialTheme.colorScheme.surface).padding(20.dp)) {
-                    WalletBalanceBlock(profile = profile, walletStatus = status, onRetryWallet = {})
+                    WalletBalanceBlock(profile = profile, walletStatus = status, onRetryWallet = {}, enableCoinIdleRotation = false)
                 }
             }
         }

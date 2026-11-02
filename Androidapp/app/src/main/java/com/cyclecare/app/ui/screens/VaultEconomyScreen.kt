@@ -874,13 +874,14 @@ fun VaultEconomyScreen(
 
 /** The Hub/Atelier balance block, extracted so the five wallet states can be
  * rendered and pixel-verified without the full screen's repository wiring.
- * The coin icon renders its static path here: at 34dp an idle rotation adds
- * nothing and the static path is the one snapshot tooling can capture. */
+ * The Hub keeps the coin's idle rotation (the default). Snapshot tooling
+ * passes enableCoinIdleRotation = false so it can capture a stable frame. */
 @Composable
 fun WalletBalanceBlock(
     profile: EconomyProfile,
     walletStatus: com.cyclecare.app.ui.viewmodel.WalletStatus,
-    onRetryWallet: (() -> Unit)? = null
+    onRetryWallet: (() -> Unit)? = null,
+    enableCoinIdleRotation: Boolean = true
 ) {
     Column {
         Text(
@@ -908,7 +909,7 @@ fun WalletBalanceBlock(
                     drawableRes = R.drawable.cycle_coin,
                     size = 34.dp,
                     isInteractive = false,
-                    enableIdleRotation = false
+                    enableIdleRotation = enableCoinIdleRotation
                 )
             }
         }
