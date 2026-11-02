@@ -650,7 +650,7 @@ private fun Step2PrivacyFirst(
                             modifier = Modifier.clickable { onCloudSyncAllowedChange(!isCloudSyncAllowed) }
                         )
                         Text(
-                            text = "Backs up your records safely so they remain protected if you switch devices.",
+                            text = "Online backup is off in this version, so your records stay on this device. Your choice is saved for when backup becomes available.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
