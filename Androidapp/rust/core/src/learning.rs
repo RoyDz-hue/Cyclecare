@@ -5,17 +5,24 @@
 //! and the phase-summary helper, with all thresholds (top-5, top-3,
 //! MIN_PHASE_LOGGED_DAYS=3, MAX_PHASE_SUMMARIES=3) and strings verbatim.
 //!
-//! DEFERRED (documented gap, not silently dropped):
-//! generateClinicianReportText and generateMonthlyTimeline - they need
-//! locale-resolved date formatting ("MMM d, yyyy" / "MMMM yyyy"), where
-//! DateTimeFormatter follows the device default locale. Port next cut with
-//! the locale behavior made explicit.
+//! generateClinicianReportText and generateMonthlyTimeline are ported with
+//! explicit date formatting: the JVM probe (en_US default locale) confirms
+//! "MMM d, yyyy" -> "Nov 2, 2026" and "MMMM yyyy" -> "October 2026" in
+//! English. DateTimeFormatter follows the DEVICE default locale; on a
+//! non-English device the production text differs. Corpus: JVM probe
+//! 2026-11-02, fixtures A-D + TL (locked in tests/learning_report_corpus.rs).
+//!
+//! Source-signature gaps (checked, intentional): synthesizeExplainMyBody's
+//! Kotlin params (settings, logs, query) and generateMonthlyTimeline's
+//! `settings` are unused in the Kotlin bodies, so the Rust signatures drop
+//! them. generateClinicianReportText takes `today` instead of calling
+//! LocalDate.now() so the pure function stays deterministic.
 
 use crate::kotlin_text::{kotlin_trim};
 use crate::cycle_math::{CyclePhase, DayPrediction};
 use crate::pattern_engine::{calculate_phase_for_date, PatternSettings};
 use crate::safety::SafetyLevel;
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 const MIN_PHASE_LOGGED_DAYS: usize = 3;
 const MAX_PHASE_SUMMARIES: usize = 3;
@@ -46,6 +53,8 @@ impl LearningSettings {
 pub struct LearningProfile {
     pub is_completed: bool,
     pub typical_symptoms_csv: String,
+    /// approximatePeriodChoice; report branch checks prefix "APPROXIMATE:".
+    pub approximate_period_choice: String,
 }
 
 /// Log fields this engine reads (verbatim names from CycleDayLog).
@@ -53,8 +62,10 @@ pub struct LearningProfile {
 pub struct LearningLog {
     pub date_string: String,
     pub flow_level: String,
+    pub energy_level: String,
     pub symptoms_csv: String,
     pub pain_intensity: i32,
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,6 +374,196 @@ pub fn generate_doctor_summary(settings: &LearningSettings, logs: &[LearningLog]
 }
 
 /// General education tied to a calendar estimate, never a measured phase.
+fn month_abbrev(m: u32) -> &'static str {
+    match m {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr", 5 => "May", 6 => "Jun",
+        7 => "Jul", 8 => "Aug", 9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec",
+    }
+}
+fn month_full(m: u32) -> &'static str {
+    match m {
+        1 => "January", 2 => "February", 3 => "March", 4 => "April",
+        5 => "May", 6 => "June", 7 => "July", 8 => "August",
+        9 => "September", 10 => "October", 11 => "November", _ => "December",
+    }
+}
+
+/// Kotlin formatCounts: empty -> "None entered"; else count-desc, key-asc,
+/// "Label (n)" joined with ", ".
+fn format_counts(counts: &[(String, i32)]) -> String {
+    if counts.is_empty() {
+        return "None entered".to_string();
+    }
+    let mut v: Vec<(String, i32)> = counts.to_vec();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.iter()
+        .map(|(k, n)| format!("{} ({})", display_label(k), n))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Insertion-ordered counts (Kotlin groupingBy().eachCount() = LinkedHashMap
+/// first-seen order). maxByOrNull picks the FIRST maximal in that order.
+fn counts_first_seen(items: impl Iterator<Item = String>) -> Vec<(String, i32)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+    for it in items {
+        if !counts.contains_key(&it) {
+            order.push(it.clone());
+        }
+        *counts.entry(it).or_insert(0) += 1;
+    }
+    order.into_iter().map(|k| { let n = counts[&k]; (k, n) }).collect()
+}
+
+/// First maximal by count in FIRST-SEEN order (Kotlin Map.maxByOrNull
+/// returns the FIRST maximal; Rust Iterator::max_by returns the LAST, so
+/// iterate in reverse).
+fn first_maximal(counts: &[(String, i32)]) -> Option<&str> {
+    counts.iter().rev().max_by(|a, b| a.1.cmp(&b.1)).map(|(k, _)| k.as_str())
+}
+
+/// Port of generateClinicianReportText (LearningEngine.kt). `today` replaces
+/// LocalDate.now(); date format "MMM d, yyyy" under the probed en_US locale.
+pub fn generate_clinician_report_text(
+    settings: &LearningSettings,
+    logs: &[LearningLog],
+    profile: Option<&LearningProfile>,
+    today: NaiveDate,
+) -> String {
+    let today_str = format!("{} {}, {}", month_abbrev(today.month()), today.day(), today.year());
+    let valid_logs = logs_with_dates(logs);
+    let symptoms = symptom_counts(&valid_logs);
+    let questions = generate_doctor_summary(settings, logs);
+    let date_choice = profile.map(|p| p.approximate_period_choice.clone()).unwrap_or_default();
+    let is_approximate_date = date_choice.to_lowercase().starts_with("approximate:");
+
+    let mut out = String::new();
+    let mut line = |s: String| { out.push_str(&s); out.push('\n'); };
+    line("CYCLECARE \u{2014} USER-ENTERED SUMMARY".to_string());
+    line(format!("Generated: {today_str}"));
+    line("This summary reproduces saved information. It is not a diagnosis or a clinical assessment.".to_string());
+    line(String::new());
+    line("SETUP SETTINGS (not measured averages)".to_string());
+    line(format!("\u{2022} Cycle-length setting: {} days", settings.average_cycle_length));
+    line(format!("\u{2022} Bleeding-duration setting: {} days", settings.period_duration));
+    if kotlin_trim(&settings.last_period_start_date).is_empty() {
+        line("\u{2022} Last period start date: Not provided".to_string());
+    } else if is_approximate_date {
+        line(format!("\u{2022} Last period start date: {} (estimated from the approximate range selected during setup)", settings.last_period_start_date));
+    } else {
+        line(format!("\u{2022} Last period start date entered: {}", settings.last_period_start_date));
+    }
+    line(String::new());
+
+    if valid_logs.is_empty() {
+        line("SAVED DAILY LOGS".to_string());
+        line("\u{2022} No daily log entries are saved.".to_string());
+        line("\u{2022} No symptom, pain, flow, sleep, mood, or energy history is inferred.".to_string());
+    } else {
+        line(format!("SAVED DAILY LOGS ({} dates)", valid_logs.len()));
+        line(format!("\u{2022} Date range: {} to {}", valid_logs.first().unwrap().date, valid_logs.last().unwrap().date));
+        let flow_counts = counts_first_seen(valid_logs.iter().filter_map(|d| {
+            let f = d.log.flow_level.to_uppercase();
+            if f.is_empty() || f == "NONE" || f == "UNKNOWN" { None } else { Some(f) }
+        }));
+        line(format!("\u{2022} Flow entries: {}", format_counts(&flow_counts)));
+        line(format!("\u{2022} Symptom tags: {}", format_counts(&symptoms)));
+        let pain_entries: Vec<String> = valid_logs.iter()
+            .filter(|d| d.log.pain_intensity > 0)
+            .map(|d| format!("{} {}/10", d.date, d.log.pain_intensity))
+            .collect();
+        if !pain_entries.is_empty() {
+            line(format!("\u{2022} Pain ratings entered: {}", pain_entries.join(", ")));
+        } else {
+            line("\u{2022} Pain ratings: None entered".to_string());
+        }
+        let other_notes: Vec<&DatedLog> = valid_logs.iter()
+            .filter(|d| !kotlin_trim(&d.log.notes).is_empty())
+            .collect();
+        if !other_notes.is_empty() {
+            line("\u{2022} Notes entered:".to_string());
+            for d in other_notes {
+                line(format!("  - {}: {}", d.date, kotlin_trim(&d.log.notes)));
+            }
+        }
+    }
+
+    if !questions.is_empty() {
+        line(String::new());
+        line("OPTIONAL DISCUSSION PROMPTS FROM SAVED ENTRIES".to_string());
+        for (i, q) in questions.iter().enumerate() {
+            line(format!("{}. {}", i + 1, q));
+        }
+    }
+    // Kotlin .trimEnd()
+    let trimmed = out.trim_end();
+    trimmed.to_string()
+}
+
+/// Verbatim output shape from data/model/CycleModels.kt MonthlyTimelineEntry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthlyTimelineEntry {
+    pub month_title: String,
+    /// Kotlin always passes 0 here (parity quirk, not filled in upstream).
+    pub cycle_length_days: i32,
+    pub period_bleeding_days: i32,
+    pub dominant_energy: String,
+    pub dominant_symptom: String,
+    /// Kotlin always passes null (parity quirk).
+    pub pattern_noticed: Option<String>,
+}
+
+/// Port of generateMonthlyTimeline (LearningEngine.kt). Kotlin `settings`
+/// param is unused in the body; dropped here (documented gap). Groups by
+/// YearMonth, months sorted descending.
+pub fn generate_monthly_timeline(logs: &[LearningLog]) -> Vec<MonthlyTimelineEntry> {
+    let valid = logs_with_dates(logs);
+    let mut months: Vec<(i32, u32)> = Vec::new(); // (year, month) first-seen
+    let mut grouped: std::collections::HashMap<(i32, u32), Vec<&DatedLog>> = std::collections::HashMap::new();
+    for d in &valid {
+        let key = (d.date.year(), d.date.month());
+        if !grouped.contains_key(&key) {
+            months.push(key);
+        }
+        grouped.entry(key).or_default().push(d);
+    }
+    months.sort_by(|a, b| b.cmp(a)); // YearMonth descending
+    months.into_iter().map(|(y, m)| {
+        let entries = &grouped[&(y, m)];
+        let month_symptoms: Vec<(String, i32)> = {
+            // first-seen counts per logged date, csv order within a date
+            let mut order: Vec<String> = Vec::new();
+            let mut counts: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+            for d in entries.iter() {
+                let mut seen = std::collections::HashSet::new();
+                for s in d.log.symptoms_csv.split(',').map(kotlin_trim).filter(|s| !s.is_empty()) {
+                    if seen.insert(s.to_string()) {
+                        if !counts.contains_key(s) { order.push(s.to_string()); }
+                        *counts.entry(s.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+            order.into_iter().map(|k| { let n = counts[&k]; (k, n) }).collect()
+        };
+        let recorded_energy = counts_first_seen(entries.iter().filter_map(|d| {
+            let e = d.log.energy_level.to_uppercase();
+            if e.is_empty() || e == "NORMAL" || e == "UNKNOWN" { None } else { Some(e) }
+        }));
+        let bleeding_days = entries.iter().filter(|d| {
+            matches!(d.log.flow_level.to_uppercase().as_str(), "LIGHT" | "MODERATE" | "HEAVY" | "UNUSUALLY_HEAVY")
+        }).count() as i32;
+        MonthlyTimelineEntry {
+            month_title: format!("{} {}", month_full(m), y),
+            cycle_length_days: 0,
+            period_bleeding_days: bleeding_days,
+            dominant_energy: first_maximal(&recorded_energy).map(display_label).unwrap_or_else(|| "Not recorded".to_string()),
+            dominant_symptom: first_maximal(&month_symptoms).map(display_label).unwrap_or_else(|| "No symptom tags recorded".to_string()),
+            pattern_noticed: None,
+        }
+    }).collect()
+}
+
 pub fn synthesize_explain_my_body(prediction: Option<&DayPrediction>) -> ExplainMyBodyResult {
     let Some(prediction) = prediction else {
         return ExplainMyBodyResult {

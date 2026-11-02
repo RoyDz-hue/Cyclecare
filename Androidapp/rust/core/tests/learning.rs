@@ -19,8 +19,10 @@ fn llog(date: &str, flow: &str, symptoms: &str, pain: i32) -> LearningLog {
     LearningLog {
         date_string: date.to_string(),
         flow_level: flow.to_string(),
+        energy_level: String::new(),
         symptoms_csv: symptoms.to_string(),
         pain_intensity: pain,
+        notes: String::new(),
     }
 }
 
@@ -33,6 +35,7 @@ fn completed_setup_emits_settings_then_setup_notes() {
     let profile = LearningProfile {
         is_completed: true,
         typical_symptoms_csv: "cramps, headache, cramps".to_string(),
+        approximate_period_choice: String::new(),
     };
     let obs = compile_learned_observations(&settings(), &[], Some(&profile));
     assert_eq!(
