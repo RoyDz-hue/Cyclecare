@@ -139,6 +139,16 @@ pub enum Verdict {
     UnusualConfirm,
 }
 
+impl Verdict {
+    /// Name matching the Kotlin enum constant (used for cross-language parity).
+    pub fn kotlin_name(&self) -> &'static str {
+        match self {
+            Verdict::Typical => "TYPICAL",
+            Verdict::UnusualConfirm => "UNUSUAL_CONFIRM",
+        }
+    }
+}
+
 pub fn verdict_for(duration_days: i64) -> Verdict {
     if duration_days > MAX_TYPICAL_BLEEDING_DAYS {
         Verdict::UnusualConfirm

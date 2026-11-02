@@ -203,7 +203,7 @@ fn verdicts_match_kotlin_outputs() {
     for ((case, args), (_, expected)) in cases.iter().zip(results.iter()) {
         let duration: i64 = args[0].parse().unwrap();
         let ongoing: bool = args[1].parse().unwrap();
-        let verdict = format!("{:?}", verdict_for(duration)).to_uppercase();
+        let verdict = verdict_for(duration).kotlin_name().to_string();
         assert_eq!(&verdict, &expected[0], "verdict case {case} diverged from Kotlin");
         let msg = unusual_message(duration, ongoing);
         assert_eq!(&msg, &expected[1], "message case {case} diverged from Kotlin");
