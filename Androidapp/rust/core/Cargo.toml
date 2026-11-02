@@ -26,6 +26,11 @@ sqlite = ["rusqlite", "rusqlite/bundled"]
 # only). Mutually exclusive with `sqlite` (one bundled codec library), never
 # part of default/FFI builds, and NOT a production migration switch.
 sqlcipher-host = ["rusqlite", "rusqlite/bundled-sqlcipher"]
+# HOST-FIXTURE ONLY: lets non-Linux/Android targets (wasm32 browser demo)
+# build the care-policy proposal id without OS entropy via a labeled
+# deterministic counter. Never for production; real targets use OS entropy
+# and unsupported targets fail to compile without this feature.
+host-fixture-entropy = []
 # Integration-test-only hooks (failure injection). Not compiled into release
 # or FFI builds; enabled solely via the self dev-dependency below.
 test-support = []

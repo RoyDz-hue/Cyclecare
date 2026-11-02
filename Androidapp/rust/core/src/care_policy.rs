@@ -108,11 +108,8 @@ pub struct ProposedCareLog {
 }
 
 fn uuid_v4() -> String {
-    use std::io::Read;
     let mut b = [0u8; 16];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut b))
-        .expect("/dev/urandom readable");
+    fill_entropy(&mut b);
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let mut s = String::with_capacity(36);
@@ -123,6 +120,51 @@ fn uuid_v4() -> String {
         s.push_str(&format!("{:02x}", byte));
     }
     s
+}
+
+/// OS entropy on the real targets (Linux dev, Android production). Matches
+/// Kotlin UUID.randomUUID (SecureRandom) semantics.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fill_entropy(b: &mut [u8; 16]) {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(b))
+        .expect("/dev/urandom readable");
+}
+
+/// Unsupported targets stay explicitly unavailable: without a secure
+/// provider they fail at compile time rather than silently minting tokens.
+#[cfg(all(
+    not(any(target_os = "linux", target_os = "android")),
+    not(feature = "host-fixture-entropy")
+))]
+compile_error!(
+    "no OS entropy on this target: enable `host-fixture-entropy` for host-only fixtures, or add a secure provider before production use"
+);
+
+/// HOST-FIXTURE-ONLY fallback (wasm32 browser demo, feature-gated): no OS
+/// entropy exists there. The proposal id is an ephemeral gate-matching
+/// token, never a security identifier; uniqueness within a host session
+/// comes from an atomic counter through splitmix64. Ids repeat across
+/// fresh host loads, which the single-pending gate tolerates. This does
+/// NOT implement the production token generator; production Android keeps
+/// the OS-entropy path above.
+#[cfg(all(
+    not(any(target_os = "linux", target_os = "android")),
+    feature = "host-fixture-entropy"
+))]
+fn fill_entropy(b: &mut [u8; 16]) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CTR: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
+    for chunk in b.chunks_mut(8) {
+        let x = CTR.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        let bytes = z.to_le_bytes();
+        chunk.copy_from_slice(&bytes[..chunk.len()]);
+    }
 }
 
 pub fn proposal(owner_id: &str, date: &str, input: &str) -> Option<ProposedCareLog> {
@@ -470,6 +512,16 @@ mod tests {
              2026-11-01: symptoms=cramps, headache; pain=6/10\n\
              No free-text notes, account details, sexual activity or intimate-health records included."
         );
+    }
+
+    #[test]
+    fn uuid_v4_shape_and_uniqueness() {
+        let a = uuid_v4();
+        let b = uuid_v4();
+        assert_eq!(a.len(), 36);
+        assert_ne!(a, b);
+        assert_eq!(a.as_bytes()[14], b'4');
+        assert!(matches!(a.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
     }
 
     #[test]
