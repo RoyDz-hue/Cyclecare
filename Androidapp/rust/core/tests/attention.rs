@@ -213,3 +213,25 @@ fn notable_shift_is_suppressed_during_period() {
     assert_eq!(item2.id, "baseline_shift_notable");
     assert_eq!(item2.headline, "A subtle shift in your rhythm");
 }
+
+/// JVM probe fixture J (2026-11-02 corpus): STRONG deviations are NOT
+/// suppressed during a period - only the notable branch checks isPeriod.
+#[test]
+fn strong_shift_is_not_suppressed_during_period() {
+    let today = d("2026-11-02");
+    let mut logs: Vec<AttentionLog> = Vec::new();
+    for i in 1..=14i64 {
+        let mut l = alog(&format!("2026-05-{:02}", i), 0.0, "");
+        l.pain_intensity = 2;
+        logs.push(l);
+    }
+    for i in 1..=14i64 {
+        let mut l = alog(&format!("2026-10-{:02}", i), 0.0, "");
+        l.pain_intensity = 6; // diff 4.0 -> STRONG
+        logs.push(l);
+    }
+    let p = prediction(2, true, false); // on period
+    let item = evaluate_today_priority(Some(&p), &low_safety(), 28, &logs, today).unwrap();
+    assert_eq!(item.id, "baseline_shift_strong");
+    assert_eq!(item.headline, "Noticeable change: Pelvic Comfort Shift");
+}

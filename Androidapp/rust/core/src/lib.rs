@@ -35,7 +35,7 @@ pub mod payment_validation;
 pub mod coin_format;
 pub mod payment_safety;
 pub mod economy_rules;
-#[cfg(feature = "sqlite")]
+#[cfg(any(feature = "sqlite", feature = "sqlcipher-host"))]
 pub mod storage_schema;
 pub mod earn_coins;
 pub mod sync_codec;
@@ -59,7 +59,10 @@ pub mod care_ai;
 pub mod care_privacy;
 pub mod layered_chat;
 pub mod payment_poll;
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "sqlite", feature = "sqlcipher-host"))]
+compile_error!("features `sqlite` and `sqlcipher-host` are mutually exclusive: exactly one bundled SQLite/codec library may be linked");
+
+#[cfg(any(feature = "sqlite", feature = "sqlcipher-host"))]
 pub mod storage_db;
 pub mod auth_errors;
 pub mod auth_uri;
@@ -69,3 +72,7 @@ pub mod auth_flows;
 pub mod auth_google;
 pub mod auth_session;
 pub mod home_anchor;
+
+/// Host-only SQLCipher conversion rehearsal (feature `sqlcipher-host`).
+#[cfg(feature = "sqlcipher-host")]
+pub mod encrypted_host;

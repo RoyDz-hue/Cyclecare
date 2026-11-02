@@ -15,14 +15,20 @@ num-traits = "0.2"
 serde_json = "1"
 ryu = "1"
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.32", optional = true }
 
 [features]
 default = ["sqlite"]
-sqlite = ["rusqlite"]
+sqlite = ["rusqlite", "rusqlite/bundled"]
+# Host-only encrypted storage rehearsal: compiles storage_db against the
+# bundled SQLCipher codec and adds encrypted_host (the DatabaseEncryption.kt
+# conversion state machine on real SQLCipher files, synthetic scratch data
+# only). Mutually exclusive with `sqlite` (one bundled codec library), never
+# part of default/FFI builds, and NOT a production migration switch.
+sqlcipher-host = ["rusqlite", "rusqlite/bundled-sqlcipher"]
 # Integration-test-only hooks (failure injection). Not compiled into release
 # or FFI builds; enabled solely via the self dev-dependency below.
-test-support = ["sqlite"]
+test-support = []
 
 [dev-dependencies]
-cyclecare-core = { path = ".", features = ["test-support"] }
+cyclecare-core = { path = ".", default-features = false, features = ["test-support"] }
