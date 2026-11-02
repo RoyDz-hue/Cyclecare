@@ -62,7 +62,7 @@ owned by the migration worker) and NOT whole-migration completion.
   remote JS, minSdk 24 preserved, signing + screen-capture/privacy settings
   preserved.
 
-## Rust AppLockScreen host seam (v2 dist, spike-only, not wired into MainActivity)
+## Rust AppLockScreen host seam (v3 dist, connected behind RustAppLockConfig switch)
 
 Host side (this branch, new files):
 - `rust/CycleCareAppLockBridge.kt` - @JavascriptInterface registered as
@@ -72,7 +72,7 @@ Host side (this branch, new files):
   (viewModel.unlockApp, BiometricHelper.showBiometricPrompt,
   setShowAuthSheet(true)). No new auth path.
 - `rust/AppLockWebViewHost.kt` - WebView factory: WebViewAssetLoader serves
-  `app/src/main/assets/rust/applock/` (owner v2 dist, real logo PNG
+  `app/src/main/assets/rust/applock/` (owner v3 dist, real logo PNG
   byte-identical to drawable-nodpi, sha256 b8da177e...63f8) under origin
   https://appassets.androidplatform.net; navigation allowlist denies
   everything else; file/content access off; DOM storage off.
