@@ -119,7 +119,7 @@ workflows:
       - build-logs/*.log
   cyclecare-device-verify:
     name: CycleCare emulator inset verification (real window insets)
-    max_build_duration: 60
+    max_build_duration: 35
     instance_type: mac_mini_m2
     cache:
       cache_paths:
@@ -137,17 +137,29 @@ workflows:
       - name: Create and boot Android emulator (1080x2400, 420dpi, API 36)
         script: |
           set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
           AVDMGR="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           EMU="$ANDROID_HOME/emulator/emulator"
-          echo "system-images;android-36;google_apis;arm64-v8a"
-          "$SDKMGR" --install "system-images;android-36;google_apis;arm64-v8a" || true
-          "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_6 --force \
-            || "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel --force
-          "$EMU" -avd ccverify -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save &
+          yes | "$SDKMGR" --licenses > /dev/null || true
+          "$SDKMGR" --install "system-images;android-36;google_apis;arm64-v8a" < /dev/null || true
+          echo no | "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_6 --force \
+            || echo no | "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel --force
+          "$EMU" -avd ccverify -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save > build-logs/emulator-console.log 2>&1 &
           adb wait-for-device
-          adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+          # Bounded boot wait: fail the step instead of burning the build window.
+          BOOTED=""
+          for i in $(seq 1 120); do
+            BOOTED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$BOOTED" = "1" ] && break
+            sleep 5
+          done
+          echo "boot_completed=$BOOTED"
+          [ "$BOOTED" = "1" ]
           adb shell wm size && adb shell wm density
+          } 2>&1 | tee build-logs/emulator-step.log
       - name: Run production inset screenshot tests
         script: |
           set -e
