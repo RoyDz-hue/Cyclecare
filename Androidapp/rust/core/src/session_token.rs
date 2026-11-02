@@ -54,56 +54,82 @@ fn opt_boolean(obj: &JsonValue, key: &str) -> bool {
     }
 }
 
-/// Strict RFC 4648 url-safe decode (alphabet A-Za-z0-9_-, optional '='
-/// padding tolerated, final partial units accepted, any other char or a
-/// 4k+1 remainder rejected).
+/// android.util.Base64.decode(input, URL_SAFE|NO_PADDING|NO_WRAP): the AOSP
+/// Decoder.process state machine (frameworks/base android-14.0.0_r1,
+/// core/java/android/util/Base64.java) ported line-faithfully, executed
+/// against the compiled AOSP class (AndroidB64Probe, d01-d24). The slow path
+/// alone is ported; the source states the fast path is behaviorally identical.
+/// Semantics that differ from a "strict RFC 4648" reading, all executed:
+/// non-alphabet bytes are SKIPPED (whitespace, wrong-alphabet "+/", even
+/// non-ASCII UTF-8 bytes); "=" padding must complete its 4-group exactly
+/// ("QQ" ok, "QQ=" bad, "QQ==" ok, data after padding bad); a trailing
+/// 2- or 3-symbol partial unit without padding is fine.
+fn decode_websafe(b: u8) -> i32 {
+    match b {
+        b'A'..=b'Z' => (b - b'A') as i32,
+        b'a'..=b'z' => (b - b'a' + 26) as i32,
+        b'0'..=b'9' => (b - b'0' + 52) as i32,
+        b'-' => 62,
+        b'_' => 63,
+        b'=' => -2,
+        _ => -1,
+    }
+}
+
+const SKIP: i32 = -1;
+const EQUALS: i32 = -2;
+
 fn b64url_decode(s: &str) -> Option<Vec<u8>> {
-    let mut vals = Vec::with_capacity(s.len());
-    let mut padded = false;
-    for c in s.chars() {
-        let v = match c {
-            'A'..='Z' => c as u8 - b'A',
-            'a'..='z' => c as u8 - b'a' + 26,
-            '0'..='9' => c as u8 - b'0' + 52,
-            '-' => 62,
-            '_' => 63,
-            '=' => {
-                padded = true;
-                continue;
+    // Base64.decode(String, flags) decodes str.getBytes() - UTF-8 on Android.
+    let input = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() * 3 / 4);
+    let mut state = 0u8;
+    let mut value: u32 = 0;
+    for &byte in input {
+        let d = decode_websafe(byte);
+        match state {
+            0 => {
+                if d >= 0 { value = d as u32; state = 1; }
+                else if d != SKIP { return None; }
             }
-            _ => return None,
-        };
-        if padded {
-            return None; // data after '=' is invalid
+            1 => {
+                if d >= 0 { value = (value << 6) | d as u32; state = 2; }
+                else if d != SKIP { return None; }
+            }
+            2 => {
+                if d >= 0 { value = (value << 6) | d as u32; state = 3; }
+                else if d == EQUALS { out.push((value >> 4) as u8); state = 4; }
+                else if d != SKIP { return None; }
+            }
+            3 => {
+                if d >= 0 {
+                    value = (value << 6) | d as u32;
+                    out.push((value >> 16) as u8);
+                    out.push((value >> 8) as u8);
+                    out.push(value as u8);
+                    state = 0;
+                } else if d == EQUALS {
+                    out.push((value >> 10) as u8);
+                    out.push((value >> 2) as u8);
+                    state = 5;
+                } else if d != SKIP { return None; }
+            }
+            4 => {
+                if d == EQUALS { state = 5; }
+                else if d != SKIP { return None; }
+            }
+            _ => { // state 5
+                if d != SKIP { return None; }
+            }
         }
-        vals.push(v);
     }
-    if vals.len() % 4 == 1 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(vals.len() * 3 / 4);
-    let mut i = 0;
-    while i + 4 <= vals.len() {
-        let n = ((vals[i] as u32) << 18)
-            | ((vals[i + 1] as u32) << 12)
-            | ((vals[i + 2] as u32) << 6)
-            | vals[i + 3] as u32;
-        out.push((n >> 16) as u8);
-        out.push((n >> 8) as u8);
-        out.push(n as u8);
-        i += 4;
-    }
-    match vals.len() - i {
-        3 => {
-            let n = ((vals[i] as u32) << 18) | ((vals[i + 1] as u32) << 12) | ((vals[i + 2] as u32) << 6);
-            out.push((n >> 16) as u8);
-            out.push((n >> 8) as u8);
-        }
-        2 => {
-            let n = ((vals[i] as u32) << 18) | ((vals[i + 1] as u32) << 12);
-            out.push((n >> 16) as u8);
-        }
-        _ => {}
+    match state {
+        0 => {}
+        1 => return None,   // one extra symbol: not enough for a byte
+        2 => out.push((value >> 4) as u8),
+        3 => { out.push((value >> 10) as u8); out.push((value >> 2) as u8); }
+        4 => return None,   // one padding where two were expected
+        _ => {}             // state 5: padding complete
     }
     Some(out)
 }
@@ -459,5 +485,44 @@ mod tests {
         assert!(valid_token_for_owner(&jwt(Some("owner1"), Some(NOW + 500)), "owner1", NOW)); // t07
         let num_sub = format!("{}.{}.{}", b64url("{}"), b64url(&format!("{{\"sub\":123,\"exp\":{}}}", NOW + 500)), b64url("s"));
         assert!(!valid_token_for_owner(&num_sub, "123", NOW)); // t08
+    }
+}
+
+#[cfg(test)]
+mod android_b64_lock {
+    use super::b64url_decode;
+
+    /// Locked to AndroidB64Probe executed against the compiled AOSP
+    /// android-14.0.0_r1 android.util.Base64 class (URL_SAFE|NO_PADDING|NO_WRAP).
+    #[test]
+    fn android_base64_decoder_corpus() {
+        let ok: &[(&str, &str)] = &[
+            ("eyJhIjp9", "7b2261223a7d"),
+            ("eyJhIjp9Cg==", "7b2261223a7d0a"),
+            ("QQ", "41"),
+            ("QQ==", "41"),
+            ("QUJD", "414243"),
+            ("QUI", "4142"),
+            ("QUJDRA==", "41424344"),
+            ("", ""),
+            ("QUJ!", "4142"),
+            ("QUJD\n", "414243"),
+            ("-_", "fb"),
+            ("QUJDRA", "41424344"),
+            ("QUJD ", "414243"),
+            ("++//", ""),
+            ("eyJzdWIiOiJ1MSIsImV4cCI6MTk5OTk5OTk5OX0", "7b22737562223a227531222c22657870223a313939393939393939397d"),
+            ("QUJÉD", "414243"),
+            ("QQ= =", "41"),
+            ("QU JD", "414243"),
+        ];
+        for (input, hex) in ok {
+            let got = b64url_decode(input).unwrap_or_else(|| panic!("{input:?} should decode"));
+            let got_hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(&got_hex, hex, "input {input:?}");
+        }
+        for input in ["QQ=", "A", "QQ==QQ", "====", "Q=Q=", "QUJDRA="] {
+            assert!(b64url_decode(input).is_none(), "{input:?} should be rejected");
+        }
     }
 }
