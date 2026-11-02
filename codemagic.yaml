@@ -105,9 +105,12 @@ workflows:
       - name: Capture expanded consent details (interactive, Robolectric)
         script: |
           set -e
+          set -o pipefail
           cd Androidapp
           chmod +x gradlew
-          ./gradlew testDebugUnitTest --tests "com.cyclecare.app.ui.CareConsentExpandedCaptureTest"
+          mkdir -p ../build-logs
+          ./gradlew testDebugUnitTest --tests "com.cyclecare.app.ui.CareConsentExpandedCaptureTest" 2>&1 | tee ../build-logs/consent-capture.log
+          cp app/build/test-results/testDebugUnitTest/*.xml ../build-logs/ 2>/dev/null || true
     artifacts:
       - Androidapp/app/src/test/snapshots/images/*.png
       - Androidapp/app/build/outputs/captures/*.png
