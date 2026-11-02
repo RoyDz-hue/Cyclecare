@@ -47,11 +47,14 @@ pub trait HttpTransport {
     fn execute(&mut self, full_url: &str, req: &t::TransportRequest, bearer: &str) -> HttpOutcome;
 }
 
+/// boundedBody + Java UTF-8 decode: over-limit -> None (callers map to their
+/// failure state); malformed bytes decode with the REPLACEMENT CHAR
+/// (Java String(bytes, UTF_8) semantics), never a hard failure.
 fn body_to_string(body: Vec<u8>) -> Option<String> {
     if body.len() > t::MAX_RESPONSE_BYTES {
         return None;
     }
-    String::from_utf8(body).ok()
+    Some(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// fetchTopicsWithStatus: real status chain, verbatim branch order.
@@ -152,9 +155,16 @@ pub struct PostResult {
     pub message: Option<CircleMessage>,
 }
 
-/// postMessage: trim/validate, post, interpret. The ambiguous 2xx+unparseable
-/// path yields SoftEchoUnconfirmed with a local echo (isSelf, no remoteId),
-/// never counted as a confirmed server post.
+/// postMessage: trim/validate, post, interpret. Source boundaries
+/// (CommunityGuidesService.kt:182-215), verbatim:
+/// - oversize boundedBody -> null -> FAILED (NOT echo).
+/// - JSONArray(raw) THROWS (malformed, or valid non-array like "{}") ->
+///   catch -> SOFT ECHO ("the write may still have landed"): unconfirmed,
+///   echo carries host now_ms, isSelf, no remoteId.
+/// - JSONArray ok but optJSONObject(0) null (empty array, or first element
+///   not an object) -> null -> FAILED.
+/// - Object row -> CONFIRMED with AOSP optString semantics (numeric id 42
+///   -> "42"; missing/null/blank -> None; created_at unparseable -> 0).
 /// now_ms: host wall clock for the soft echo's timestampMs default
 /// (System.currentTimeMillis() in source); NOT used on the confirmed path.
 pub fn post_message(
@@ -190,69 +200,71 @@ pub fn post_message(
     if !(200..300).contains(&status) {
         return fail(t::PostOutcome::Failed, None);
     }
+    // boundedBody null (oversize) -> source returns null: FAILED, not echo.
     let raw = match body_to_string(body) {
         Some(r) => r,
-        None => {
-            return fail(
-                t::PostOutcome::SoftEchoUnconfirmed,
-                Some(CircleMessage {
-                    channel_id: topic_id.to_string(),
-                    sender_alias: alias,
-                    content: trimmed,
-                    timestamp_ms: now_ms,
-                    is_self: true,
-                    persona_id: None,
-                    remote_id: None,
-                    is_flagged: false,
-                }),
-            )
-        }
+        None => return fail(t::PostOutcome::Failed, None),
     };
-    // JSONArray(raw).optJSONObject(0): first row's id/created_at.
-    let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
-    let row = parsed
-        .as_ref()
-        .and_then(|v| v.as_array())
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_object());
-    match row {
-        Some(obj) => {
-            let remote_id = obj
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(crate::kotlin_text::kotlin_trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            let created = obj.get("created_at").and_then(|v| v.as_str());
-            let timestamp_ms = crate::notifications::parse_iso_timestamp(created);
-            let outcome = t::PostOutcome::Confirmed { remote_id: remote_id.clone(), timestamp_ms };
-            fail(
-                outcome,
-                Some(CircleMessage {
-                    channel_id: topic_id.to_string(),
-                    sender_alias: alias,
-                    content: trimmed,
-                    timestamp_ms,
-                    is_self: true,
-                    persona_id: None,
-                    remote_id,
-                    is_flagged: false,
-                }),
-            )
-        }
-        None => fail(
-            t::PostOutcome::SoftEchoUnconfirmed,
-            Some(CircleMessage {
-                channel_id: topic_id.to_string(),
-                sender_alias: alias,
-                content: trimmed,
-                timestamp_ms: now_ms,
-                is_self: true,
-                persona_id: None,
-                remote_id: None,
-                is_flagged: false,
-            }),
-        ),
+    match serde_json::from_str::<serde_json::Value>(&raw) {
+        // Malformed: JSONArray() throws -> soft echo.
+        Err(_) => soft_echo(topic_id, alias, trimmed, now_ms),
+        Ok(v) => match v.as_array() {
+            // Valid non-array ("{}"): JSONArray() throws -> soft echo.
+            None => soft_echo(topic_id, alias, trimmed, now_ms),
+            Some(a) => match a.first() {
+                // optJSONObject(0) null (empty array or non-object first
+                // element) -> source returns null: FAILED.
+                Some(f) if f.is_object() => {
+                    let obj = f.as_object().unwrap();
+                    let id_raw = crate::kotlin_text::kotlin_trim(&aosp_opt_string_row(obj.get("id"))).to_string();
+                    let remote_id = if id_raw.is_empty() { None } else { Some(id_raw) };
+                    let created_raw = aosp_opt_string_row(obj.get("created_at"));
+                    let timestamp_ms = crate::notifications::parse_iso_timestamp(Some(&created_raw));
+                    PostResult {
+                        outcome: t::PostOutcome::Confirmed { remote_id: remote_id.clone(), timestamp_ms },
+                        message: Some(CircleMessage {
+                            channel_id: topic_id.to_string(),
+                            sender_alias: alias,
+                            content: trimmed,
+                            timestamp_ms,
+                            is_self: true,
+                            persona_id: None,
+                            remote_id,
+                            is_flagged: false,
+                        }),
+                    }
+                }
+                _ => fail(t::PostOutcome::Failed, None),
+            },
+        },
+    }
+}
+
+fn soft_echo(topic_id: &str, alias: String, trimmed: String, now_ms: i64) -> PostResult {
+    PostResult {
+        outcome: t::PostOutcome::SoftEchoUnconfirmed,
+        message: Some(CircleMessage {
+            channel_id: topic_id.to_string(),
+            sender_alias: alias,
+            content: trimmed,
+            timestamp_ms: now_ms,
+            is_self: true,
+            persona_id: None,
+            remote_id: None,
+            is_flagged: false,
+        }),
+    }
+}
+
+/// AOSP optString on a row value: strings as-is, numbers/booleans
+/// STRINGIFIED, missing/null -> "".
+fn aosp_opt_string_row(v: Option<&serde_json::Value>) -> String {
+    match v {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(other) => other.to_string(),
+        None | Some(serde_json::Value::Null) => String::new(),
     }
 }
 
