@@ -265,7 +265,7 @@ fun SettingsScreenContent(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Text(
-                                text = "Create or sign in to keep this guest profile. Email and Google both stay with this profile, so your entries carry over.",
+                                text = "Create a new account to keep this guest profile and its entries. Linking Google works when it isn't tied to another profile; signing into an existing account won't move entries from this device.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

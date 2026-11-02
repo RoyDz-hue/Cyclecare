@@ -489,7 +489,7 @@ private fun Step1Welcome() {
  * Screen 2 — Privacy First with Age Verification & Agreement
  */
 @Composable
-private fun Step2PrivacyFirst(
+internal fun Step2PrivacyFirst(
     isAgeVerified: Boolean,
     onAgeVerifiedChange: (Boolean) -> Unit,
     isTermsAgreed: Boolean,
@@ -1552,7 +1552,7 @@ private fun Step5ImmediateValue(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Step6LearnAboutMe(
+internal fun Step6LearnAboutMe(
     selectedSymptoms: Set<String>,
     onToggleSymptom: (String) -> Unit,
     showSymptomSection: Boolean,

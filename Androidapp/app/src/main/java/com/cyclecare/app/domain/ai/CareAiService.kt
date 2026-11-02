@@ -141,7 +141,7 @@ object CareAiService {
                 val receipts = manifest?.providers?.mapNotNull { p -> authPreferences.processorReceipt(p.id)?.takeIf { AiProcessorConsentService(authPreferences).cloudReceiptIsCurrent(manifest, p.id) } }.orEmpty()
                 // Do not trust a cached toggle: every cloud request needs a fresh manifest and receipt.
                 if (manifest == null || receipts.isEmpty()) return@withContext CareResponse(
-                    summary = "Online explanation unavailable", whatText = "Online expert answers are unavailable until your consent is confirmed.",
+                    summary = "Online explanation unavailable", whatText = "Online Assistant answers are unavailable until your consent is confirmed.",
                     understandText = article?.understandText ?: "Local guidance remains available.", careText = article?.careText ?: "Try the local care guidance.",
                     watchText = article?.watchText ?: "Notice symptoms that are new, persistent or worsening.", escalateText = article?.escalateText ?: "Seek urgent medical help for severe, sudden or worsening symptoms.",
                     safetyAlert = if (safetyEval.level != SafetyLevel.LOW) safetyEval else null, source = "Local guidance · online explanation unavailable"

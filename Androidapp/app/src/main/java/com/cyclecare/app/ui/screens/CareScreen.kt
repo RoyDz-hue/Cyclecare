@@ -292,9 +292,9 @@ private fun AiConsentCard(
         modifier = Modifier.fillMaxWidth().testTag("care_ai_consent_card")
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Enable expert answers", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+            Text("Enable Assistant answers", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
             Text(
-                "CycleCare can answer with expert guidance online. Your question and relevant cycle context are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
+                "CycleCare can answer online through the Assistant. Your question and relevant cycle context are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
                 style = MaterialTheme.typography.bodySmall
             )
             val manifest = uiState.aiProcessorManifest
@@ -343,7 +343,7 @@ private fun AiConsentCard(
             }
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = onNotNow, modifier = Modifier.testTag("care_ai_consent_dismiss")) { Text("Not now") }
-                Button(onClick = onAllow, enabled = uiState.aiProcessorManifest != null, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow expert answers") }
+                Button(onClick = onAllow, enabled = uiState.aiProcessorManifest != null, modifier = Modifier.testTag("care_ai_consent_allow")) { Text("Allow Assistant answers") }
             }
         }
     }

@@ -739,7 +739,7 @@ class CycleCareViewModel(
             // where the sharing description is shown before any processor
             // receipt exists. Keep the switch off until that flow completes.
             _uiState.value = _uiState.value.copy(
-                aiSharingDirectionMessage = "Expert answers stay off here. On the Ask tab, review who answers and what gets shared, then tap Allow - you can revoke anytime.")
+                aiSharingDirectionMessage = "Assistant answers stay off here. On the Ask tab, review who answers and what gets shared, then tap Allow - you can revoke anytime.")
         } else {
             // Compatibility callers (including cloud-health deletion) must
             // revoke provider receipts as well as the aggregate UI switch.
