@@ -141,3 +141,44 @@ fn loading_shown_only_from_empty_states() {
         assert_eq!(m.status(), WalletStatus::Loading, "from {start:?}");
     }
 }
+
+#[test]
+fn decimal_balances_stay_exact_through_the_machine() {
+    use std::str::FromStr;
+    // 3-decimal contract balance (CoinFormatter: up to 3 decimals, no float)
+    let mut m = WalletMachine::new();
+    let snap = owner("roy", 1);
+    let precise = VerifiedProfile {
+        owner: "roy".into(),
+        balance_coins: BigDecimal::from_str("363.575").unwrap(),
+        is_banned: false, is_suspended: false, suspension_reason: None,
+    };
+    let (v, _) = m.apply_result(&snap, Some(&snap), FetchOutcome::Success(precise));
+    assert_eq!(v, ApplyVerdict::Applied);
+    assert_eq!(m.last_profile().unwrap().balance_coins, BigDecimal::from_str("363.575").unwrap());
+    // a later failed refresh keeps the exact 3-decimal value (STALE, not zero)
+    let (v, _) = m.apply_result(&snap, Some(&snap), FetchOutcome::Failure);
+    assert_eq!(v, ApplyVerdict::Applied);
+    assert_eq!(m.status(), WalletStatus::Stale);
+    assert_eq!(m.last_profile().unwrap().balance_coins, BigDecimal::from_str("363.575").unwrap());
+    // large balances: no float rounding at 7 digits + 3 decimals
+    let mut m2 = WalletMachine::new();
+    let big = VerifiedProfile {
+        owner: "roy".into(),
+        balance_coins: BigDecimal::from_str("1234567.891").unwrap(),
+        is_banned: false, is_suspended: false, suspension_reason: None,
+    };
+    m2.apply_result(&snap, Some(&snap), FetchOutcome::Success(big));
+    assert_eq!(m2.last_profile().unwrap().balance_coins, BigDecimal::from_str("1234567.891").unwrap());
+}
+
+#[test]
+fn coin_formatter_displays_decimal_contract() {
+    use std::str::FromStr;
+    // DecimalFormat("#,##0.###"): 3 decimals kept, trailing zeros dropped,
+    // thousands grouped. (Executed corpus lives in coin_format tests; this
+    // pins the wallet-display path specifically.)
+    assert_eq!(cyclecare_core::coin_format::format(&BigDecimal::from_str("363.575").unwrap()), "363.575");
+    assert_eq!(cyclecare_core::coin_format::format(&BigDecimal::from_str("363.500").unwrap()), "363.5");
+    assert_eq!(cyclecare_core::coin_format::format(&BigDecimal::from_str("1234567.891").unwrap()), "1,234,567.891");
+}

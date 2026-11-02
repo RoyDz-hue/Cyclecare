@@ -306,6 +306,22 @@ mod tests {
     // Envelope smoke checks reuse the executed JVM expectations (LifecycleParity
     // gate_returning_complete; VerifiedProfileParity vp01; ReconcileParity rc01,
     // hr01, es01).
+    /// Exact-decimal contract across the FFI JSON boundary: balances travel
+    /// as exact decimal strings, never floats (3 decimals, large values).
+    #[test]
+    fn decimal_balances_cross_ffi_exactly() {
+        let payload = serde_json::json!({
+            "owner": "u1",
+            "econBody": "[{\"user_id\":\"u1\",\"status\":\"active\",\"coin_balance\":363.575,\"lifetime_earned\":1234567.891,\"lifetime_spent\":0.001,\"tier\":\"free\",\"rank\":\"lumen\",\"active_frame\":null,\"active_avatar_art\":null,\"last_mined_date\":null,\"unlocked_items\":[],\"artifacts\":[]}]",
+            "profBody": "{\"user_id\":\"u1\",\"status\":\"ACTIVE\"}",
+            "nowIso": "2026-11-02T12:00:00Z"
+        }).to_string();
+        let out = super::dispatch("verified_profile_parse", &payload);
+        assert!(out.contains(r#""coinBalance":"363.575""#), "3-decimal balance exact: {out}");
+        assert!(out.contains(r#""lifetimeEarned":"1234567.891""#), "large balance exact: {out}");
+        assert!(out.contains(r#""lifetimeSpent":"0.001""#), "small balance exact: {out}");
+    }
+
     #[test]
     fn startup_gate_contract_matches_executed() {
         let r = super::dispatch("startup_gate",
