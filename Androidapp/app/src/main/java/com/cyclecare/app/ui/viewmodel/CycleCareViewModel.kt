@@ -387,9 +387,11 @@ class CycleCareViewModel(
 
             if (hasCompletedInitialAuth) autoSyncSilently()
             val initOwner = authPreferences.effectiveUserId
+            val initSession = authPreferences.sessionGeneration
             val verifiedEconomy = if (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
                 economyService.fetchVerifiedProfile(initOwner) else null
-            if (authPreferences.effectiveUserId == initOwner && verifiedEconomy is com.cyclecare.app.data.economy.EconomyResult.Success) {
+            if (authPreferences.effectiveUserId == initOwner && authPreferences.sessionGeneration == initSession &&
+                verifiedEconomy is com.cyclecare.app.data.economy.EconomyResult.Success) {
                 val econ = verifiedEconomy.data
                 lastReadyWalletOwner = initOwner
                 _uiState.value = _uiState.value.copy(
@@ -1190,9 +1192,14 @@ class CycleCareViewModel(
     }
 
     private fun pollAndCompletePayment(extRef: String, timeoutSeconds: Long) {
+        val owner = authPreferences.effectiveUserId
+        val session = authPreferences.sessionGeneration
         viewModelScope.launch {
             when (val pollResult = paymentUseCase.pollPaymentStatus(extRef, timeoutSeconds, _uiState.value.economyProfile)) {
                 is PaymentPollResult.Success -> {
+                    // A poll that outlives its identity must never publish the
+                    // old owner's wallet onto the new owner's card.
+                    if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
                     SoundFeedbackManager.playArtifactAcquired(528f)
                     _uiState.value = _uiState.value.copy(
                         economyProfile = pollResult.profile,
@@ -1221,9 +1228,12 @@ class CycleCareViewModel(
     }
 
     private fun pollMpesaStatus(extRef: String, timeoutSeconds: Long) {
+        val owner = authPreferences.effectiveUserId
+        val session = authPreferences.sessionGeneration
         viewModelScope.launch {
             when (val pollResult = paymentUseCase.pollPaymentStatus(extRef, timeoutSeconds, _uiState.value.economyProfile)) {
                 is PaymentPollResult.Success -> {
+                    if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
                     SoundFeedbackManager.playArtifactAcquired(528f)
                     _uiState.value = _uiState.value.copy(
                         economyProfile = pollResult.profile,

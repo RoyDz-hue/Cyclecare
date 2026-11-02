@@ -72,6 +72,40 @@ class WalletStatusTest {
         }
     }
 
+    @Test fun delayedResponseFromOldOwnerNeverPopulatesNewOwnerCard() = runBlocking {
+        val authPrefs = prefs("switch").apply {
+            clearSession()
+            isCloudSyncAllowed = false
+            isAiSharingAllowed = false
+            accountMode = "EMAIL"
+            userId = "user-old-owner"
+            hasCompletedInitialAuth = true
+        }
+        val database = Room.inMemoryDatabaseBuilder(context, CycleCareDatabase::class.java)
+            .allowMainThreadQueries().build()
+        try {
+            val vm = CycleCareViewModel(CycleRepository(database), authPrefs, SupabaseSyncService(database, authPrefs), SupabaseAuthService(authPrefs))
+            vm.refreshWalletNow(force = true)
+            // Identity changes while the (offline, fast-failing) request is in
+            // flight: the late result must not touch the new owner's card.
+            authPrefs.clearSession()
+            authPrefs.userId = "user-new-owner"
+            var waitedMs = 0L
+            while (waitedMs < 5_000) {
+                delay(200)
+                waitedMs += 200
+                val status = vm.uiState.value.walletStatus
+                if (status == WalletStatus.READY || status == WalletStatus.STALE || status == WalletStatus.UNAVAILABLE) break
+            }
+            val state = vm.uiState.value
+            assertTrue("old-owner result must never publish READY on the new owner card",
+                state.walletStatus != WalletStatus.READY)
+            assertTrue(state.economyProfile.coinBalance.signum() == 0)
+        } finally {
+            database.close()
+        }
+    }
+
     @Test fun signedInFetchFailureSettlesUnavailableNeverFakeZero() = runBlocking {
         val authPrefs = prefs("signed").apply {
             clearSession()
