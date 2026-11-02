@@ -1,0 +1,21 @@
+package com.cyclecare.app.security
+
+import com.cyclecare.app.domain.ai.AiProcessorReceipt
+
+// Probe stub with the exact member signatures the verbatim AI files use.
+class AuthPreferences {
+    var isSecureStorageAvailable = true
+    var isLocalOnlyMode = false
+    var effectiveUserId = "owner-1"
+    var sessionGeneration = 7L
+    var healthConsentGeneration = 3L
+    var hasPendingHealthSyncRevoke = false
+    data class ProviderConsentSnapshot(val provider: String, val granted: Boolean, val revision: String, val accountId: String)
+    data class ConsentMutationSnapshot(val owner: String, val session: Long, val decision: Long, val healthGeneration: Long)
+    fun providerConsents(): Map<String, ProviderConsentSnapshot> = emptyMap()
+    fun processorReceipt(provider: String): AiProcessorReceipt? = null
+    fun pendingProcessorRevokes(): Set<String> = emptySet()
+    fun beginProcessorConsentMutation(provider: String, enabled: Boolean): ConsentMutationSnapshot? = null
+    fun completeProcessorConsentMutation(snapshot: ConsentMutationSnapshot, provider: String, receipt: AiProcessorReceipt?): Boolean = false
+    fun saveProcessorReceipt(receipt: AiProcessorReceipt) {}
+}

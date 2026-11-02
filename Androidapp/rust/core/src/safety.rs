@@ -33,6 +33,19 @@ pub enum SafetyLevel {
     Urgent,
 }
 
+impl SafetyLevel {
+    /// Kotlin enum name (test/reporting label).
+    pub fn name(&self) -> &'static str {
+        match self {
+            SafetyLevel::Low => "LOW",
+            SafetyLevel::Monitor => "MONITOR",
+            SafetyLevel::Review => "REVIEW",
+            SafetyLevel::SeekProfessionalAdvice => "SEEK_PROFESSIONAL_ADVICE",
+            SafetyLevel::Urgent => "URGENT",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafetyEvaluation {
     pub level: SafetyLevel,

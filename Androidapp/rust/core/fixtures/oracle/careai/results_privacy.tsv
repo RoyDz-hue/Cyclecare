@@ -1,0 +1,11 @@
+u01	true|https://probe.invalid/rest/v1/rpc/set_my_privacy_consents|{"p_ai_context_enabled":true,"p_cloud_sync_enabled":false,"p_image_generation_enabled":true}
+u02	false
+u03	false
+u04	false
+u05	false|calls=0
+u06	false
+d01	true
+d02	false
+d03	false
+d04	false
+d05	false|calls=0

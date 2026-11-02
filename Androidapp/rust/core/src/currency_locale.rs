@@ -18,7 +18,7 @@ use crate::kotlin_text::{kotlin_is_blank, kotlin_trim};
 use crate::sync_codec::{aosp_opt_string, JsonParser, JsonValue};
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed};
 use std::collections::HashMap;
 
 // ---------- RemoteLocalPricing.LocalizedPrice ----------

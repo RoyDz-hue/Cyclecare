@@ -48,3 +48,7 @@ pub mod onboarding_questions;
 pub mod ai_consent_tap;
 pub mod care_policy;
 pub mod currency_locale;
+pub mod care_knowledge;
+pub mod care_ai;
+pub mod care_privacy;
+pub mod layered_chat;
