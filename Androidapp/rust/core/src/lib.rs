@@ -30,6 +30,7 @@ pub mod something_changed;
 pub mod attention;
 pub mod learning;
 pub mod pregnancy;
+pub mod guided_chats;
 pub mod economy_status;
 pub mod economy_catalog;
 pub mod payment_validation;
