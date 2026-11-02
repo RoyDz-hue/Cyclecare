@@ -171,9 +171,13 @@ impl OnboardingState {
     /// Verbatim setExactEndDate. Hard chronology rule: end before start is
     /// rejected (clamped to start, confirmed). Otherwise the entered end date
     /// is preserved exactly; an unusual duration asks for explicit
-    /// confirmation and never drags the typical-duration estimate. The
-    /// decision's error channel (e.g. future date) is dropped by the Kotlin
-    /// VM - the date is stored regardless; that quirk is ported faithfully.
+    /// confirmation and never drags the typical-duration estimate.
+    ///
+    /// PARITY/SAFETY-REVIEW GAP (not accepted intended behavior, per main
+    /// 2026-11-02): the Kotlin VM drops PeriodEpisodeEntry.decide's error
+    /// channel, so a future end date is stored regardless and no message is
+    /// shown. Ported 1:1 to preserve source parity; flagged for product
+    /// review, no policy change without it.
     pub fn set_exact_end_date(&mut self, date: NaiveDate, today: NaiveDate) {
         let start = self.compute_cycle(today).effective_last_period_date;
         if !pc::validate_period_dates(Some(start), Some(date)) {

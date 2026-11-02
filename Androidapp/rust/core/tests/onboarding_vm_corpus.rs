@@ -4,6 +4,10 @@
 //! OnboardingViewModel handlers, PeriodDateConsistency, PeriodEpisodeEntry,
 //! CycleRepository validators and the completeOnboarding field mapping
 //! (kotlinc/JVM) and running the 20 scenarios replayed here.
+//!
+//! Rows s01/s17 lock current-source PARITY GAPS under safety review (future
+//! effective end date; dropped decide() error channel storing a future end).
+//! They document what production does today, not accepted intended behavior.
 
 use chrono::NaiveDate;
 use cyclecare_core::onboarding_complete::{complete_onboarding, CompletionOutcome};

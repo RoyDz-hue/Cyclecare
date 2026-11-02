@@ -542,6 +542,38 @@ pub struct CycleSettings {
     pub remind_daily_log: bool,
 }
 
+/// data/local/HealthSyncLocal.kt HealthSyncRevision (verbatim Room fields).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthSyncRevision {
+    pub owner_id: String,
+    pub record_id: String,
+    pub revision: i64,
+    pub payload_hash: Option<String>,
+    pub tombstone: bool,
+    pub updated_at: i64,
+    pub server_revision: i64,
+}
+
+/// data/local/HealthSyncLocal.kt HealthSyncOutboxEntry (verbatim Room fields;
+/// entity defaults attempts=0, nextAttemptAt=0, nullables null).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthSyncOutboxEntry {
+    pub owner_id: String,
+    pub operation_id: String,
+    pub record_id: String,
+    pub kind: String,
+    pub base_revision: i64,
+    pub revision: i64,
+    pub payload_json: Option<String>,
+    pub payload_hash: String,
+    pub consent_generation: i64,
+    pub attempts: i32,
+    pub next_attempt_at: i64,
+    pub last_error: Option<String>,
+    pub server_receipt: Option<String>,
+    pub server_revision: Option<i64>,
+}
+
 /// Security-critical: restored profiles can never certify age, terms,
 /// onboarding completion, or account mode (port of the Kotlin reset).
 #[derive(Debug, Clone, PartialEq)]

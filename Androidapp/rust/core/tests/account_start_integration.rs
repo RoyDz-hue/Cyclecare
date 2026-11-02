@@ -317,3 +317,79 @@ fn full_onboarding_answers_persist_profile_and_settings_through_reopen() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn completion_journal_persists_atomically_through_reopen() {
+    use cyclecare_core::onboarding_complete::complete_onboarding;
+    use cyclecare_core::onboarding_vm::OnboardingState;
+    let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let dir = std::env::temp_dir().join(format!("cc-journal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut s = OnboardingState::new();
+    s.toggle_goal("Track my periods");
+    s.set_exact_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(), t);
+    s.set_exact_end_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(), t);
+    s.select_cycle_option("28 days", 28);
+    let outcome = complete_onboarding(&s.completion_params(t), "PRIVATE", 1_762_000_000_000, false, false);
+
+    // First completion: one transaction writes profile + settings + the
+    // profile/settings revision and outbox rows for owner "u1".
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let writes = db
+            .complete_onboarding_transaction(&outcome, Some("u1"), 3, 1_762_000_000_500, "op-p1", "op-s1")
+            .unwrap();
+        assert_eq!(writes.owner, "u1");
+        assert_eq!(writes.profile_revision.revision, 1);
+        assert_eq!(writes.profile_revision.server_revision, 0);
+        assert_eq!(writes.profile_outbox.base_revision, 0);
+        assert_eq!(writes.profile_outbox.kind, "UPSERT");
+        assert_eq!(writes.profile_outbox.consent_generation, 3);
+        assert_eq!(writes.settings_revision.revision, 1);
+    }
+
+    // Reopen: every row of the write-set survived; outbox order is profile
+    // then settings (verbatim production sequence).
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let profile = db.get_profile().unwrap().expect("profile persisted");
+        assert!(profile.is_completed);
+        assert_eq!(profile.last_period_date_string, "2026-10-20");
+        let settings = db.get_settings().unwrap().expect("settings persisted");
+        assert!(settings.is_onboarding_completed);
+        assert_eq!(settings.last_period_start_date, "2026-10-20");
+        let pr = db.get_revision("u1", "profile").unwrap().expect("profile revision");
+        assert_eq!(pr.revision, 1);
+        assert!(pr.payload_hash.is_some());
+        let sr = db.get_revision("u1", "settings").unwrap().expect("settings revision");
+        assert_eq!(sr.revision, 1);
+        let outbox = db.list_outbox("u1").unwrap();
+        assert_eq!(outbox.len(), 2);
+        assert_eq!(outbox[0].record_id, "profile");
+        assert_eq!(outbox[1].record_id, "settings");
+        assert_eq!(outbox[0].operation_id, "op-p1");
+        assert!(outbox.iter().all(|e| e.revision == 1 && e.base_revision == 0 && e.attempts == 0));
+        assert!(outbox.iter().all(|e| e.payload_json.is_some()));
+    }
+
+    // Second completion (same owner, serverRevision advanced externally):
+    // revision increments, serverRevision carries into base revision.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let mut pr = db.get_revision("u1", "profile").unwrap().unwrap();
+        pr.server_revision = 7;
+        db.put_revision(&pr).unwrap();
+        let writes = db
+            .complete_onboarding_transaction(&outcome, Some("u1"), 3, 1_762_000_001_000, "op-p2", "op-s2")
+            .unwrap();
+        assert_eq!(writes.profile_revision.revision, 2);
+        assert_eq!(writes.profile_revision.server_revision, 7);
+        assert_eq!(writes.profile_outbox.base_revision, 7);
+        assert_eq!(writes.settings_revision.revision, 2);
+        let outbox = db.list_outbox("u1").unwrap();
+        assert_eq!(outbox.len(), 4, "two completions enqueue four operations");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

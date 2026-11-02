@@ -237,6 +237,130 @@ impl StorageDb {
         self.conn.execute("DELETE FROM onboarding_profiles", [])?;
         Ok(())
     }
+
+    // ---------- health_sync journal rows (HealthSyncLocal.kt entities) ----------
+
+    /// SELECT ... FROM health_sync_revisions WHERE ownerId = ? AND recordId = ?
+    pub fn get_revision(
+        &self,
+        owner: &str,
+        record_id: &str,
+    ) -> rusqlite::Result<Option<crate::sync_codec::HealthSyncRevision>> {
+        use crate::sync_codec::HealthSyncRevision;
+        self.conn
+            .query_row(
+                "SELECT ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision FROM health_sync_revisions WHERE ownerId = ?1 AND recordId = ?2",
+                params![owner, record_id],
+                |row| {
+                    Ok(HealthSyncRevision {
+                        owner_id: row.get(0)?,
+                        record_id: row.get(1)?,
+                        revision: row.get(2)?,
+                        payload_hash: row.get(3)?,
+                        tombstone: int_to_bool(row.get(4)?),
+                        updated_at: row.get(5)?,
+                        server_revision: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// INSERT OR REPLACE INTO health_sync_revisions (Room @Upsert semantics).
+    pub fn put_revision(&self, r: &crate::sync_codec::HealthSyncRevision) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO health_sync_revisions (ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                r.owner_id, r.record_id, r.revision, r.payload_hash,
+                bool_to_int(r.tombstone), r.updated_at, r.server_revision
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// INSERT OR REPLACE INTO health_sync_outbox.
+    pub fn enqueue_outbox(&self, e: &crate::sync_codec::HealthSyncOutboxEntry) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO health_sync_outbox (ownerId, operationId, recordId, kind, baseRevision, revision, payloadJson, payloadHash, consentGeneration, attempts, nextAttemptAt, lastError, serverReceipt, serverRevision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+            params![
+                e.owner_id, e.operation_id, e.record_id, e.kind, e.base_revision,
+                e.revision, e.payload_json, e.payload_hash, e.consent_generation,
+                e.attempts, e.next_attempt_at, e.last_error, e.server_receipt, e.server_revision
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Outbox rows for an owner, oldest first (test/diagnostic aid).
+    pub fn list_outbox(
+        &self,
+        owner: &str,
+    ) -> rusqlite::Result<Vec<crate::sync_codec::HealthSyncOutboxEntry>> {
+        use crate::sync_codec::HealthSyncOutboxEntry;
+        let mut stmt = self.conn.prepare(
+            "SELECT ownerId, operationId, recordId, kind, baseRevision, revision, payloadJson, payloadHash, consentGeneration, attempts, nextAttemptAt, lastError, serverReceipt, serverRevision FROM health_sync_outbox WHERE ownerId = ?1 ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map(params![owner], |row| {
+            Ok(HealthSyncOutboxEntry {
+                owner_id: row.get(0)?,
+                operation_id: row.get(1)?,
+                record_id: row.get(2)?,
+                kind: row.get(3)?,
+                base_revision: row.get(4)?,
+                revision: row.get(5)?,
+                payload_json: row.get(6)?,
+                payload_hash: row.get(7)?,
+                consent_generation: row.get(8)?,
+                attempts: row.get(9)?,
+                next_attempt_at: row.get(10)?,
+                last_error: row.get(11)?,
+                server_receipt: row.get(12)?,
+                server_revision: row.get(13)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// CycleRepository.completeOnboardingWithProfile, executed as ONE SQLite
+    /// transaction: insert profile, save patched settings, putRevision +
+    /// enqueue for "profile" and "settings". operationIds/now are supplied by
+    /// the caller (UUID/wall-clock in production). Returns the write-set.
+    pub fn complete_onboarding_transaction(
+        &self,
+        outcome: &crate::onboarding_complete::CompletionOutcome,
+        owner_identity: Option<&str>,
+        consent_generation: i64,
+        now_millis: i64,
+        profile_operation_id: &str,
+        settings_operation_id: &str,
+    ) -> rusqlite::Result<crate::onboarding_complete::JournalWriteSet> {
+        let owner = crate::onboarding_complete::owner_or_legacy(owner_identity);
+        let tx = self.conn.unchecked_transaction()?;
+        let current_settings = self
+            .get_settings()?
+            .unwrap_or_else(crate::sync_codec::CycleSettings::default);
+        let prior_profile = self.get_revision(&owner, "profile")?;
+        let prior_settings = self.get_revision(&owner, "settings")?;
+        let writes = crate::onboarding_complete::plan_completion_journal(
+            outcome,
+            &current_settings,
+            Some(&owner),
+            consent_generation,
+            now_millis,
+            profile_operation_id,
+            settings_operation_id,
+            prior_profile.as_ref(),
+            prior_settings.as_ref(),
+        );
+        self.insert_or_update_profile(&outcome.profile)?;
+        self.save_settings(&writes.updated_settings)?;
+        self.put_revision(&writes.profile_revision)?;
+        self.enqueue_outbox(&writes.profile_outbox)?;
+        self.put_revision(&writes.settings_revision)?;
+        self.enqueue_outbox(&writes.settings_outbox)?;
+        tx.commit()?;
+        Ok(writes)
+    }
 }
 
 #[cfg(test)]

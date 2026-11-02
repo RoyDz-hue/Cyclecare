@@ -5,10 +5,11 @@
 //! Scope notes:
 //! - The PIN value never enters core. The Kotlin branch `if (pin.isNotBlank())`
 //!   is represented by `pin_provided`; secret storage stays host-side.
-//! - The health-sync journal (revision + outbox rows via
-//!   HealthSyncPayloadCodec) is a local queue write inside the same Room
-//!   transaction; it is tracked separately in the coverage map and applied by
-//!   the storage layer, not by this pure mapping.
+//! - WARNING (per main 2026-11-02): the health-sync journal (revision +
+//!   outbox rows via HealthSyncPayloadCodec) is part of the same Room
+//!   transaction in production and is NOT yet ported, so this mapping alone
+//!   is NOT whole-production-transaction parity. Keep this caveat attached
+//!   to any completion claim until the journal is ported.
 //! - org.json key order is INSERTION order (AOSP LinkedHashMap, verified in
 //!   sync_codec); the dynamic-insights JSON preserves answer insertion order
 //!   and is rendered through the shared AOSP-faithful writer.
@@ -108,9 +109,11 @@ pub fn complete_onboarding(
         remind_fertile: profile.remind_fertile_window,
         is_app_lock_enabled: enable_lock,
     };
+    // Strict LocalDate.parse semantics (probe-locked port), never chrono's
+    // lenient %Y-%m-%d: this string is also an external entry point when a
+    // profile row is re-read from storage.
     let stored_period_range =
-        NaiveDate::parse_from_str(&last_period_date_string, "%Y-%m-%d")
-            .ok()
+        crate::cycle_math::parse_local_date_iso(&last_period_date_string)
             .map(|start| {
                 let pd = params.period_duration_days.clamp(2, 10);
                 (start, start + chrono::Duration::days(pd - 1))
@@ -207,5 +210,114 @@ mod tests {
             out.dynamic_insights_json.as_deref(),
             Some("{\"q1\":[\"a\",\"b\"],\"q2\":[\"x\"]}")
         );
+    }
+}
+
+// ---------- Health-sync journal (CycleRepository.completeOnboardingWithProfile
+// transaction write-set, main@31b88f5 ~L191-236) ----------
+//
+// Production writes, inside ONE Room transaction: insert profile, save the
+// patched settings, put a revision row and enqueue an outbox row for BOTH
+// "profile" and "settings". Owner is lifecycleIdentity.orBlank->legacy_guest;
+// operationIds are random UUIDs and timestamps are the wall clock, so both
+// are caller-supplied here to keep core deterministic.
+
+use crate::sync_codec::{
+    self, HealthSyncOutboxEntry, HealthSyncRevision,
+};
+
+/// `lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"`.
+/// Kotlin isBlank: every char is whitespace by Char.isWhitespace, which
+/// (unlike Rust) also counts U+00A0, U+2007 and U+202F - use the probe-locked
+/// kotlin_text helper, never str::trim or is_empty.
+pub fn owner_or_legacy(identity: Option<&str>) -> String {
+    match identity {
+        Some(s) if !s.chars().all(crate::kotlin_text::kotlin_is_whitespace) => s.to_string(),
+        _ => "legacy_guest".to_string(),
+    }
+}
+
+/// The full journal write-set for one completion, planned pure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JournalWriteSet {
+    pub owner: String,
+    pub updated_settings: CycleSettings,
+    pub profile_revision: HealthSyncRevision,
+    pub profile_outbox: HealthSyncOutboxEntry,
+    pub settings_revision: HealthSyncRevision,
+    pub settings_outbox: HealthSyncOutboxEntry,
+}
+
+/// Verbatim write-set arithmetic of the production transaction:
+/// revision = (prior?.revision ?: 0) + 1; the outbox baseRevision and the
+/// revision row's serverRevision both carry prior?.serverRevision ?: 0.
+pub fn plan_completion_journal(
+    outcome: &CompletionOutcome,
+    current_settings: &CycleSettings,
+    owner_identity: Option<&str>,
+    consent_generation: i64,
+    now_millis: i64,
+    profile_operation_id: &str,
+    settings_operation_id: &str,
+    prior_profile_revision: Option<&HealthSyncRevision>,
+    prior_settings_revision: Option<&HealthSyncRevision>,
+) -> JournalWriteSet {
+    let owner = owner_or_legacy(owner_identity);
+    let mut updated_settings = current_settings.clone();
+    outcome.settings_patch.apply_to(&mut updated_settings);
+
+    let profile_payload = sync_codec::profile_payload(&outcome.profile);
+    let settings_payload = sync_codec::settings_payload(&updated_settings);
+
+    let mk = |record_id: &str,
+              operation_id: &str,
+              payload: String,
+              prior: Option<&HealthSyncRevision>| {
+        let revision = prior.map(|p| p.revision).unwrap_or(0) + 1;
+        let server_revision = prior.map(|p| p.server_revision).unwrap_or(0);
+        let hash = sync_codec::hash(Some(&payload));
+        (
+            HealthSyncRevision {
+                owner_id: owner.clone(),
+                record_id: record_id.to_string(),
+                revision,
+                payload_hash: Some(hash.clone()),
+                tombstone: false,
+                updated_at: now_millis,
+                server_revision,
+            },
+            HealthSyncOutboxEntry {
+                owner_id: owner.clone(),
+                operation_id: operation_id.to_string(),
+                record_id: record_id.to_string(),
+                kind: "UPSERT".to_string(),
+                base_revision: server_revision,
+                revision,
+                payload_json: Some(payload),
+                payload_hash: hash,
+                consent_generation,
+                attempts: 0,
+                next_attempt_at: 0,
+                last_error: None,
+                server_receipt: None,
+                server_revision: None,
+            },
+        )
+    };
+    let (profile_revision, profile_outbox) =
+        mk("profile", profile_operation_id, profile_payload, prior_profile_revision);
+    let (settings_revision, settings_outbox) = mk(
+        "settings",
+        settings_operation_id,
+        settings_payload,
+        prior_settings_revision,
+    );
+    JournalWriteSet {
+        owner,
+        updated_settings,
+        profile_revision,
+        profile_outbox,
+        settings_revision,
+        settings_outbox,
     }
 }
