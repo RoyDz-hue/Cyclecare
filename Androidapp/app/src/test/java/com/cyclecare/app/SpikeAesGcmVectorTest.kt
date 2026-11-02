@@ -36,7 +36,7 @@ class SpikeAesGcmVectorTest {
             ByteArray(0),
             "cyclecare".toByteArray(Charsets.UTF_8),
             ByteArray(64) { 'x'.code.toByte() },
-            byteArrayOf(0, 159, 146, 150),
+            byteArrayOf(0, 159.toByte(), 146.toByte(), 150.toByte()),
             ByteArray(1000) { 'q'.code.toByte() }
         )
         for (pt in plaintexts) {
