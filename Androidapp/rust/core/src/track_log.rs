@@ -80,3 +80,52 @@ impl CycleDayLog {
             || self.pain_intensity > 0
     }
 }
+
+// ---------- conversions to/from the sync wire model ----------
+// Production has ONE CycleDayLog data class; this port keeps the Room
+// entity (verbatim field names, Kotlin Float=f32/Int=i32) here and the
+// health-sync wire view in sync_codec. Convert at the boundary.
+
+impl From<&CycleDayLog> for crate::sync_codec::CycleDayLog {
+    fn from(log: &CycleDayLog) -> Self {
+        crate::sync_codec::CycleDayLog {
+            date: log.date_string.clone(),
+            flow: log.flow_level.clone(),
+            energy: log.energy_level.clone(),
+            mood: log.mood_level.clone(),
+            symptoms: log.symptoms_csv.clone(),
+            vaginal_health: log.vaginal_health_csv.clone(),
+            urinary_health: log.urinary_health_csv.clone(),
+            cervical_mucus: log.cervical_mucus.clone(),
+            ovulation_test: log.ovulation_test.clone(),
+            bbt_celsius: log.bbt_celsius,
+            sleep_hours: log.sleep_hours,
+            sleep_quality: log.sleep_quality.clone(),
+            water_glasses: log.water_glasses,
+            notes: log.notes.clone(),
+            pain_intensity: log.pain_intensity,
+        }
+    }
+}
+
+impl From<&crate::sync_codec::CycleDayLog> for CycleDayLog {
+    fn from(w: &crate::sync_codec::CycleDayLog) -> Self {
+        CycleDayLog {
+            date_string: w.date.clone(),
+            flow_level: w.flow.clone(),
+            energy_level: w.energy.clone(),
+            mood_level: w.mood.clone(),
+            symptoms_csv: w.symptoms.clone(),
+            vaginal_health_csv: w.vaginal_health.clone(),
+            urinary_health_csv: w.urinary_health.clone(),
+            cervical_mucus: w.cervical_mucus.clone(),
+            ovulation_test: w.ovulation_test.clone(),
+            bbt_celsius: w.bbt_celsius,
+            sleep_hours: w.sleep_hours,
+            sleep_quality: w.sleep_quality.clone(),
+            water_glasses: w.water_glasses,
+            notes: w.notes.clone(),
+            pain_intensity: w.pain_intensity,
+        }
+    }
+}

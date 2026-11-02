@@ -10,7 +10,8 @@
 //! design (learning: detect, preserve, never delete).
 
 use cyclecare_core::storage_db::StorageDb;
-use cyclecare_core::sync_codec::{CycleDayLog, CycleSettings, OnboardingProfile};
+use cyclecare_core::sync_codec::{CycleSettings, OnboardingProfile};
+use cyclecare_core::track_log::CycleDayLog;
 
 fn table_columns(db: &StorageDb, table: &str) -> Vec<(String, String, bool, bool)> {
     let mut stmt = db
@@ -147,13 +148,13 @@ fn reopen_preserves_rows_and_updates() {
     let _ = std::fs::remove_file(&path);
 
     let log = CycleDayLog {
-        date: "2026-11-02".into(),
-        flow: "MEDIUM".into(),
-        energy: "LOW".into(),
-        mood: String::new(),
-        symptoms: "fatigue".into(),
-        vaginal_health: String::new(),
-        urinary_health: String::new(),
+        date_string: "2026-11-02".into(),
+        flow_level: "MEDIUM".into(),
+        energy_level: "LOW".into(),
+        mood_level: String::new(),
+        symptoms_csv: "fatigue".into(),
+        vaginal_health_csv: String::new(),
+        urinary_health_csv: String::new(),
         cervical_mucus: String::new(),
         ovulation_test: "NONE".into(),
         bbt_celsius: 0.0,
@@ -172,16 +173,16 @@ fn reopen_preserves_rows_and_updates() {
     {
         let db = StorageDb::open_file(&path).unwrap();
         let got = db.get_log_by_date("2026-11-02").unwrap().unwrap();
-        assert_eq!(got.flow, "MEDIUM");
+        assert_eq!(got.flow_level, "MEDIUM");
         assert!(db.get_settings().unwrap().is_some());
         assert!(db.get_profile().unwrap().is_some());
         // update through REPLACE
-        let updated = CycleDayLog { flow: "HEAVY".into(), ..log.clone() };
+        let updated = CycleDayLog { flow_level: "HEAVY".into(), ..log.clone() };
         db.insert_or_update_log(&updated).unwrap();
     }
     {
         let db = StorageDb::open_file(&path).unwrap();
-        assert_eq!(db.get_log_by_date("2026-11-02").unwrap().unwrap().flow, "HEAVY");
+        assert_eq!(db.get_log_by_date("2026-11-02").unwrap().unwrap().flow_level, "HEAVY");
         assert_eq!(db.get_all_logs().unwrap().len(), 1, "REPLACE must not duplicate the PK row");
     }
     std::fs::remove_dir_all(&dir).ok();

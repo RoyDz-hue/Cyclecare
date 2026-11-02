@@ -22,7 +22,8 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::sync_codec::{CycleDayLog, CycleSettings, OnboardingProfile};
+use crate::sync_codec::{CycleSettings, OnboardingProfile};
+use crate::track_log::CycleDayLog;
 
 const DDL: &str = include_str!("../fixtures/schema/room-ddl-18dd603.sql");
 
@@ -71,13 +72,13 @@ impl StorageDb {
             .prepare("SELECT * FROM cycle_day_logs ORDER BY dateString DESC")?;
         let rows = stmt.query_map([], |row| {
             Ok(CycleDayLog {
-                date: row.get("dateString")?,
-                flow: row.get("flowLevel")?,
-                energy: row.get("energyLevel")?,
-                mood: row.get("moodLevel")?,
-                symptoms: row.get("symptomsCsv")?,
-                vaginal_health: row.get("vaginalHealthCsv")?,
-                urinary_health: row.get("urinaryHealthCsv")?,
+                date_string: row.get("dateString")?,
+                flow_level: row.get("flowLevel")?,
+                energy_level: row.get("energyLevel")?,
+                mood_level: row.get("moodLevel")?,
+                symptoms_csv: row.get("symptomsCsv")?,
+                vaginal_health_csv: row.get("vaginalHealthCsv")?,
+                urinary_health_csv: row.get("urinaryHealthCsv")?,
                 cervical_mucus: row.get("cervicalMucus")?,
                 ovulation_test: row.get("ovulationTest")?,
                 bbt_celsius: row.get("bbtCelsius")?,
@@ -99,13 +100,13 @@ impl StorageDb {
                 params![date],
                 |row| {
                     Ok(CycleDayLog {
-                        date: row.get("dateString")?,
-                        flow: row.get("flowLevel")?,
-                        energy: row.get("energyLevel")?,
-                        mood: row.get("moodLevel")?,
-                        symptoms: row.get("symptomsCsv")?,
-                        vaginal_health: row.get("vaginalHealthCsv")?,
-                        urinary_health: row.get("urinaryHealthCsv")?,
+                        date_string: row.get("dateString")?,
+                        flow_level: row.get("flowLevel")?,
+                        energy_level: row.get("energyLevel")?,
+                        mood_level: row.get("moodLevel")?,
+                        symptoms_csv: row.get("symptomsCsv")?,
+                        vaginal_health_csv: row.get("vaginalHealthCsv")?,
+                        urinary_health_csv: row.get("urinaryHealthCsv")?,
                         cervical_mucus: row.get("cervicalMucus")?,
                         ovulation_test: row.get("ovulationTest")?,
                         bbt_celsius: row.get("bbtCelsius")?,
@@ -125,8 +126,8 @@ impl StorageDb {
         self.conn.execute(
             "INSERT OR REPLACE INTO cycle_day_logs (dateString, flowLevel, energyLevel, moodLevel, symptomsCsv, vaginalHealthCsv, urinaryHealthCsv, cervicalMucus, ovulationTest, bbtCelsius, sleepHours, sleepQuality, waterGlasses, notes, painIntensity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
-                log.date, log.flow, log.energy, log.mood, log.symptoms, log.vaginal_health,
-                log.urinary_health, log.cervical_mucus, log.ovulation_test, log.bbt_celsius,
+                log.date_string, log.flow_level, log.energy_level, log.mood_level, log.symptoms_csv, log.vaginal_health_csv,
+                log.urinary_health_csv, log.cervical_mucus, log.ovulation_test, log.bbt_celsius,
                 log.sleep_hours, log.sleep_quality, log.water_glasses, log.notes, log.pain_intensity
             ],
         )?;
@@ -378,13 +379,13 @@ mod tests {
 
     fn log(date: &str, pain: i32) -> CycleDayLog {
         CycleDayLog {
-            date: date.to_string(),
-            flow: "MEDIUM".to_string(),
-            energy: String::new(),
-            mood: String::new(),
-            symptoms: "cramps".to_string(),
-            vaginal_health: String::new(),
-            urinary_health: String::new(),
+            date_string: date.to_string(),
+            flow_level: "MEDIUM".to_string(),
+            energy_level: String::new(),
+            mood_level: String::new(),
+            symptoms_csv: "cramps".to_string(),
+            vaginal_health_csv: String::new(),
+            urinary_health_csv: String::new(),
             cervical_mucus: String::new(),
             ovulation_test: "NONE".to_string(),
             bbt_celsius: 36.5,
@@ -405,12 +406,12 @@ mod tests {
         db.insert_or_update_log(&log("2026-11-02", 7)).unwrap();
         // ORDER BY dateString DESC
         let all = db.get_all_logs().unwrap();
-        assert_eq!(all.iter().map(|l| l.date.as_str()).collect::<Vec<_>>(),
+        assert_eq!(all.iter().map(|l| l.date_string.as_str()).collect::<Vec<_>>(),
             vec!["2026-11-02", "2026-11-01", "2026-10-30"]);
         // LIMIT 1 lookup + field round-trip (incl f32 REAL columns)
         let one = db.get_log_by_date("2026-11-01").unwrap().unwrap();
         assert_eq!(one.pain_intensity, 3);
-        assert_eq!(one.symptoms, "cramps");
+        assert_eq!(one.symptoms_csv, "cramps");
         assert!((one.bbt_celsius - 36.5).abs() < 1e-6);
         assert!(db.get_log_by_date("2020-01-01").unwrap().is_none());
         // REPLACE conflict strategy on the PRIMARY KEY

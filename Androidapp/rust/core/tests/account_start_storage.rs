@@ -9,7 +9,8 @@ use cyclecare_core::account_start::LocalDataState;
 use cyclecare_core::owner_data_gate::namespace_for;
 use cyclecare_core::startup_route::{route, ShellRoute, StartupInput};
 use cyclecare_core::storage_db::StorageDb;
-use cyclecare_core::sync_codec::{CycleDayLog, CycleSettings, OnboardingProfile};
+use cyclecare_core::sync_codec::{CycleSettings, OnboardingProfile};
+use cyclecare_core::track_log::CycleDayLog;
 
 fn temp_db_path(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("cc-storage-{}-{}", tag, std::process::id()));
@@ -17,15 +18,15 @@ fn temp_db_path(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-fn sample_log(date: &str) -> CycleDayLog {
+fn sample_log(date_string: &str) -> CycleDayLog {
     CycleDayLog {
-        date: date.to_string(),
-        flow: "MEDIUM".to_string(),
-        energy: "LOW".to_string(),
-        mood: String::new(),
-        symptoms: "fatigue".to_string(),
-        vaginal_health: String::new(),
-        urinary_health: String::new(),
+        date_string: date_string.to_string(),
+        flow_level: "MEDIUM".to_string(),
+        energy_level: "LOW".to_string(),
+        mood_level: String::new(),
+        symptoms_csv: "fatigue".to_string(),
+        vaginal_health_csv: String::new(),
+        urinary_health_csv: String::new(),
         cervical_mucus: String::new(),
         ovulation_test: "NONE".to_string(),
         bbt_celsius: 0.0,
@@ -76,7 +77,7 @@ fn reopen_same_owner_preserves_onboarding_settings_and_logs() {
         assert_eq!(profile.account_mode, "ACCOUNT");
         let logs = db.get_all_logs().unwrap();
         assert_eq!(logs.len(), 2);
-        assert_eq!(logs[0].date, "2026-11-02"); // DESC order
+        assert_eq!(logs[0].date_string, "2026-11-02"); // DESC order
 
         // Cold-start route with the storage-backed verdicts: Home.
         let decision = route(&StartupInput {
@@ -120,5 +121,54 @@ fn empty_owner_db_is_not_treated_as_completed() {
         remote_profile: Some(false),
     });
     assert_eq!(decision, ShellRoute::Onboarding);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Track surface round-trip: TrackDayState -> candidate_log -> scratch-SQLite
+/// -> reopen -> reset_from_log restores every holder; a second save for the
+/// same date REPLACES (Room OnConflictStrategy.REPLACE), never duplicates.
+#[test]
+fn track_candidate_round_trips_through_scratch_storage() {
+    use cyclecare_core::storage_db::StorageDb;
+    use cyclecare_core::track_vm::TrackDayState;
+
+    let dir = std::env::temp_dir().join(format!("cc_track_rt_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut st = TrackDayState::default();
+    st.selected_energy = "NORMAL".into();
+    st.selected_mood = "GOOD".into();
+    st.selected_symptoms.toggle("cramps");
+    st.selected_symptoms.toggle("acne");
+    st.increment_water();
+    st.set_sleep_hours(6.5);
+    st.notes_text = "first day".into();
+    let candidate = st.candidate_log("2026-11-02");
+    assert!(candidate.has_recorded_observations());
+
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        db.insert_or_update_log(&candidate).unwrap();
+    }
+    // Reopen: the stored row drives reset_from_log back to the same state.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let stored = db.get_log_by_date("2026-11-02").unwrap().expect("log persisted");
+        let restored = TrackDayState::reset_from_log(Some(&stored));
+        assert_eq!(restored.selected_energy, "NORMAL");
+        assert_eq!(restored.selected_mood, "GOOD");
+        assert_eq!(restored.selected_symptoms.join_csv(), "cramps,acne");
+        assert!(restored.water_recorded && restored.water_count == 1);
+        assert!(restored.sleep_hours_recorded && restored.sleep_hours == 6.5);
+        assert_eq!(restored.notes_text, "first day");
+
+        // Second save same date_string: REPLACE, still exactly one row.
+        let mut st2 = restored;
+        st2.notes_text = "edited".into();
+        db.insert_or_update_log(&st2.candidate_log("2026-11-02")).unwrap();
+        assert_eq!(db.get_all_logs().unwrap().len(), 1);
+        assert_eq!(db.get_log_by_date("2026-11-02").unwrap().unwrap().notes, "edited");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
