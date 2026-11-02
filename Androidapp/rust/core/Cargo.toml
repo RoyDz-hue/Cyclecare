@@ -7,6 +7,8 @@ license = "UNLICENSED"
 
 [dependencies]
 sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
 regex = "1"
 unicode-general-category = "1"
 bigdecimal = "0.4"

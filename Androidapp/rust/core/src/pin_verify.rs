@@ -24,6 +24,10 @@
 
 use sha2::{Digest, Sha256};
 
+// Vetted RustCrypto primitives (hmac/pbkdf2 0.12, matching sha2 0.10);
+// replaces the earlier hand-rolled HMAC/PBKDF2 per review. The JVM-probed
+// corpus vectors below are unchanged and re-executed against these crates.
+
 pub const PBKDF2_PREFIX: &str = "pbkdf2:";
 pub const PBKDF2_ITERATIONS: u32 = 150_000;
 pub const PBKDF2_MIN_ACCEPTED_ITERATIONS: u32 = 50_000;
@@ -38,44 +42,13 @@ pub fn password_bytes(raw: &str) -> Vec<u8> {
     raw.as_bytes().to_vec()
 }
 
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
-    let mut k = [0u8; 64];
-    if key.len() > 64 {
-        let h = Sha256::digest(key);
-        k[..32].copy_from_slice(&h);
-    } else {
-        k[..key.len()].copy_from_slice(key);
-    }
-    let mut ipad = [0x36u8; 64];
-    let mut opad = [0x5cu8; 64];
-    for i in 0..64 {
-        ipad[i] ^= k[i];
-        opad[i] ^= k[i];
-    }
-    let mut inner = Sha256::new();
-    inner.update(ipad);
-    inner.update(msg);
-    let ih = inner.finalize();
-    let mut outer = Sha256::new();
-    outer.update(opad);
-    outer.update(ih);
-    outer.finalize().into()
-}
-
-/// PBKDF2-HMAC-SHA256, single 32-byte block (dkLen = 256 bits = one block).
+/// PBKDF2-HMAC-SHA256, single 32-byte block (dkLen = 256 bits = one block),
+/// via the maintained RustCrypto pbkdf2 crate.
 pub fn pbkdf2(raw: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
     let pw = password_bytes(raw);
-    let mut block = salt.to_vec();
-    block.extend_from_slice(&1u32.to_be_bytes());
-    let mut u = hmac_sha256(&pw, &block);
-    let mut t = u;
-    for _ in 1..iterations {
-        u = hmac_sha256(&pw, &u);
-        for i in 0..32 {
-            t[i] ^= u[i];
-        }
-    }
-    t
+    let mut out = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(&pw, salt, iterations, &mut out);
+    out
 }
 
 fn to_hex(bytes: &[u8]) -> String {
