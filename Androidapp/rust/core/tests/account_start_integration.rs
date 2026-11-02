@@ -496,3 +496,48 @@ fn completion_journal_rows_are_owner_scoped() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+
+/// Replay contract: completing twice with the SAME operation ids must behave
+/// exactly like the Kotlin Room upsert - the local revision still bumps
+/// (no stronger idempotency is invented at the journal layer) and the outbox
+/// rows are REPLACED (one row per record, not appended duplicates).
+#[test]
+fn same_operation_id_replay_bumps_revision_and_replaces_outbox() {
+    use cyclecare_core::onboarding_complete::complete_onboarding;
+    use cyclecare_core::onboarding_vm::OnboardingState;
+    use cyclecare_core::storage_db::StorageDb;
+
+    let dir = std::env::temp_dir().join(format!("cc_replay_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let mut s = OnboardingState::new();
+    s.toggle_goal("Track my periods");
+    s.set_exact_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(), t);
+    s.set_exact_end_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(), t);
+    s.select_cycle_option("28 days", 28);
+    let outcome = complete_onboarding(&s.completion_params(t), "PRIVATE", 1_762_000_000_000, false, false);
+
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        db.complete_onboarding_transaction(&outcome, Some("u1"), 3, 1_762_000_000_500, "op-p1", "op-s1")
+            .unwrap();
+    }
+    // Replay: identical operation ids, a later write time.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let writes = db
+            .complete_onboarding_transaction(&outcome, Some("u1"), 3, 1_762_000_001_000, "op-p1", "op-s1")
+            .unwrap();
+        assert_eq!(writes.profile_revision.revision, 2, "revision still bumps on replay");
+        assert_eq!(writes.settings_revision.revision, 2);
+        let outbox = db.list_outbox("u1").unwrap();
+        assert_eq!(outbox.len(), 2, "Room upsert replaces, never duplicates");
+        assert_eq!(outbox[0].operation_id, "op-p1");
+        assert_eq!(outbox[1].operation_id, "op-s1");
+        assert!(outbox.iter().all(|e| e.revision == 2 && e.base_revision == 0 && e.attempts == 0), "base = prior serverRevision (Kotlin contract)");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

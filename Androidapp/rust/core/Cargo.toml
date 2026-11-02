@@ -20,3 +20,9 @@ rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 [features]
 default = ["sqlite"]
 sqlite = ["rusqlite"]
+# Integration-test-only hooks (failure injection). Not compiled into release
+# or FFI builds; enabled solely via the self dev-dependency below.
+test-support = ["sqlite"]
+
+[dev-dependencies]
+cyclecare-core = { path = ".", features = ["test-support"] }

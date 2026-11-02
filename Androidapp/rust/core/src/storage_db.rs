@@ -39,7 +39,11 @@ fn int_to_bool(v: i32) -> bool {
 
 impl StorageDb {
     /// Open an in-memory database with the mirrored schema applied.
-    /// Raw connection access for failure-injection in tests.
+    /// Raw connection access, compiled ONLY for integration-test failure
+    /// injection via the `test-support` feature (enabled through the crate's
+    /// own dev-dependency). Never present in release or FFI builds.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
     pub fn conn_ref(&self) -> &Connection {
         &self.conn
     }
