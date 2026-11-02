@@ -205,20 +205,25 @@ pub fn post_message(
         Some(r) => r,
         None => return fail(t::PostOutcome::Failed, None),
     };
-    match serde_json::from_str::<serde_json::Value>(&raw) {
-        // Malformed: JSONArray() throws -> soft echo.
+    // Source boundaries (CommunityGuidesService.kt:182-215), executed against
+    // the compiled AOSP14 org.json classes (PostProbe, 2026-11-03):
+    // - JSONArray(raw) THROWS (malformed, or valid non-array like "{}") ->
+    //   catch -> SOFT ECHO ("the write may still have landed").
+    // - JSONArray ok but optJSONObject(0) null (empty array, or first element
+    //   not an object) -> return null -> FAILED.
+    // - Object row: AOSP optString - numeric 42 -> "42", boolean -> "true",
+    //   EXPLICIT JSON NULL -> literal "null" (accepted as remoteId "null"!
+    //   parity quirk, safety-review labeled), missing/blank -> None.
+    match crate::sync_codec::JsonParser::new(&raw).parse() {
         Err(_) => soft_echo(topic_id, alias, trimmed, now_ms),
-        Ok(v) => match v.as_array() {
-            // Valid non-array ("{}"): JSONArray() throws -> soft echo.
-            None => soft_echo(topic_id, alias, trimmed, now_ms),
-            Some(a) => match a.first() {
-                // optJSONObject(0) null (empty array or non-object first
-                // element) -> source returns null: FAILED.
-                Some(f) if f.is_object() => {
-                    let obj = f.as_object().unwrap();
-                    let id_raw = crate::kotlin_text::kotlin_trim(&aosp_opt_string_row(obj.get("id"))).to_string();
+        Ok(v) => match &v {
+            crate::sync_codec::JsonValue::Array(rows) => match rows.first() {
+                Some(row @ crate::sync_codec::JsonValue::Object(_)) => {
+                    let id_raw = crate::kotlin_text::kotlin_trim(
+                        &crate::sync_codec::aosp_opt_string(row, "id", ""),
+                    ).to_string();
                     let remote_id = if id_raw.is_empty() { None } else { Some(id_raw) };
-                    let created_raw = aosp_opt_string_row(obj.get("created_at"));
+                    let created_raw = crate::sync_codec::aosp_opt_string(row, "created_at", "");
                     let timestamp_ms = crate::notifications::parse_iso_timestamp(Some(&created_raw));
                     PostResult {
                         outcome: t::PostOutcome::Confirmed { remote_id: remote_id.clone(), timestamp_ms },
@@ -234,8 +239,9 @@ pub fn post_message(
                         }),
                     }
                 }
-                _ => fail(t::PostOutcome::Failed, None),
+                _ => PostResult { outcome: t::PostOutcome::Failed, message: None },
             },
+            _ => soft_echo(topic_id, alias, trimmed, now_ms),
         },
     }
 }
@@ -253,18 +259,6 @@ fn soft_echo(topic_id: &str, alias: String, trimmed: String, now_ms: i64) -> Pos
             remote_id: None,
             is_flagged: false,
         }),
-    }
-}
-
-/// AOSP optString on a row value: strings as-is, numbers/booleans
-/// STRINGIFIED, missing/null -> "".
-fn aosp_opt_string_row(v: Option<&serde_json::Value>) -> String {
-    match v {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        Some(serde_json::Value::Bool(b)) => b.to_string(),
-        Some(serde_json::Value::Number(n)) => n.to_string(),
-        Some(other) => other.to_string(),
-        None | Some(serde_json::Value::Null) => String::new(),
     }
 }
 

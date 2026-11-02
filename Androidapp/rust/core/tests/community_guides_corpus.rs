@@ -89,3 +89,24 @@ fn take_utf16_surrogate_boundary_jvm_probed() {
         format!("{}\u{1F338}", "a".repeat(498))
     );
 }
+
+#[test]
+fn aosp_explicit_null_is_literal_string() {
+    // Executed on the compiled AOSP14 org.json classes (PostProbe,
+    // 2026-11-03): explicit JSON null optString -> literal "null"; MISSING
+    // key -> "". Parity quirk (a null id/content is ACCEPTED as the literal
+    // string), safety-review labeled, not hardened away.
+    let raw = r#"[
+        {"id":"m1","user_id":"u","content":"ok","created_at":null},
+        {"id":null,"user_id":"u","content":"hi"},
+        {"id":"m2","user_id":"u","content":null}
+    ]"#;
+    let msgs = parse_circle_messages(raw, "c", None).unwrap();
+    assert_eq!(msgs.len(), 3, "explicit-null content becomes the literal 'null'");
+    assert_eq!(msgs[0].timestamp_ms, 0, "created_at null -> 'null' -> unparseable -> 0");
+    assert_eq!(msgs[1].remote_id.as_deref(), Some("null"));
+    assert_eq!(msgs[2].content, "null");
+    let topics = parse_topics(r#"[{"id":"t","title":"T","description":null},{"id":"t2","title":"T2"}]"#).unwrap();
+    assert_eq!(topics[0].description, "null");
+    assert_eq!(topics[1].description, "");
+}

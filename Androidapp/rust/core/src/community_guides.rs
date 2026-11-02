@@ -33,17 +33,27 @@ pub struct ServerTopic {
     pub description: String,
 }
 
-/// org.json optString: present string -> itself; present non-string -> its
-/// JSON text (String.valueOf); missing/null -> "".
-fn opt_string(v: Option<&serde_json::Value>) -> String {
+/// AOSP optString via the sync_codec JsonValue row: string as-is; explicit
+/// JSON null -> the LITERAL "null" (OptStringNullProbe on AOSP14 classes);
+/// missing -> ""; numbers/booleans stringified; nested -> JSON text.
+fn opt_string(obj: &crate::sync_codec::JsonValue, key: &str) -> String {
+    crate::sync_codec::aosp_opt_string(obj, key, "")
+}
+
+fn obj_get<'a>(obj: &'a crate::sync_codec::JsonValue, key: &str) -> Option<&'a crate::sync_codec::JsonValue> {
+    match obj {
+        crate::sync_codec::JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    }
+}
+
+/// org.json optBoolean(v, false): Boolean true, or string "true"
+/// (case-insensitive per Boolean.parseBoolean); everything else false.
+fn opt_boolean_false(v: Option<&crate::sync_codec::JsonValue>) -> bool {
     match v {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        Some(serde_json::Value::Null) | None => String::new(),
-        // AOSP String.valueOf for JSON numbers/booleans is their plain text
-        // ("42", "true"); arrays/objects render via their JSON toString.
-        Some(serde_json::Value::Bool(b)) => b.to_string(),
-        Some(serde_json::Value::Number(n)) => n.to_string(),
-        Some(other) => other.to_string(),
+        Some(crate::sync_codec::JsonValue::Bool(b)) => *b,
+        Some(crate::sync_codec::JsonValue::Str(s)) => s.eq_ignore_ascii_case("true"),
+        _ => false,
     }
 }
 
@@ -51,20 +61,22 @@ fn opt_string(v: Option<&serde_json::Value>) -> String {
 /// skip rows with empty id or title; non-object rows skipped (optJSONObject
 /// returns null).
 pub fn parse_topics(raw: &str) -> Option<Vec<ServerTopic>> {
-    let arr: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let arr = arr.as_array()?;
+    let v = crate::sync_codec::JsonParser::new(raw).parse().ok()?;
+    let crate::sync_codec::JsonValue::Array(rows) = &v else { return None };
     let mut out = Vec::new();
-    for row in arr {
-        let Some(obj) = row.as_object() else { continue };
-        let id = kotlin_trim(&opt_string(obj.get("id"))).to_string();
-        let title = kotlin_trim(&opt_string(obj.get("title"))).to_string();
+    for row in rows {
+        if !matches!(row, crate::sync_codec::JsonValue::Object(_)) {
+            continue;
+        }
+        let id = kotlin_trim(&opt_string(row, "id")).to_string();
+        let title = kotlin_trim(&opt_string(row, "title")).to_string();
         if id.is_empty() || title.is_empty() {
             continue;
         }
         out.push(ServerTopic {
             id,
             title,
-            description: kotlin_trim(&opt_string(obj.get("description"))).to_string(),
+            description: kotlin_trim(&opt_string(row, "description")).to_string(),
         });
     }
     Some(out)
@@ -93,16 +105,6 @@ fn take_500_utf16(s: &str) -> String {
     crate::kotlin_text::take_utf16(s, 500)
 }
 
-/// org.json optBoolean(v, false): Boolean true, or string "true"
-/// (case-insensitive per Boolean.parseBoolean); everything else false.
-fn opt_boolean_false(v: Option<&serde_json::Value>) -> bool {
-    match v {
-        Some(serde_json::Value::Bool(b)) => *b,
-        Some(serde_json::Value::String(s)) => s.eq_ignore_ascii_case("true"),
-        _ => false,
-    }
-}
-
 /// fetchMessages row loop (verbatim): skip empty trimmed content; persona_id
 /// lowercase-trim-ifBlank; alias fallback "Community Guide"/"Member";
 /// content take(500); isSelf = case-sensitive id equality; is_flagged
@@ -111,27 +113,29 @@ fn opt_boolean_false(v: Option<&serde_json::Value>) -> bool {
 /// channel_id populates the source's channelId = serverTopicId; timestamp_ms
 /// is parse_iso_timestamp(created_at) (unparseable -> 0, sorts oldest).
 pub fn parse_circle_messages(raw: &str, channel_id: &str, self_id: Option<&str>) -> Option<Vec<CircleMessage>> {
-    let arr: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let arr = arr.as_array()?;
+    let v = crate::sync_codec::JsonParser::new(raw).parse().ok()?;
+    let crate::sync_codec::JsonValue::Array(rows) = &v else { return None };
     let mut out = Vec::new();
-    for row in arr {
-        let Some(obj) = row.as_object() else { continue };
-        let content = kotlin_trim(&opt_string(obj.get("content"))).to_string();
+    for row in rows {
+        if !matches!(row, crate::sync_codec::JsonValue::Object(_)) {
+            continue;
+        }
+        let content = kotlin_trim(&opt_string(row, "content")).to_string();
         if content.is_empty() {
             continue;
         }
-        let persona_raw = kotlin_trim(&opt_string(obj.get("persona_id"))).to_lowercase();
+        let persona_raw = kotlin_trim(&opt_string(row, "persona_id")).to_lowercase();
         let persona_id = if persona_raw.is_empty() { None } else { Some(persona_raw) };
-        let alias_raw = opt_string(obj.get("sender_alias"));
+        let alias_raw = opt_string(row, "sender_alias");
         let sender_alias = if alias_raw.is_empty() {
             if persona_id.is_some() { "Community Guide" } else { "Member" }.to_string()
         } else {
             alias_raw
         };
-        let author_raw = kotlin_trim(&opt_string(obj.get("user_id"))).to_string();
+        let author_raw = kotlin_trim(&opt_string(row, "user_id")).to_string();
         let author_id = if author_raw.is_empty() { None } else { Some(author_raw) };
-        let remote_raw = kotlin_trim(&opt_string(obj.get("id"))).to_string();
-        let created_raw = opt_string(obj.get("created_at"));
+        let remote_raw = kotlin_trim(&opt_string(row, "id")).to_string();
+        let created_raw = opt_string(row, "created_at");
         out.push(CircleMessage {
             channel_id: channel_id.to_string(),
             timestamp_ms: crate::notifications::parse_iso_timestamp(Some(&created_raw)),
@@ -140,7 +144,7 @@ pub fn parse_circle_messages(raw: &str, channel_id: &str, self_id: Option<&str>)
             is_self: author_id.is_some() && author_id.as_deref() == self_id,
             persona_id,
             remote_id: if remote_raw.is_empty() { None } else { Some(remote_raw) },
-            is_flagged: opt_boolean_false(obj.get("is_flagged")),
+            is_flagged: opt_boolean_false(obj_get(row, "is_flagged")),
         });
     }
     Some(out)
