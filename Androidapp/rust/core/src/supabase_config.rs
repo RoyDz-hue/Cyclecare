@@ -178,3 +178,101 @@ pub fn resolve_client_settings(url: Option<&str>, api_key: Option<&str>) -> Clie
 pub fn resolve_public_api_key(value: Option<&str>) -> String {
     parse_public_api_key(value).unwrap_or_else(|| DEFAULT_PUBLISHABLE_KEY.to_string())
 }
+
+// ============================ PROPOSED hardened seam ============================
+// main 01:44 review: NOT wired into any production path; the parity chain
+// above is unchanged. Grounding: a disabled seam yields a RELATIVE rest_url
+// ("" + "/rest/v1") that OkHttp throws on; the Rust parity chain delegates
+// the relative URL to the injected transport instead (recorded divergence).
+// This guard refuses everything but a validated configured ABSOLUTE origin
+// and re-validates every request URL structurally (scheme/host/port
+// equality, never string-prefix matching).
+
+/// A validated, absolute endpoint origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EndpointOrigin {
+    /// https://<host>.supabase.co - host lowercased, no path/userinfo.
+    Remote(String),
+    /// One of the three exact source-approved local build constants.
+    LocalBuild(&'static str),
+}
+
+impl EndpointOrigin {
+    pub fn base(&self) -> String {
+        match self {
+            EndpointOrigin::Remote(h) => format!("https://{h}"),
+            EndpointOrigin::LocalBuild(l) => l.to_string(),
+        }
+    }
+    pub fn rest_url(&self) -> String {
+        format!("{}/rest/v1", self.base())
+    }
+    /// Structural (scheme, host, port) equality against a candidate absolute
+    /// URL. NOT a prefix check: userinfo, alternate ports, and host tricks
+    /// all fail. Redirect-origin changes therefore cannot match.
+    pub fn allows(&self, absolute_url: &str) -> bool {
+        let Some((scheme, host, port)) = parse_authority(absolute_url) else { return false; };
+        match self {
+            EndpointOrigin::Remote(h) => {
+                scheme == "https" && host == h.to_lowercase() && port.is_none()
+            }
+            EndpointOrigin::LocalBuild(l) => {
+                // l is "http://<host>:54321"; split once.
+                let want = &l["http://".len()..];
+                let (whost, wport) = want.split_once(':').unwrap_or((want, ""));
+                scheme == "http" && host == whost && port == Some(wport)
+            }
+        }
+    }
+}
+
+/// Strict absolute-URL authority parse: `scheme://host[:port]/...`.
+/// Rejects userinfo ('@' before the first '/'), empty host, non-lowercase-
+/// normalizable hosts, and anything without an explicit "://".
+fn parse_authority(url: &str) -> Option<(String, String, Option<&str>)> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() || !scheme.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return None; // userinfo is never acceptable on a credentialed origin
+    }
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    if host.is_empty() || !host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') {
+        return None;
+    }
+    if let Some(p) = port {
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+    }
+    Some((scheme.to_lowercase(), host.to_lowercase(), port))
+}
+
+/// Validate resolved settings into an absolute origin. Exact local build
+/// constants only - arbitrary localhost variants are NOT source-approved.
+pub fn validated_origin(settings: &ClientSettings) -> Option<EndpointOrigin> {
+    if !settings.is_configured() {
+        return None;
+    }
+    const LOCAL: [&str; 3] = [
+        "http://localhost:54321",
+        "http://127.0.0.1:54321",
+        "http://10.0.2.2:54321",
+    ];
+    for l in LOCAL {
+        if settings.url == l {
+            return Some(EndpointOrigin::LocalBuild(l));
+        }
+    }
+    let host = settings.url.strip_prefix("https://")?;
+    if !host_is_supabase(host) {
+        return None;
+    }
+    Some(EndpointOrigin::Remote(host.to_lowercase()))
+}

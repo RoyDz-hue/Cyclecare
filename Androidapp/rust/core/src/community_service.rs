@@ -304,3 +304,91 @@ pub fn community_pulse(
         _ => false,
     }
 }
+
+// ============================ PROPOSED hardened seam ============================
+// main 01:44 review: NOT wired anywhere; the parity functions above are
+// unchanged. Adds, over the parity path:
+//   1. validated configured ABSOLUTE origin (supabase_config::validated_origin)
+//      - a disabled/relative seam is refused BEFORE any transport call;
+//   2. owner re-binding on the resolved token: validTokenForOwner structure
+//      (sub == store owner, exp future) re-checked even when the fast path
+//      returned the opaque stored token (parity gap recorded in
+//      owner_bound_adapter::fast_path_returns_stored_token_without_sub_recheck_is_parity);
+//   3. explicit refusal on unavailable (insecure) or ownerless/corrupt store;
+//   4. per-request origin re-validation: the bearer is only handed to the
+//      transport when the exact request URL structurally matches the
+//      validated origin, so a redirect/origin change cannot receive it.
+// ADAPTER OBLIGATION for any real transport: disable redirect following or
+// re-run EndpointOrigin::allows on every hop before attaching credentials.
+
+use crate::supabase_config::{validated_origin, EndpointOrigin};
+
+/// Hardened fetchTopicsWithStatus proposal. Same response interpretation;
+/// stricter preconditions. `store` is refused when insecure or when the
+/// owner identity is absent/blank.
+pub fn hardened_fetch_topics_with_status(
+    store: &mut SessionStore,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HttpTransport,
+) -> (Vec<crate::community_guides::ServerTopic>, CircleStatus) {
+    // (3) unavailable/corrupt store refusal, before anything else.
+    if !store.is_secure_storage_available() {
+        return (vec![], CircleStatus::SignInUnconfirmed);
+    }
+    let owner = match store.user_id() {
+        Some(u) if !crate::kotlin_text::kotlin_is_blank(u) => u.to_string(),
+        _ => return (vec![], CircleStatus::SignInUnconfirmed),
+    };
+    // (1) validated configured absolute origin.
+    let origin = match validated_origin(settings) {
+        Some(o) => o,
+        None => return (vec![], CircleStatus::Unavailable),
+    };
+    // (2) owner-bound resolution: parity resolve, then a structural
+    // owner-binding re-check on whatever token came back (fast-path
+    // included).
+    let token = match resolve_access_token(store, now_secs, refresh) {
+        AccessTokenResolution::Valid(t) => t,
+        AccessTokenResolution::Missing | AccessTokenResolution::ReauthenticationRequired => {
+            return (vec![], CircleStatus::SignInUnconfirmed)
+        }
+        AccessTokenResolution::TemporarilyUnavailable => return (vec![], CircleStatus::Unavailable),
+    };
+    if !crate::session_token::valid_token_for_owner(&token, &owner, now_secs) {
+        return (vec![], CircleStatus::SignInUnconfirmed);
+    }
+    // (4) build from the validated origin and re-validate the exact URL
+    // before the bearer leaves the process.
+    let req = t::fetch_topics_request();
+    let url = format!("{}{}", origin.rest_url(), req.path);
+    if !origin_allows(&origin, &url) {
+        return (vec![], CircleStatus::Unavailable);
+    }
+    let outcome = http.execute(&url, &req, token.trim());
+    let (status, body) = match outcome {
+        HttpOutcome::IoError => return (vec![], CircleStatus::Network),
+        HttpOutcome::OtherError => return (vec![], CircleStatus::Unavailable),
+        HttpOutcome::Response { status, body } => (status, body),
+    };
+    if status == 401 || status == 403 {
+        return (vec![], CircleStatus::SignInUnconfirmed);
+    }
+    if !(200..300).contains(&status) {
+        return (vec![], CircleStatus::Unavailable);
+    }
+    let raw = match body_to_string(body) {
+        Some(r) => r,
+        None => return (vec![], CircleStatus::Unavailable),
+    };
+    match crate::community_guides::parse_topics(&raw) {
+        None => (vec![], CircleStatus::Unavailable),
+        Some(topics) if topics.is_empty() => (topics, CircleStatus::Empty),
+        Some(topics) => (topics, CircleStatus::Ok),
+    }
+}
+
+fn origin_allows(origin: &EndpointOrigin, absolute_url: &str) -> bool {
+    origin.allows(absolute_url)
+}

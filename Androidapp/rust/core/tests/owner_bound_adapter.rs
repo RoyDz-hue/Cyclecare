@@ -107,3 +107,240 @@ fn token_resolution_commits_back_into_prefs_view() {
     assert_eq!(again.access_token(), Some("stored-owner-token"));
     assert_eq!(again.session_generation(), prefs.session_generation);
 }
+
+// ---- Owner-binding rejection tests (main 01:42 review) ----
+// The fast path does NOT re-check the stored token's sub (source parity:
+// SupabaseSessionManager.kt:74-77 returns the stored token on expiry +
+// withCurrentSession(owner, session) alone). JWT owner binding is validated
+// on the REFRESH path (lines 94-95: user.id == owner && validTokenForOwner).
+// These tests lock that boundary and the concurrent-session guards.
+
+/// b64url (no padding) of a JSON payload; pieces join into a structurally
+/// valid JWT for the synthetic refresh body.
+fn jwt(sub: &str, exp: i64) -> String {
+    // AOSP-decoder-compatible base64url, produced via the core's own
+    // encoder-free table (test-local, mirrors session_token corpus style).
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let enc = |bytes: &[u8]| -> String {
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            out.push(T[(n >> 18) as usize & 63] as char);
+            out.push(T[(n >> 12) as usize & 63] as char);
+            if chunk.len() > 1 { out.push(T[(n >> 6) as usize & 63] as char); }
+            if chunk.len() > 2 { out.push(T[n as usize & 63] as char); }
+        }
+        out
+    };
+    format!("{}.{}.c2ln", enc(br#"{"alg":"HS256"}"#), enc(format!(r#"{{"sub":"{sub}","exp":{exp}}}"#).as_bytes()))
+}
+
+fn expired_owner_prefs() -> AuthPrefsState {
+    let mut p = owner_prefs();
+    p.session_expires_at_seconds = NOW - 100; // forces the refresh path
+    p.refresh_token = Some("stored-refresh".into());
+    p
+}
+
+#[test]
+fn mismatched_owner_refresh_user_id_rejected() {
+    // Refresh body with user.id = a DIFFERENT user: ReauthenticationRequired,
+    // nothing committed, no bearer ever reaches HTTP.
+    let foreign = jwt("owner-uid", NOW + 3600); // token sub matches, user block does not
+    let body = format!(r#"{{"access_token":"{foreign}","refresh_token":"rotated","expires_at":1700003600,"user":{{"id":"other-uid"}}}}"#);
+    let refresh = move |_: &str| Ok(cyclecare_core::session_token::RefreshResponse { code: 200, body: Some(body.clone()) });
+    let mut prefs = expired_owner_prefs();
+    let res = resolve_valid_access_token(&mut prefs, NOW, &refresh);
+    assert_eq!(res, None, "foreign user.id must reject");
+    assert_eq!(prefs.access_token.as_deref(), Some("stored-owner-token"), "no commit of foreign session");
+    assert_eq!(prefs.refresh_token.as_deref(), Some("stored-refresh"));
+
+    let cfg = config_from(&resolve_client_settings(None, None));
+    let mut store = session_store_view(&prefs);
+    let mut f = Fake::new(vec![]);
+    let (_, status) = fetch_topics_with_status(&mut store, NOW, &no_refresh(), &cfg, &mut f);
+    // Store still holds the expired session; a failing refresh maps to
+    // Unavailable (not Ok) and, critically, no bearer reaches HTTP.
+    assert_ne!(status, CircleStatus::Ok);
+    assert!(f.captured.is_empty());
+}
+
+#[test]
+fn foreign_sub_renewed_jwt_rejected() {
+    // user.id matches but the renewed JWT's sub claim belongs to someone else.
+    let foreign = jwt("other-uid", NOW + 3600);
+    let body = format!(r#"{{"access_token":"{foreign}","refresh_token":"rotated","expires_at":1700003600,"user":{{"id":"owner-uid"}}}}"#);
+    let refresh = move |_: &str| Ok(cyclecare_core::session_token::RefreshResponse { code: 200, body: Some(body.clone()) });
+    let mut prefs = expired_owner_prefs();
+    assert_eq!(resolve_valid_access_token(&mut prefs, NOW, &refresh), None);
+    assert_eq!(prefs.access_token.as_deref(), Some("stored-owner-token"));
+}
+
+#[test]
+fn well_bound_refresh_commits() {
+    // Control: matching user.id AND sub -> renewed token commits.
+    let good = jwt("owner-uid", NOW + 3600);
+    let body = format!(r#"{{"access_token":"{good}","refresh_token":"rotated","expires_at":1700003600,"user":{{"id":"owner-uid"}}}}"#);
+    let refresh = move |_: &str| Ok(cyclecare_core::session_token::RefreshResponse { code: 200, body: Some(body.clone()) });
+    let mut prefs = expired_owner_prefs();
+    let tok = resolve_valid_access_token(&mut prefs, NOW, &refresh);
+    assert_eq!(tok.as_deref(), Some(good.as_str()));
+    assert_eq!(prefs.refresh_token.as_deref(), Some("rotated"));
+}
+
+#[test]
+fn concurrent_session_change_rejects_store_guard() {
+    // The seam's consistency primitive: with_current_session re-reads
+    // user_id AND generation; a concurrent sign-in (set_user_id bumps the
+    // generation) invalidates any previously captured (owner, session).
+    let prefs = owner_prefs();
+    let mut store = session_store_view(&prefs);
+    let captured_owner = "owner-uid";
+    let captured_gen = store.session_generation();
+    // Concurrent change: another sign-in replaces the owner mid-flight.
+    store.set_user_id(Some("other-uid"));
+    assert_eq!(store.with_current_session(captured_owner, captured_gen, |_| true), None,
+        "stale owner must be rejected after concurrent change");
+    assert_eq!(store.with_current_session("other-uid", captured_gen, |_| true), None,
+        "stale generation must be rejected even for the new owner");
+    let new_gen = store.session_generation();
+    assert_ne!(new_gen, captured_gen, "sign-in bumps the generation");
+    assert_eq!(store.with_current_session("other-uid", new_gen, |_| true), Some(true));
+}
+
+#[test]
+fn fast_path_returns_stored_token_without_sub_recheck_is_parity() {
+    // Documents (not approves) the source boundary: an opaque stored token
+    // passes the fast path on expiry + session consistency alone
+    // (SupabaseSessionManager.kt:74-77). JWT sub binding is enforced on
+    // refresh only. Recorded here so the seam label stays precise.
+    let prefs = owner_prefs(); // opaque "stored-owner-token", far-future expiry
+    let mut store = session_store_view(&prefs);
+    match cyclecare_core::session_token::resolve_access_token(&mut store, NOW, &no_refresh()) {
+        cyclecare_core::session_token::AccessTokenResolution::Valid(t) => assert_eq!(t, "stored-owner-token"),
+        other => panic!("fast path must return the stored token (parity), got {other:?}"),
+    }
+}
+
+// ---- PROPOSED hardened seam (main 01:44 review) - unwired ----
+// Fake transport must receive ZERO requests on invalid origin or
+// mismatched owner.
+
+use cyclecare_core::supabase_config::{validated_origin, EndpointOrigin};
+
+fn bound_owner_prefs() -> AuthPrefsState {
+    // Fast-path stored token that IS structurally bound to the owner.
+    let mut p = owner_prefs();
+    p.access_token = Some(jwt("owner-uid", 4_000_000_000));
+    p.session_expires_at_seconds = 4_000_000_000;
+    p
+}
+
+fn remote_settings() -> ClientSettings {
+    resolve_client_settings(Some("https://abc.supabase.co"), Some("sb_publishable_12345678901234567890"))
+}
+
+#[test]
+fn hardened_refuses_relative_or_invalid_origin_with_zero_http() {
+    let prefs = bound_owner_prefs();
+    let mut store = session_store_view(&prefs);
+    let mut f = Fake::new(vec![HttpOutcome::Response { status: 200, body: TOPICS_OK.as_bytes().to_vec() }]);
+    // Disabled seam (relative rest_url in the parity chain).
+    let disabled = resolve_client_settings(Some("your_project_ref"), Some("sb_publishable_12345678901234567890"));
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &disabled, &mut f);
+    assert_eq!(st, CircleStatus::Unavailable);
+    assert!(f.captured.is_empty(), "zero requests on invalid origin");
+    // Arbitrary localhost variant is NOT a source-approved build endpoint.
+    let variant = resolve_client_settings(Some("http://localhost:54322"), Some("sb_publishable_12345678901234567890"));
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &variant, &mut f);
+    assert_eq!(st, CircleStatus::Unavailable);
+    assert!(f.captured.is_empty());
+    // Evil host.
+    let evil = resolve_client_settings(Some("https://evil.com"), Some("sb_publishable_12345678901234567890"));
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &evil, &mut f);
+    assert_eq!(st, CircleStatus::Unavailable);
+    assert!(f.captured.is_empty());
+}
+
+#[test]
+fn hardened_rejects_mismatched_owner_token_with_zero_http() {
+    // Stored fast-path token structurally bound to a DIFFERENT subject.
+    let mut prefs = owner_prefs();
+    prefs.access_token = Some(jwt("other-uid", 4_000_000_000));
+    prefs.session_expires_at_seconds = 4_000_000_000;
+    let mut store = session_store_view(&prefs);
+    let mut f = Fake::new(vec![HttpOutcome::Response { status: 200, body: TOPICS_OK.as_bytes().to_vec() }]);
+    // Parity chain WOULD send it (recorded gap):
+    let (_, parity_st) = fetch_topics_with_status(&mut store, NOW, &no_refresh(), &config_from(&remote_settings()), &mut f);
+    assert_eq!(parity_st, CircleStatus::Ok, "parity fast path leaks the foreign token (recorded)");
+    assert_eq!(f.captured.len(), 1);
+    // Hardened seam refuses, zero additional requests:
+    let mut store = session_store_view(&prefs);
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f);
+    assert_eq!(st, CircleStatus::SignInUnconfirmed);
+    assert_eq!(f.captured.len(), 1, "hardened seam added zero requests");
+}
+
+#[test]
+fn hardened_refuses_insecure_or_ownerless_store_with_zero_http() {
+    let mut prefs = bound_owner_prefs();
+    prefs.is_secure_storage_available = false;
+    let mut store = session_store_view(&prefs);
+    let mut f = Fake::new(vec![]);
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f);
+    assert_eq!(st, CircleStatus::SignInUnconfirmed);
+    assert!(f.captured.is_empty());
+    let mut prefs = bound_owner_prefs();
+    prefs.user_id = None; // corrupt/ownerless
+    let mut store = session_store_view(&prefs);
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f);
+    assert_eq!(st, CircleStatus::SignInUnconfirmed);
+    assert!(f.captured.is_empty());
+}
+
+#[test]
+fn hardened_bound_owner_flows_to_validated_absolute_url() {
+    let prefs = bound_owner_prefs();
+    let mut store = session_store_view(&prefs);
+    let mut f = Fake::new(vec![HttpOutcome::Response { status: 200, body: TOPICS_OK.as_bytes().to_vec() }]);
+    let (topics, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f);
+    assert_eq!(st, CircleStatus::Ok);
+    assert_eq!(topics.len(), 1);
+    assert_eq!(f.captured.len(), 1);
+    let (url, bearer, _, _) = &f.captured[0];
+    assert_eq!(url, "https://abc.supabase.co/rest/v1/chat_topics?select=id,title,description&is_active=eq.true&order=created_at.asc&limit=20");
+    assert_eq!(bearer, &jwt("owner-uid", 4_000_000_000));
+    // Exact local build endpoint is accepted; URL is absolute and matched.
+    let local = resolve_client_settings(Some("http://127.0.0.1:54321"), Some("sb_publishable_12345678901234567890"));
+    let mut f2 = Fake::new(vec![HttpOutcome::Response { status: 200, body: TOPICS_OK.as_bytes().to_vec() }]);
+    let mut store = session_store_view(&prefs);
+    let (_, st) = hardened_fetch_topics_with_status(&mut store, NOW, &no_refresh(), &local, &mut f2);
+    assert_eq!(st, CircleStatus::Ok);
+    assert!(f2.captured[0].0.starts_with("http://127.0.0.1:54321/rest/v1/"));
+}
+
+#[test]
+fn origin_matching_is_structural_not_prefix() {
+    let origin = validated_origin(&remote_settings()).unwrap();
+    assert!(origin.allows("https://abc.supabase.co/rest/v1/chat_topics"));
+    // userinfo injection
+    assert!(!origin.allows("https://abc.supabase.co@evil.com/rest/v1"));
+    // alternate port
+    assert!(!origin.allows("https://abc.supabase.co:8443/rest/v1"));
+    // scheme downgrade
+    assert!(!origin.allows("http://abc.supabase.co/rest/v1"));
+    // case-normalized host still matches
+    assert!(origin.allows("https://ABC.supabase.co/rest/v1"));
+    // empty authority / relative / garbage
+    assert!(!origin.allows("https:///rest/v1"));
+    assert!(!origin.allows("/rest/v1/chat_topics"));
+    assert!(!origin.allows("not a url"));
+    // local build exact
+    let local = resolve_client_settings(Some("http://localhost:54321"), Some("sb_publishable_12345678901234567890"));
+    let lorigin = validated_origin(&local).unwrap();
+    assert!(matches!(lorigin, EndpointOrigin::LocalBuild("http://localhost:54321")));
+    assert!(lorigin.allows("http://localhost:54321/rest/v1/x"));
+    assert!(!lorigin.allows("http://localhost:54322/rest/v1/x"));
+    assert!(!lorigin.allows("http://localhost.evil.com:54321/x"));
+}
