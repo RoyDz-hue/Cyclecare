@@ -58,9 +58,9 @@ struct MemStore {
 struct MemTx<'a> { st: &'a mut State, fail_at: Option<usize>, puts: &'a mut usize }
 
 impl DomainStore for MemTx<'_> {
-    fn get_settings(&mut self) -> Option<CycleSettings> { self.st.settings.clone() }
+    fn get_settings(&mut self) -> Result<Option<CycleSettings>, String> { Ok(self.st.settings.clone()) }
     fn save_settings(&mut self, s: CycleSettings) -> Result<(), String> { self.st.settings = Some(s); Ok(()) }
-    fn get_profile(&mut self) -> Option<OnboardingProfile> { self.st.profile.clone() }
+    fn get_profile(&mut self) -> Result<Option<OnboardingProfile>, String> { Ok(self.st.profile.clone()) }
     fn save_profile(&mut self, p: OnboardingProfile) -> Result<(), String> { self.st.profile = Some(p); Ok(()) }
     fn upsert_log(&mut self, l: CycleDayLog) -> Result<(), String> { self.st.logs.retain(|x| x.date != l.date); self.st.logs.push(l); Ok(()) }
     fn delete_log(&mut self, date: &str) -> Result<(), String> { self.st.logs.retain(|x| x.date != date); Ok(()) }

@@ -58,9 +58,9 @@ fn dbe<T>(r: rusqlite::Result<T>) -> Result<T, V3PullError> { r.map_err(|_| V3Pu
 impl DomainStore for SqlTx<'_> {
     // Settings/profile are not tabled in this scratch DB (only logs are
     // exercised); they are inert here by design.
-    fn get_settings(&mut self) -> Option<CycleSettings> { None }
+    fn get_settings(&mut self) -> Result<Option<CycleSettings>, String> { Ok(None) }
     fn save_settings(&mut self, _s: CycleSettings) -> Result<(), String> { Ok(()) }
-    fn get_profile(&mut self) -> Option<OnboardingProfile> { None }
+    fn get_profile(&mut self) -> Result<Option<OnboardingProfile>, String> { Ok(None) }
     fn save_profile(&mut self, _p: OnboardingProfile) -> Result<(), String> { Ok(()) }
     fn upsert_log(&mut self, l: CycleDayLog) -> Result<(), String> {
         self.tx.execute("INSERT OR REPLACE INTO logs(date,payload) VALUES(?,?)", params![l.date, log_payload(&l)])

@@ -225,9 +225,14 @@ use crate::sync_codec::{
 /// Domain writes are FALLIBLE: a database error inside the page transaction
 /// must abort the page (Err -> V3PullError::ApplyFailed -> rollback).
 pub trait DomainStore {
-    fn get_settings(&mut self) -> Option<CycleSettings>;
+    /// Fallible: the Room DAO suspend fn throws on a database error and the
+    /// throw leaves applyRemote, rolling back the page. An implementation
+    /// must NEVER map a read fault to None - None means the row is absent.
+    fn get_settings(&mut self) -> Result<Option<CycleSettings>, String>;
     fn save_settings(&mut self, s: CycleSettings) -> Result<(), String>;
-    fn get_profile(&mut self) -> Option<OnboardingProfile>;
+    /// Same contract as get_settings: Err is a database fault, None is an
+    /// absent row; never conflate them.
+    fn get_profile(&mut self) -> Result<Option<OnboardingProfile>, String>;
     fn save_profile(&mut self, p: OnboardingProfile) -> Result<(), String>;
     fn upsert_log(&mut self, l: CycleDayLog) -> Result<(), String>;
     fn delete_log(&mut self, date: &str) -> Result<(), String>;
@@ -239,12 +244,12 @@ pub trait DomainStore {
 pub fn apply_remote_payload(store: &mut dyn DomainStore, id: &str, payload: &str) -> Result<(), String> {
     match id {
         "settings" => {
-            let local = store.get_settings();
+            let local = store.get_settings()?;
             let v = parse_settings_payload(payload, id, local.as_ref())?;
             store.save_settings(v)?;
         }
         "profile" => {
-            let local = store.get_profile();
+            let local = store.get_profile()?;
             let v = parse_profile_payload(payload, id, local.as_ref())?;
             store.save_profile(v)?;
         }
@@ -262,12 +267,12 @@ pub fn apply_remote_payload(store: &mut dyn DomainStore, id: &str, payload: &str
 pub fn apply_tombstone_payload(store: &mut dyn DomainStore, id: &str) -> Result<(), String> {
     match id {
         "settings" => {
-            let local = store.get_settings();
+            let local = store.get_settings()?;
             let v = parse_settings_payload(&settings_payload(&CycleSettings::default()), id, local.as_ref())?;
             store.save_settings(v)?;
         }
         "profile" => {
-            let local = store.get_profile();
+            let local = store.get_profile()?;
             let v = parse_profile_payload(&profile_payload(&OnboardingProfile::default()), id, local.as_ref())?;
             store.save_profile(v)?;
         }

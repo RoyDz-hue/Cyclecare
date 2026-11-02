@@ -22,6 +22,7 @@
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::sync_codec::{CycleDayLog, CycleSettings, OnboardingProfile};
 use crate::v3_outbox::{CommitOutcome, ConflictRow, OutboxEntry, V3DaoError, V3SyncDao};
+use crate::v3_consent::{V3ConsentError, V3SnapshotStore, V3SnapshotTx};
 use crate::v3_pull::{DomainStore, RevisionRow, V3PullError, V3PullStore, V3PullTx};
 
 /// Fresh-create DDL. Authoritative shape: the KSP-generated DDL that Room
@@ -403,14 +404,16 @@ fn domain_delete_log(conn: &Connection, date: &str) -> rusqlite::Result<usize> {
 }
 
 impl DomainStore for SqlitePullTx<'_> {
-    fn get_settings(&mut self) -> Option<CycleSettings> {
-        domain_get_settings(self.conn()).ok().flatten()
+    fn get_settings(&mut self) -> Result<Option<CycleSettings>, String> {
+        // NoRows -> None (absent row); any other error propagates - a read
+        // fault must never surface as absent (-> defaults/overwrite).
+        domain_get_settings(self.conn()).map_err(|e| e.to_string())
     }
     fn save_settings(&mut self, s: CycleSettings) -> Result<(), String> {
         domain_save_settings(self.conn(), &s).map(|_| ()).map_err(|e| e.to_string())
     }
-    fn get_profile(&mut self) -> Option<OnboardingProfile> {
-        domain_get_profile(self.conn()).ok().flatten()
+    fn get_profile(&mut self) -> Result<Option<OnboardingProfile>, String> {
+        domain_get_profile(self.conn()).map_err(|e| e.to_string())
     }
     fn save_profile(&mut self, p: OnboardingProfile) -> Result<(), String> {
         domain_save_profile(self.conn(), &p).map(|_| ()).map_err(|e| e.to_string())
@@ -465,14 +468,18 @@ impl V3PullStore for SqliteV3Store {
             .optional())
     }
     fn transaction(&mut self, body: &mut dyn FnMut(&mut dyn V3PullTx) -> Result<i32, V3PullError>) -> Result<i32, V3PullError> {
-        // Real withTransaction parity. VERIFIED MODE: Room withTransaction ->
-        // SupportSQLiteDatabase.beginTransaction() -> AOSP 14.0.0_r1
-        // SQLiteDatabase.beginTransaction() -> beginTransaction(null,
-        // exclusive=TRUE) -> SQLiteSession.TRANSACTION_MODE_EXCLUSIVE, i.e.
-        // BEGIN EXCLUSIVE (verified in the AOSP source; the androidx
-        // Room-version hop is pinned by app/build.gradle, not re-verified
-        // here). rusqlite's Connection::transaction() defaults to DEFERRED -
-        // deliberately selecting Exclusive to match.
+        // TESTED HOST MODE: BEGIN EXCLUSIVE. Exact Room-mode parity is OPEN:
+        // ops javap of Room 2.7.0 shows withTransaction ->
+        // beginTransactionNonExclusive() when the database is in WAL mode,
+        // beginTransaction() otherwise (AOSP 14.0.0_r1 SQLiteDatabase maps
+        // that to beginTransaction(null, exclusive=TRUE) ->
+        // TRANSACTION_MODE_EXCLUSIVE). Which branch the app takes depends on
+        // the SQLCipher journal mode at runtime - unverified. This host
+        // store deliberately runs EXCLUSIVE: it is the stricter write lock,
+        // and the single-connection host store has no concurrent-reader
+        // surface the non-exclusive (WAL) branch would serve. The reader-
+        // concurrency question for the real app database remains open with
+        // the encrypted-storage integration.
         let tx = dbe(self.conn.transaction_with_behavior(TransactionBehavior::Exclusive))?;
         let r = {
             let mut t = SqlitePullTx { tx: &tx };
@@ -480,5 +487,121 @@ impl V3PullStore for SqliteV3Store {
         };
         dbe(tx.commit())?;
         Ok(r)
+    }
+}
+
+/// Real-SQL journalExplicitSnapshot store (SupabaseSyncService.kt:45-57):
+/// one EXCLUSIVE transaction (tested host mode - exact Room-mode parity
+/// open, see V3PullStore::transaction) holding every journal write; any DAO
+/// error or ConsentChanged rolls the whole snapshot back, exactly like
+/// Room's withTransaction rethrow.
+impl V3SnapshotStore for SqliteV3Store {
+    fn transaction(
+        &mut self,
+        body: &mut dyn FnMut(&mut dyn V3SnapshotTx) -> Result<(), V3ConsentError>,
+    ) -> Result<(), V3ConsentError> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Exclusive)
+            .map_err(|_| V3ConsentError::Db)?;
+        let r = body(&mut SqliteSnapshotTx { tx: &tx });
+        match r {
+            Ok(()) => tx.commit().map_err(|_| V3ConsentError::Db),
+            Err(e) => Err(e), // tx drops uncommitted -> engine rollback
+        }
+    }
+}
+
+struct SqliteSnapshotTx<'a> {
+    tx: &'a rusqlite::Transaction<'a>,
+}
+
+fn cdb<T>(r: rusqlite::Result<T>) -> Result<T, V3ConsentError> {
+    r.map_err(|_| V3ConsentError::Db)
+}
+
+impl V3SnapshotTx for SqliteSnapshotTx<'_> {
+    fn revision(&mut self, owner: &str, id: &str) -> Result<Option<RevisionRow>, V3ConsentError> {
+        // HealthSyncLocal.kt:60-61. NoRows -> None (no prior revision);
+        // any other error -> Db.
+        cdb(self.tx
+            .query_row(
+                "SELECT revision, serverRevision FROM health_sync_revisions WHERE ownerId = ?1 AND recordId = ?2 LIMIT 1",
+                params![owner, id],
+                |r| Ok(RevisionRow { revision: r.get(0)?, server_revision: r.get(1)? }),
+            )
+            .optional())
+    }
+    fn remove_reviewed_pending(
+        &mut self,
+        owner: &str,
+        id: &str,
+        through_local_revision: i64,
+    ) -> Result<(), V3ConsentError> {
+        // HealthSyncLocal.kt:91-92.
+        cdb(self.tx
+            .execute(
+                "DELETE FROM health_sync_outbox WHERE ownerId = ?1 AND recordId = ?2 AND revision <= ?3",
+                params![owner, id, through_local_revision],
+            )
+            .map(|_| ()))
+    }
+    fn put_revision(
+        &mut self,
+        owner: &str,
+        id: &str,
+        rev: i64,
+        hash: Option<String>,
+        tombstone: bool,
+        now: i64,
+        server_rev: i64,
+    ) -> Result<(), V3ConsentError> {
+        // HealthSyncLocal.kt:63-64 - INSERT OR REPLACE.
+        cdb(self.tx
+            .execute(
+                "INSERT OR REPLACE INTO health_sync_revisions
+                 (ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![owner, id, rev, hash, tombstone as i64, now, server_rev],
+            )
+            .map(|_| ()))
+    }
+    fn enqueue(&mut self, entry: OutboxEntry) -> Result<(), V3ConsentError> {
+        // HealthSyncLocal.kt:117-118 - INSERT OR REPLACE
+        // (OnConflictStrategy.REPLACE), full column list.
+        cdb(self.tx
+            .execute(
+                "INSERT OR REPLACE INTO health_sync_outbox
+                 (ownerId, operationId, recordId, kind, baseRevision, revision, payloadJson,
+                  payloadHash, consentGeneration, attempts, nextAttemptAt)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                params![entry.owner, entry.operation_id, entry.record_id, entry.kind,
+                        entry.base_revision, entry.revision, entry.payload_json,
+                        entry.payload_hash, entry.consent_generation, entry.attempts,
+                        entry.next_attempt_at],
+            )
+            .map(|_| ()))
+    }
+    fn all_logs(&mut self) -> Result<Vec<CycleDayLog>, V3ConsentError> {
+        // CycleDayLogDao.kt:14-15 - ORDER BY dateString DESC preserved.
+        let mut st = cdb(self.tx.prepare(
+            "SELECT * FROM cycle_day_logs ORDER BY dateString DESC",
+        ))?;
+        let rows = cdb(st.query_map([], log_from_row))?;
+        let mut out = Vec::new();
+        for r in rows { out.push(cdb(r)?); }
+        Ok(out)
+    }
+    fn settings(&mut self) -> Result<Option<CycleSettings>, V3ConsentError> {
+        // CycleDayLogDao.kt:35-36 (single-row table, id = 1).
+        cdb(self.tx
+            .query_row("SELECT * FROM cycle_settings WHERE id = 1 LIMIT 1", [], settings_from_row)
+            .optional())
+    }
+    fn profile(&mut self) -> Result<Option<OnboardingProfile>, V3ConsentError> {
+        // OnboardingProfileDao.kt:14-15 (single-row table, id = 1).
+        cdb(self.tx
+            .query_row("SELECT * FROM onboarding_profiles WHERE id = 1 LIMIT 1", [], profile_from_row)
+            .optional())
     }
 }

@@ -234,6 +234,50 @@ fn pull_fault_rolls_back_domain_and_sync_rows_together() {
     assert_eq!(count(&s.conn, "cycle_day_logs"), 0, "DOMAIN row rolled back by the same transaction");
 }
 
+fn wire_settings_change(rev: i64, seq: i64) -> V3WireChange {
+    let v = CycleSettings {
+        id: 1, is_onboarding_completed: true, selected_goals_csv: "g".into(),
+        last_period_start_date: "2026-10-01".into(), average_cycle_length: 29,
+        period_duration: 5, luteal_phase_days: 14, is_app_lock_enabled: false,
+        lock_timeout_minutes: 5, is_discreet_notification_mode: false,
+        is_pregnancy_mode: false, pregnancy_due_date: "".into(), remind_period: true,
+        remind_fertile: false, remind_daily_log: true,
+    };
+    V3WireChange {
+        record_id: wire_record_id(OWNER, "settings"), revision: rev, change_seq: seq,
+        payload: Some(cyclecare_core::sync_codec::JsonParser::new(&format!(
+            r#"{{"kind":"UPSERT","logicalRecordId":"settings","value":{}}}"#, cyclecare_core::sync_codec::settings_payload(&v))).parse().unwrap()),
+        tombstone: false, payload_hash: None, logical_record_id: Some("settings".into()),
+    }
+}
+
+#[test]
+fn domain_settings_read_fault_is_typed_and_never_defaults_or_overwrites() {
+    // The .ok().flatten() bug class: a faulted settings read must surface as
+    // a typed error with the whole page rolled back - NEVER as an absent row
+    // that would merge remote fields over CycleSettings::default() and save.
+    let mut s = store();
+    // Local row with distinctive local-only content the overwrite would lose.
+    s.conn.execute(
+        "INSERT OR REPLACE INTO cycle_settings (id, isOnboardingCompleted, selectedGoalsCsv, lastPeriodStartDate,
+         averageCycleLength, periodDuration, lutealPhaseDays, isAppLockEnabled, lockTimeoutMinutes,
+         isDiscreetNotificationMode, isPregnancyMode, pregnancyDueDate, remindPeriod, remindFertile, remindDailyLog)
+         VALUES (1, 1, 'local-only-goals', '2026-09-15', 31, 6, 13, 1, 15, 1, 0, '', 0, 1, 0)",
+        []).unwrap();
+    // Fault the read: rename the table out from under the DAO SELECT.
+    s.conn.execute_batch("ALTER TABLE cycle_settings RENAME TO cycle_settings_away;").unwrap();
+    let mut tx = Pages(vec![vec![wire_settings_change(5, 1)]].into());
+    let r = run_v3_pull(&mut tx, "tok", &mut s, OWNER, 3, 7, &mut || true, &mut || 1_700_000_000_000);
+    assert!(matches!(r, Err(V3PullError::ApplyFailed) | Err(V3PullError::Db)),
+        "typed error, not a default-merge save: {r:?}");
+    assert_eq!(count(&s.conn, "health_sync_revisions"), 0, "page rolled back");
+    assert_eq!(count(&s.conn, "health_sync_cursors"), 0, "cursor not advanced");
+    s.conn.execute_batch("ALTER TABLE cycle_settings_away RENAME TO cycle_settings;").unwrap();
+    let goals: String = s.conn.query_row(
+        "SELECT selectedGoalsCsv FROM cycle_settings WHERE id = 1", [], |r| r.get(0)).unwrap();
+    assert_eq!(goals, "local-only-goals", "local row never overwritten by a default merge");
+}
+
 #[test]
 fn cursor_read_fault_is_typed_not_zero() {
     let mut s = store();
