@@ -683,12 +683,12 @@ fun SettingsScreenContent(
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = {
-                                    if (isCompletePin(tempPin)) {
+                                    if (com.cyclecare.app.rust.CycleCareCoreBridge.isCompletePin(tempPin)) {
                                         onSaveQuickUnlockPin(tempPin)
                                         tempPin = ""
                                     }
                                 },
-                                enabled = isCompletePin(tempPin),
+                                enabled = com.cyclecare.app.rust.CycleCareCoreBridge.isCompletePin(tempPin),
                                 modifier = Modifier.testTag("save_pin_button"),
                                 shape = RoundedCornerShape(12.dp)
                             ) {

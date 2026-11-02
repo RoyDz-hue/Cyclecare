@@ -65,6 +65,14 @@ android {
     }
   }
 
+  sourceSets {
+    // Transitional Rust-core slice: the cdylib built in Androidapp/rust/core-jni
+    // is copied into jniLibs/<abi>/libcyclecare_core.so by the packageRustCore
+    // task. When no .so exists the app packages without it and
+    // CycleCareCoreBridge falls back to the Kotlin implementations.
+    getByName("main") { jniLibs.srcDir("$rootDir/rust/core-jni/jniLibs") }
+  }
+
   buildTypes {
     release {
       buildConfigField("boolean", "ALLOW_SCREEN_CAPTURE", "false")
@@ -203,3 +211,33 @@ tasks.withType<Test>().configureEach {
     // them accumulating across the render matrix in this 2GB sandbox.
     forkEvery = 1
 }
+
+// Copies cargo-built cyclecare-core cdylibs into jniLibs/<abi>/ for packaging.
+// Build the .so first (outside Gradle):
+//   cd rust/core-jni && cargo build --release --target aarch64-linux-android
+// ABI map: aarch64-linux-android -> arm64-v8a, armv7-linux-androideabi ->
+// armeabi-v7a, i686-linux-android -> x86, x86_64-linux-android -> x86_64.
+// Missing targets are skipped, never errors: packaging proceeds Kotlin-only.
+val rustAbiMap = mapOf(
+    "aarch64-linux-android" to "arm64-v8a",
+    "armv7-linux-androideabi" to "armeabi-v7a",
+    "i686-linux-android" to "x86",
+    "x86_64-linux-android" to "x86_64",
+)
+tasks.register("packageRustCore") {
+    doLast {
+        rustAbiMap.forEach { (triple, abi) ->
+            val so = File("$rootDir/rust/core-jni/target/$triple/release/libcyclecare_core_jni.so")
+            if (so.exists()) {
+                val outDir = File("$rootDir/rust/core-jni/jniLibs/$abi")
+                outDir.mkdirs()
+                val out = File(outDir, "libcyclecare_core.so")
+                so.copyTo(out, overwrite = true)
+                logger.lifecycle("packaged Rust core for $abi")
+            } else {
+                logger.info("no Rust core cdylib for $triple; Kotlin fallback will be used")
+            }
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn("packageRustCore") }
