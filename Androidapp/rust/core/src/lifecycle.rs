@@ -45,7 +45,9 @@ pub fn effective_user_id(user_id: Option<&str>, device_id: &str) -> String {
     match user_id {
         Some(uid) if !uid.trim().is_empty() => uid.to_string(),
         // Kotlin checks isNullOrBlank (no trim); a blank-but-nonempty string
-        // falls through to the UUID branch there too.
+        // falls through to the UUID branch there too. JVM probe WsProbe.kt:
+        // Kotlin Char.isWhitespace INCLUDES NBSP/2007/202F, excludes only
+        // U+0085 vs Rust White_Space - Rust trim() is blank-equivalent here.
         _ => name_uuid_from_bytes(device_id.as_bytes()),
     }
 }
@@ -387,3 +389,4 @@ mod tests {
         assert_eq!(seq2, "set_u1:g1,id=null;set_u1_again:g2,id=null;clear:g3;");
     }
 }
+

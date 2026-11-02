@@ -230,8 +230,11 @@ tasks.register("packageRustCore") {
         rustAbiMap.forEach { (triple, abi) ->
             // The migration owner's FFI crate artifact, packaged under the
             // single runtime name libcyclecare_core.so (rust/HOST-INTEGRATION.md).
-            val so = File("$rootDir/rust/core-ffi/target/$triple/release/libcyclecare_core_ffi.so")
-                .takeIf { it.exists() }
+            // core-ffi >= v6 emits libcyclecare_core.so ([lib] name); older
+            // artifacts emit libcyclecare_core_ffi.so. Accept both.
+            val so = listOf("libcyclecare_core.so", "libcyclecare_core_ffi.so")
+                .map { File("$rootDir/rust/core-ffi/target/$triple/release/$it") }
+                .firstOrNull { it.exists() }
             if (so != null) {
                 val outDir = File("$rootDir/rust/core-jni/jniLibs/$abi")
                 outDir.mkdirs()

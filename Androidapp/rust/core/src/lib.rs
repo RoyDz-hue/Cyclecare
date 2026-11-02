@@ -44,3 +44,6 @@ pub mod lifecycle;
 pub mod session_token;
 pub mod verified_profile;
 pub mod reconcile;
+pub mod onboarding_questions;
+pub mod ai_consent_tap;
+pub mod care_policy;

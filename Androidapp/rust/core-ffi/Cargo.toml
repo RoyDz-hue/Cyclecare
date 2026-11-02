@@ -5,6 +5,7 @@ edition = "2021"
 description = "Read-only JNI bridge over cyclecare-core pure functions. JSON in, JSON out. No DB, no Keystore, no signing, no account mutation."
 
 [lib]
+name = "cyclecare_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -1,0 +1,11 @@
+q4a	s4_rhythm_focus~What feels most unpredictable about your cycle right now?~Timing,Flow,PMS,Energy,Nothing really~true
+q4b	s4_tuning_focus~What would you like CycleCare to notice for you?~Energy shifts,Mood patterns,Routine changes,Surprises me~true
+q4c	s4_fertility_focus~What would help you most with fertility awareness?~Fertile window timing,Ovulation signs,Cycle regularity,Just learning~true
+q4d	s4_rhythm_focus~What feels most unpredictable about your cycle right now?~Timing,Flow,PMS,Energy,Nothing really~true|s4_symptom_focus~Which changes do you notice most between phases?~Mood,Skin,Sleep,Appetite,Cramps,Energy~true|s4_fertility_focus~What would help you most with fertility awareness?~Fertile window timing,Ovulation signs,Cycle regularity,Just learning~true|s4_tuning_focus~What would you like CycleCare to notice for you?~Energy shifts,Mood patterns,Routine changes,Surprises me~true
+q4e	s4_symptom_focus~Which changes do you notice most between phases?~Mood,Skin,Sleep,Appetite,Cramps,Energy~true
+q4f	s4_tuning_focus~What would you like CycleCare to notice for you?~Energy shifts,Mood patterns,Routine changes,Surprises me~true
+q5a	s5_gentle_checkins~How would you like check-ins to feel?~Quiet and minimal,Warm and encouraging,Only when something changes~false
+q5b	s5_gentle_checkins~How would you like check-ins to feel?~Quiet and minimal,Warm and encouraging,Only when something changes~false|s5_rest_focus~Should CycleCare pay extra attention to rest and energy patterns?~Yes, rest matters,Somewhat,Not specifically~false
+q5c	s5_gentle_checkins~How would you like check-ins to feel?~Quiet and minimal,Warm and encouraging,Only when something changes~false
+q6a	s6_support_style~When something changes in your pattern, what should CycleCare do first?~Explain gently what it might mean,Suggest simple self-care,Just note it quietly~false|s6_depth~How much detail do you want in insights?~Short and simple,Balanced,Deep explanations~false
+q3a	EMPTY
