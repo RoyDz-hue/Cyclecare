@@ -49,3 +49,4 @@ __pycache__/
 # Signing material must never be committed
 .private/
 *.jks
+spike/out/

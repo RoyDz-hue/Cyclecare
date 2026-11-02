@@ -11,6 +11,23 @@
 //! UI (Slint/Dioxus), storage (rusqlite) and transport (reqwest) plug in at
 //! the edges.
 
+pub mod kotlin_text;
 pub mod account_start;
 pub mod startup_route;
 pub mod wallet;
+pub mod owner_data_gate;
+pub mod sync_gate;
+pub mod conflict_resolve;
+pub mod coin_amount;
+pub mod log_parser;
+pub mod reconnect_policy;
+pub mod pin;
+pub mod cycle_math;
+pub mod notifications;
+pub mod pattern_engine;
+pub mod safety;
+pub mod something_changed;
+pub mod attention;
+pub mod learning;
+pub mod economy_status;
+pub mod economy_catalog;

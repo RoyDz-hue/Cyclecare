@@ -1,0 +1,18 @@
+s01	NONE					0
+s02	PRESENT	UNUSUALLY_HEAVY	fainting			0
+s03	PRESENT	UNUSUALLY_HEAVY				8
+s04	PRESENT	UNUSUALLY_HEAVY				7
+s05	PRESENT		fainting			0
+s06	PRESENT	light		sores_lesions		0
+s07	PRESENT	UNUSUALLY_HEAVY		sores_lesions		0
+s08	PRESENT					7
+s09	PRESENT		severe_cramps			0
+s10	PRESENT					6
+s11	PRESENT					3
+s12	PRESENT					2
+s13	PRESENT		headache			0
+s14	PRESENT				urinary_burning,urinary_urgency	0
+s15	PRESENT				urinary_burning	0
+s16	PRESENT			vaginal_itching		0
+s17	PRESENT	 unusually_heavy 				0
+s18	PRESENT	UNUSUALLY_HEAVY	fainting	sores_lesions		9

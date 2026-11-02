@@ -6,3 +6,7 @@ description = "Framework-neutral CycleCare domain/state contracts (identity, sta
 license = "UNLICENSED"
 
 [dependencies]
+sha2 = "0.10"
+regex = "1"
+unicode-general-category = "1"
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
