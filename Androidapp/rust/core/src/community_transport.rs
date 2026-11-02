@@ -16,7 +16,18 @@
 //!   LOCAL ECHO (isSelf=true, no remoteId): "the write may still have
 //!   landed" - a confirmed-success ambiguity ported as an explicit outcome.
 //! - Timeouts are adapter obligations: 8s connect/read/write, 10s call, no
-//!   redirects (pulse: 6s connect, 20s read, 25s call).
+//!   redirects (pulse: 6s connect, 20s read, 25s call). The bearer trim
+//!   (Bearer ${token.trim()}) is likewise an adapter obligation; descriptors
+//!   carry no credentials.
+//! - bounded_body here is a LENGTH-ONLY equivalent for buffered bodies; the
+//!   source streams source.request(MAX+1) and rejects when the buffer
+//!   exceeds MAX. A streaming adapter must enforce the same cap mid-stream,
+//!   not read-then-measure.
+//! - SOURCE-PARITY CONCERN: fetchMessages interpolates topic_id RAW into the
+//!   query string (no percent-encoding). A topic id containing '&' or '='
+//!   would alter the query. Parity is preserved in fetch_messages_request;
+//!   the proposed safe variant (percent-encode) is kept separate below and
+//!   NOT wired in pending a decision.
 
 /// MAX_RESPONSE_BYTES = 96 * 1024.
 pub const MAX_RESPONSE_BYTES: usize = 96 * 1024;
@@ -176,5 +187,27 @@ pub fn bounded_body(len: usize) -> Option<()> {
         None
     } else {
         Some(())
+    }
+}
+
+/// PROPOSED SAFE VARIANT (not source parity, not wired): percent-encode the
+/// topic id in the messages query. Source parity interpolates raw.
+pub fn fetch_messages_request_encoded(topic_id: &str) -> TransportRequest {
+    let mut enc = String::new();
+    for b in topic_id.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            enc.push(b as char);
+        } else {
+            enc.push_str(&format!("%{:02X}", b));
+        }
+    }
+    TransportRequest {
+        method: "GET",
+        path: format!(
+            "/chat_messages?select=id,user_id,persona_id,sender_alias,content,created_at,is_flagged&topic_id=eq.{}&order=created_at.asc&limit=100",
+            enc
+        ),
+        headers: vec![],
+        body: None,
     }
 }

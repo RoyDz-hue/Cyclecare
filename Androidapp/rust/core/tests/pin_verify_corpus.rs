@@ -17,9 +17,10 @@ fn pbkdf2_vectors_jvm_locked() {
 }
 
 #[test]
-fn pbekeyspec_low_8_bits_locked() {
-    // PBEKeySpec uses the LOW 8 BITS of each UTF-16 unit; these four JVM
-    // vectors prove the lossy encoding (UTF-8 would differ on every row).
+fn pbekeyspec_utf8_encoding_locked() {
+    // OpenJDK 21 PBEKeySpec converts the password char[] to UTF-8 BYTES
+    // (NOT the PKCS#5 low-8-bit encoding older docs describe); these four
+    // JVM vectors lock that (low-8-bit would differ on every non-ASCII row).
     assert_eq!(
         to_hex_pub(&pbkdf2("1", &SALT, 50_000)),
         "795964950087d7c4332ac761ff986d3273c748665a32d723d66b373d0394560a"

@@ -12,6 +12,9 @@
 //! - write_secure_string: insecure store REMOVES the key on any write;
 //!   secure store removes on blank/whitespace values.
 //! - Boolean gates (pin_enabled etc.): insecure reads false, writes dropped.
+//!   EXCEPTION: hasCompletedInitialAuth is NOT a plain gate - it is
+//!   isLocalOnlyMode || (secure && stored); that variant lives in
+//!   lifecycle::has_completed_initial_auth, already corpus-locked.
 //! - Fallback sanitization: when EncryptedSharedPreferences construction
 //!   fails, the plaintext legacy store has exactly these 14 credential keys
 //!   REMOVED (never keep credentials in the plaintext fallback).

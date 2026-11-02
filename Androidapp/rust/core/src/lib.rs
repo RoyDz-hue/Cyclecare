@@ -36,6 +36,7 @@ pub mod pregnancy;
 pub mod guided_chats;
 pub mod community_guides;
 pub mod community_transport;
+pub mod community_service;
 pub mod economy_status;
 pub mod economy_catalog;
 pub mod payment_validation;

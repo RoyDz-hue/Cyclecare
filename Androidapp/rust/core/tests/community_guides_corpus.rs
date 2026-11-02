@@ -42,7 +42,7 @@ fn messages_mapping_verbatim() {
         {"id":"m3","user_id":"ME","sender_alias":"Case","content":"case matters","is_flagged":true},
         {"id":"m4","user_id":"x","sender_alias":" ","content":"   "}
     ]"#;
-    let msgs = parse_circle_messages(raw, Some("me")).unwrap();
+    let msgs = parse_circle_messages(raw, "circle-1", Some("me")).unwrap();
     assert_eq!(msgs.len(), 3); // empty content row skipped
     assert!(msgs[0].is_self && msgs[0].sender_alias == "Member" && msgs[0].content == "hello");
     assert_eq!(msgs[1].sender_alias, "Community Guide");
@@ -56,7 +56,7 @@ fn messages_mapping_verbatim() {
 fn message_content_take_500_utf16() {
     let long = "🌸".repeat(600); // 1200 UTF-16 units
     let raw = format!(r#"[{{"id":"m","user_id":"u","content":"{long}"}}]"#);
-    let msgs = parse_circle_messages(&raw, None).unwrap();
+    let msgs = parse_circle_messages(&raw, "circle-1", None).unwrap();
     assert_eq!(msgs[0].content, "🌸".repeat(250)); // take(500) units = 250 emoji
 }
 

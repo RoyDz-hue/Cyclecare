@@ -72,9 +72,16 @@ pub fn parse_topics(raw: &str) -> Option<Vec<ServerTopic>> {
 
 /// A fetched circle message (fetchMessages row mapping, verbatim).
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// NOTE (GuidedChatMessage.kt): the source data class also carries a local
+/// `id` defaulting to a FRESH RANDOM UUID and a `timestampMs` defaulting to
+/// the wall-clock now at construction. Those are host-runtime values, not
+/// wire data; the adapter assigns presentation ids, and the service's soft
+/// echo takes now_ms from the host clock.
 pub struct CircleMessage {
+    pub channel_id: String,
     pub sender_alias: String,
     pub content: String,
+    pub timestamp_ms: i64,
     pub is_self: bool,
     pub persona_id: Option<String>,
     pub remote_id: Option<String>,
@@ -101,7 +108,9 @@ fn opt_boolean_false(v: Option<&serde_json::Value>) -> bool {
 /// content take(500); isSelf = case-sensitive id equality; is_flagged
 /// optBoolean false default. Malformed payload -> None (service returns
 /// emptyList, caller distinction lives in the transport seam).
-pub fn parse_circle_messages(raw: &str, self_id: Option<&str>) -> Option<Vec<CircleMessage>> {
+/// channel_id populates the source's channelId = serverTopicId; timestamp_ms
+/// is parse_iso_timestamp(created_at) (unparseable -> 0, sorts oldest).
+pub fn parse_circle_messages(raw: &str, channel_id: &str, self_id: Option<&str>) -> Option<Vec<CircleMessage>> {
     let arr: serde_json::Value = serde_json::from_str(raw).ok()?;
     let arr = arr.as_array()?;
     let mut out = Vec::new();
@@ -122,7 +131,10 @@ pub fn parse_circle_messages(raw: &str, self_id: Option<&str>) -> Option<Vec<Cir
         let author_raw = kotlin_trim(&opt_string(obj.get("user_id"))).to_string();
         let author_id = if author_raw.is_empty() { None } else { Some(author_raw) };
         let remote_raw = kotlin_trim(&opt_string(obj.get("id"))).to_string();
+        let created_raw = opt_string(obj.get("created_at"));
         out.push(CircleMessage {
+            channel_id: channel_id.to_string(),
+            timestamp_ms: crate::notifications::parse_iso_timestamp(Some(&created_raw)),
             sender_alias,
             content: take_500_utf16(&content),
             is_self: author_id.is_some() && author_id.as_deref() == self_id,
