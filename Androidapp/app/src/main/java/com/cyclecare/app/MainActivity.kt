@@ -87,6 +87,7 @@ import com.cyclecare.app.security.BiometricHelper
 import com.cyclecare.app.ui.auth.AuthSheet
 import com.cyclecare.app.ui.auth.QuickUnlockSetupDialog
 import com.cyclecare.app.ui.auth.WelcomeAuthScreen
+import com.cyclecare.app.rust.RustAppLockScreen
 import com.cyclecare.app.ui.screens.AppLockScreen
 import com.cyclecare.app.ui.screens.AtelierScreen
 import com.cyclecare.app.ui.screens.CareScreen
@@ -207,8 +208,28 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
 
             // Private App Lock Overlay (Prompted on launch for repeat users if PIN or Fingerprint enabled)
             uiState.isAppLocked -> {
-                AppLockScreen(
-                    isFingerprintEnabled = uiState.isFingerprintEnabled,
+                val composeAppLock: @Composable () -> Unit = {
+                    AppLockScreen(
+                        isFingerprintEnabled = uiState.isFingerprintEnabled,
+                        onUnlock = { pin -> viewModel.unlockApp(pin) },
+                        onTriggerBiometric = {
+                            activity?.let { act ->
+                                BiometricHelper.showBiometricPrompt(
+                                    activity = act,
+                                    onSuccess = { viewModel.unlockViaBiometric() },
+                                    onError = { /* Handled gracefully in prompt */ }
+                                )
+                            }
+                        },
+                        onForgotCredentials = {
+                            viewModel.setShowAuthSheet(true)
+                        }
+                    )
+                }
+                // Rust screen is a second rendering of the same auth contract;
+                // Compose remains default + fallback until runtime proof.
+                RustAppLockScreen(
+                    isFingerprintEnabled = { uiState.isFingerprintEnabled },
                     onUnlock = { pin -> viewModel.unlockApp(pin) },
                     onTriggerBiometric = {
                         activity?.let { act ->
@@ -221,7 +242,8 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                     },
                     onForgotCredentials = {
                         viewModel.setShowAuthSheet(true)
-                    }
+                    },
+                    fallback = composeAppLock
                 )
             }
 

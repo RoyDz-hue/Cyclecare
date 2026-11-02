@@ -104,3 +104,19 @@ Screen-side requirements still open with the owner (v2 source reviewed):
 5. Auto-unlock fires at 4 JS chars; production counts UTF-16 units
    (length <= 4). Supplementary-plane input (emoji) differs - low impact,
    recorded, no fix required unless product cares.
+
+## Connected wiring (spike switch, default OFF)
+
+`rust/RustAppLockScreen.kt` + MainActivity: the isAppLocked branch now routes
+through RustAppLockScreen. RustAppLockConfig.ENABLED=false keeps Compose as
+the active lock UI; even when ENABLED, any WebView preparation failure
+renders the Compose fallback. Both paths call the identical callbacks
+(viewModel.unlockApp, BiometricHelper.showBiometricPrompt,
+setShowAuthSheet(true)), so auth semantics do not depend on the rendering.
+
+Dependency verification (executed, from the published artifacts):
+- webkit-1.12.1.aar AndroidManifest.xml: uses-sdk android:minSdkVersion="21"
+  -> below app minSdk 24, min24 constraint intact.
+- webkit-1.12.1.pom compile deps: annotation 1.8.1, annotation-experimental
+  1.4.1, core 1.1.0. All below the app's existing androidx versions; Gradle
+  resolves upward, no downgrade.
