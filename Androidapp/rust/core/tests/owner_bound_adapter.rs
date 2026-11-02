@@ -383,13 +383,13 @@ fn hardened_boundary_all_ops_zero_http_on_invalid_origin() {
     let prefs = bound_owner_prefs();
     let mut f = HardenedFake::new(vec![]);
     let mut store = session_store_view(&prefs);
-    assert!(!hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"));
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"), cyclecare_core::community_service::HardenedWriteOutcome::FailedBeforeSend);
     let mut store = session_store_view(&prefs);
     assert!(hardened_fetch_messages(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1").is_empty());
     let mut store = session_store_view(&prefs);
     assert!(matches!(hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi").outcome, cyclecare_core::community_transport::PostOutcome::Failed));
     let mut store = session_store_view(&prefs);
-    assert!(!hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"));
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"), cyclecare_core::community_service::HardenedWriteOutcome::FailedBeforeSend);
     let mut store = session_store_view(&prefs);
     assert!(!hardened_community_pulse(Some(&mut store), NOW, &no_refresh(), &settings, &mut f));
     assert!(!hardened_community_pulse(None, NOW, &no_refresh(), &settings, &mut f));
@@ -425,14 +425,16 @@ fn account_switch_mid_membership_and_flag_not_applied() {
     let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 201, body: vec![] }]);
     f.drift = Some(switch_drift());
     let mut store = session_store_view(&prefs);
-    assert!(!hardened_ensure_membership(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "t1"),
-        "membership success after account switch must not apply");
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "t1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend,
+        "membership after account switch: may have landed, never confirmed, never failed-before-send");
 
     let prefs = bound_owner_prefs();
     let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: b"true".to_vec() }]);
     f.drift = Some(switch_drift());
     let mut store = session_store_view(&prefs);
-    assert!(!hardened_flag_message(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "m1"));
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
 }
 
 #[test]
@@ -449,8 +451,10 @@ fn stable_session_applies_results_across_ops() {
     let msgs = hardened_fetch_messages(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1");
     assert_eq!(msgs.len(), 1);
     assert!(msgs[0].is_self, "owner-authored message via ctx.owner");
-    assert!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"));
-    assert!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"));
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::ConfirmedApplied);
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::ConfirmedApplied);
     assert!(hardened_community_pulse(Some(&mut store), NOW, &no_refresh(), &settings, &mut f));
     assert_eq!(f.captured.len(), 4);
     // Bearer on every call is the bound owner token, not the anon key.
@@ -482,4 +486,30 @@ fn refresh_rotation_mid_begin_does_not_invalidate_generation() {
     assert_eq!(msgs.len(), 1, "valid refresh keeps the op alive");
     assert_eq!(store.session_generation(), gen_before, "refresh rotation preserves account generation");
     assert_eq!(f.captured[0].1, good, "bearer is the renewed token");
+}
+
+#[test]
+fn transport_error_after_dispatch_is_unconfirmed_never_failed() {
+    // Membership/flag: IoError after dispatch -> UnconfirmedAfterSend.
+    let settings = remote_settings();
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![HttpOutcome::IoError]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
+    // Post: IoError after dispatch -> SoftEchoUnconfirmed with NO echo
+    // message; the UI must render an unconfirmed post without a bubble.
+    let mut f = HardenedFake::new(vec![HttpOutcome::IoError]);
+    let mut store = session_store_view(&prefs);
+    let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi there");
+    assert!(matches!(res.outcome, cyclecare_core::community_transport::PostOutcome::SoftEchoUnconfirmed));
+    assert!(res.message.is_none());
+    // Definitive server rejection stays ConfirmedRejected (membership 500).
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 500, body: vec![] }]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::ConfirmedRejected);
 }

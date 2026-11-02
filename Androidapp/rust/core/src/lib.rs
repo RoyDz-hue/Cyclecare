@@ -26,6 +26,7 @@ pub mod pin_verify;
 pub mod app_lock;
 pub mod supabase_config;
 pub mod v3_sync;
+pub mod v3_outbox;
 pub mod secure_store;
 pub mod cycle_math;
 pub mod notifications;

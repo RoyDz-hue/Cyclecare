@@ -437,6 +437,29 @@ pub enum HardenedBegin {
     Unavailable,
 }
 
+/// Explicit outcome for hardened WRITES (main 01:53 review): never conflate
+/// "definitively failed" with "may have landed". No automatic retries on
+/// unknown mutations anywhere in this boundary.
+///
+/// ATOMICITY CAVEAT: the pre-dispatch session check and the socket write
+/// are NOT atomic; the synchronous injected transport used in tests cannot
+/// close that race. A real async adapter must bind the dispatch to the
+/// session (cancel on generation change) and guard response application.
+/// This whole boundary is PROPOSED safety behavior, distinct from source
+/// parity (the Kotlin service performs no such checks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardenedWriteOutcome {
+    /// Server answer received and applied under the captured session.
+    ConfirmedApplied,
+    /// Server answer received: definitively not applied.
+    ConfirmedRejected,
+    /// Refused before the request left (gate/origin/pre-dispatch drift).
+    FailedBeforeSend,
+    /// The request left; the outcome is unknown (post-dispatch drift or
+    /// transport failure after dispatch). Never auto-retry.
+    UnconfirmedAfterSend,
+}
+
 pub fn hardened_begin(
     store: &mut SessionStore,
     now_secs: i64,
@@ -489,20 +512,24 @@ pub fn hardened_ensure_membership(
     settings: &crate::supabase_config::ClientSettings,
     http: &mut dyn HardenedTransport,
     topic_id: &str,
-) -> bool {
+) -> HardenedWriteOutcome {
+    use HardenedWriteOutcome::*;
     let ctx = match hardened_begin(store, now_secs, refresh, settings) {
         HardenedBegin::Ready(c) => c,
-        _ => return false,
+        _ => return FailedBeforeSend,
     };
-    let user_id = match t::current_user_id(Some(&ctx.owner)) { Some(u) => u, None => return false };
+    let user_id = match t::current_user_id(Some(&ctx.owner)) { Some(u) => u, None => return FailedBeforeSend };
     let req = t::ensure_membership_request(&user_id, topic_id);
-    let Some(url) = hardened_url(&ctx, true, &req.path) else { return false };
-    if !hardened_session_intact(store, &ctx) { return false; }
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return FailedBeforeSend };
+    if !hardened_session_intact(store, &ctx) { return FailedBeforeSend; }
     let outcome = http.execute(store, &url, &req, ctx.token.trim());
-    if !hardened_session_intact(store, &ctx) { return false; }
+    if !hardened_session_intact(store, &ctx) { return UnconfirmedAfterSend; }
     match outcome {
-        HttpOutcome::Response { status, .. } => t::membership_success(status),
-        _ => false,
+        HttpOutcome::Response { status, .. } => {
+            if t::membership_success(status) { ConfirmedApplied } else { ConfirmedRejected }
+        }
+        // Transport failure AFTER dispatch: the join may have landed.
+        _ => UnconfirmedAfterSend,
     }
 }
 
@@ -568,7 +595,10 @@ pub fn hardened_post_message(
     }
     let (status, body) = match outcome {
         HttpOutcome::Response { status, body } => (status, body),
-        _ => return fail(t::PostOutcome::Failed, None),
+        // Transport failure AFTER dispatch: the write may have landed.
+        // Unconfirmed with NO echo message - the UI must render an
+        // unconfirmed post without a local bubble (main 01:53).
+        _ => return PostResult { outcome: t::PostOutcome::SoftEchoUnconfirmed, message: None },
     };
     if !(200..300).contains(&status) {
         return fail(t::PostOutcome::Failed, None);
@@ -616,22 +646,23 @@ pub fn hardened_flag_message(
     settings: &crate::supabase_config::ClientSettings,
     http: &mut dyn HardenedTransport,
     remote_message_id: &str,
-) -> bool {
+) -> HardenedWriteOutcome {
+    use HardenedWriteOutcome::*;
     let ctx = match hardened_begin(store, now_secs, refresh, settings) {
         HardenedBegin::Ready(c) => c,
-        _ => return false,
+        _ => return FailedBeforeSend,
     };
     let req = t::flag_message_request(remote_message_id);
-    let Some(url) = hardened_url(&ctx, true, &req.path) else { return false };
-    if !hardened_session_intact(store, &ctx) { return false; }
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return FailedBeforeSend };
+    if !hardened_session_intact(store, &ctx) { return FailedBeforeSend; }
     let outcome = http.execute(store, &url, &req, ctx.token.trim());
-    if !hardened_session_intact(store, &ctx) { return false; }
+    if !hardened_session_intact(store, &ctx) { return UnconfirmedAfterSend; }
     match outcome {
         HttpOutcome::Response { status, body } => match body_to_string(body) {
-            Some(b) => t::flag_success(status, &b),
-            None => false,
+            Some(b) => if t::flag_success(status, &b) { ConfirmedApplied } else { ConfirmedRejected },
+            None => ConfirmedRejected,
         },
-        _ => false,
+        _ => UnconfirmedAfterSend,
     }
 }
 
