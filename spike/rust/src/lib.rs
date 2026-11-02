@@ -95,7 +95,7 @@ pub fn cmd_aes_verify(kotlin_in: &str, rust_out: &str) {
     // Direction 2: deterministic Rust vectors for the Kotlin side to verify
     let mut lines = String::new();
     let key = [7u8; 32];
-    for (i, pt) in [b"".to_vec(), b"cyclecare".to_vec(), vec![b'x'; 64], vec![0u8, 159, 146, 150], vec![b'q'; 1000]] {
+    for (i, pt) in [b"".to_vec(), b"cyclecare".to_vec(), vec![b'x'; 64], vec![0u8, 159, 146, 150], vec![b'q'; 1000]].into_iter().enumerate() {
         let mut iv = [0u8; 12];
         iv[11] = i as u8 + 1;
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
