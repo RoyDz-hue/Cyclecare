@@ -344,3 +344,142 @@ fn origin_matching_is_structural_not_prefix() {
     assert!(!lorigin.allows("http://localhost:54322/rest/v1/x"));
     assert!(!lorigin.allows("http://localhost.evil.com:54321/x"));
 }
+
+// ---- Shared hardened boundary (main 01:48 review) - unwired ----
+// Drift injection: HardenedFake mutates the store INSIDE execute,
+// simulating an async transport spanning a sign-out / account switch.
+
+struct HardenedFake {
+    script: std::collections::VecDeque<HttpOutcome>,
+    captured: Vec<(String, String)>,
+    /// Mid-flight session mutation, applied during the NEXT execute.
+    drift: Option<Box<dyn FnOnce(&mut cyclecare_core::lifecycle::SessionStore)>>,
+}
+impl HardenedFake {
+    fn new(v: Vec<HttpOutcome>) -> Self { Self { script: v.into(), captured: vec![], drift: None } }
+}
+impl HardenedTransport for HardenedFake {
+    fn execute(&mut self, store: &mut cyclecare_core::lifecycle::SessionStore, full_url: &str, req: &TransportRequest, bearer: &str) -> HttpOutcome {
+        self.captured.push((full_url.into(), bearer.into()));
+        if let Some(d) = self.drift.take() { d(store); }
+        let _ = req;
+        self.script.pop_front().unwrap_or(HttpOutcome::OtherError)
+    }
+}
+
+const MESSAGES_OK: &str = r#"[{"id":"m1","user_id":"owner-uid","content":"hello","created_at":"2026-11-03T01:00:00Z"}]"#;
+const POST_OK: &str = r#"[{"id":"srv1","created_at":"2026-11-03T01:00:00Z"}]"#;
+
+fn signout_drift() -> Box<dyn FnOnce(&mut cyclecare_core::lifecycle::SessionStore)> {
+    Box::new(|s| { s.set_user_id(None); })
+}
+fn switch_drift() -> Box<dyn FnOnce(&mut cyclecare_core::lifecycle::SessionStore)> {
+    Box::new(|s| { s.set_user_id(Some("intruder-uid")); })
+}
+
+#[test]
+fn hardened_boundary_all_ops_zero_http_on_invalid_origin() {
+    let settings = resolve_client_settings(Some("your_project_ref"), Some("sb_publishable_12345678901234567890"));
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![]);
+    let mut store = session_store_view(&prefs);
+    assert!(!hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"));
+    let mut store = session_store_view(&prefs);
+    assert!(hardened_fetch_messages(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1").is_empty());
+    let mut store = session_store_view(&prefs);
+    assert!(matches!(hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi").outcome, cyclecare_core::community_transport::PostOutcome::Failed));
+    let mut store = session_store_view(&prefs);
+    assert!(!hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"));
+    let mut store = session_store_view(&prefs);
+    assert!(!hardened_community_pulse(Some(&mut store), NOW, &no_refresh(), &settings, &mut f));
+    assert!(!hardened_community_pulse(None, NOW, &no_refresh(), &settings, &mut f));
+    assert!(f.captured.is_empty(), "zero requests across all hardened ops on invalid origin");
+}
+
+#[test]
+fn signout_mid_read_discards_result() {
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: MESSAGES_OK.as_bytes().to_vec() }]);
+    f.drift = Some(signout_drift());
+    let mut store = session_store_view(&prefs);
+    let msgs = hardened_fetch_messages(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "t1");
+    assert!(msgs.is_empty(), "result discarded when the session changed mid-flight");
+    assert_eq!(f.captured.len(), 1, "request did leave (parity with async span)");
+}
+
+#[test]
+fn signout_mid_post_is_unconfirmed_never_confirmed() {
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 201, body: POST_OK.as_bytes().to_vec() }]);
+    f.drift = Some(signout_drift());
+    let mut store = session_store_view(&prefs);
+    let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &remote_settings(), &mut f, "t1", "hi there");
+    assert!(matches!(res.outcome, cyclecare_core::community_transport::PostOutcome::SoftEchoUnconfirmed),
+        "post-dispatch drift -> unconfirmed, never confirmed");
+    assert!(res.message.is_none(), "no echo attributed after drift");
+}
+
+#[test]
+fn account_switch_mid_membership_and_flag_not_applied() {
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 201, body: vec![] }]);
+    f.drift = Some(switch_drift());
+    let mut store = session_store_view(&prefs);
+    assert!(!hardened_ensure_membership(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "t1"),
+        "membership success after account switch must not apply");
+
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: b"true".to_vec() }]);
+    f.drift = Some(switch_drift());
+    let mut store = session_store_view(&prefs);
+    assert!(!hardened_flag_message(&mut store, NOW, &no_refresh(), &remote_settings(), &mut f, "m1"));
+}
+
+#[test]
+fn stable_session_applies_results_across_ops() {
+    let settings = remote_settings();
+    let prefs = bound_owner_prefs();
+    let mut f = HardenedFake::new(vec![
+        HttpOutcome::Response { status: 200, body: MESSAGES_OK.as_bytes().to_vec() },
+        HttpOutcome::Response { status: 201, body: vec![] },
+        HttpOutcome::Response { status: 200, body: b" true ".to_vec() },
+        HttpOutcome::Response { status: 200, body: vec![] },
+    ]);
+    let mut store = session_store_view(&prefs);
+    let msgs = hardened_fetch_messages(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1");
+    assert_eq!(msgs.len(), 1);
+    assert!(msgs[0].is_self, "owner-authored message via ctx.owner");
+    assert!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"));
+    assert!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"));
+    assert!(hardened_community_pulse(Some(&mut store), NOW, &no_refresh(), &settings, &mut f));
+    assert_eq!(f.captured.len(), 4);
+    // Bearer on every call is the bound owner token, not the anon key.
+    for (_, bearer) in &f.captured {
+        assert_eq!(bearer, &jwt("owner-uid", 4_000_000_000));
+    }
+    // Anonymous pulse: origin-validated, anon-key bearer.
+    let mut f2 = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: vec![] }]);
+    assert!(hardened_community_pulse(None, NOW, &no_refresh(), &settings, &mut f2));
+    assert_eq!(f2.captured[0].1, "sb_publishable_12345678901234567890");
+}
+
+#[test]
+fn refresh_rotation_mid_begin_does_not_invalidate_generation() {
+    // Expired session -> refresh inside hardened_begin; the refresh commit
+    // rotates tokens but must NOT bump the session generation (sign-in
+    // does). The pre/post-dispatch checks still pass.
+    let good = jwt("owner-uid", NOW + 3600);
+    let body = format!(r#"{{"access_token":"{good}","refresh_token":"rotated","expires_at":{},"user":{{"id":"owner-uid"}}}}"#, NOW + 3600);
+    let refresh = move |_: &str| Ok(cyclecare_core::session_token::RefreshResponse { code: 200, body: Some(body.clone()) });
+    let mut prefs = owner_prefs();
+    prefs.access_token = Some(jwt("owner-uid", NOW - 10));
+    prefs.session_expires_at_seconds = NOW - 10;
+    prefs.refresh_token = Some("stored-refresh".into());
+    let mut store = session_store_view(&prefs);
+    let gen_before = store.session_generation();
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: MESSAGES_OK.as_bytes().to_vec() }]);
+    let msgs = hardened_fetch_messages(&mut store, NOW, &refresh, &remote_settings(), &mut f, "t1");
+    assert_eq!(msgs.len(), 1, "valid refresh keeps the op alive");
+    assert_eq!(store.session_generation(), gen_before, "refresh rotation preserves account generation");
+    assert_eq!(f.captured[0].1, good, "bearer is the renewed token");
+}

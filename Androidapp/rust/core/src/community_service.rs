@@ -392,3 +392,286 @@ pub fn hardened_fetch_topics_with_status(
 fn origin_allows(origin: &EndpointOrigin, absolute_url: &str) -> bool {
     origin.allows(absolute_url)
 }
+
+// ============ PROPOSED shared hardened owner-effect boundary ============
+// main 01:48 review: NOT wired; parity functions and the reviewed
+// hardened_fetch_topics_with_status above are unchanged. Shared boundary
+// for ALL owner effects (membership, messages, post, flag, pulse):
+//   - begin: insecure/ownerless store refusal, validated absolute origin,
+//     parity resolve + owner re-binding (validTokenForOwner structure,
+//     exp > now per source; the fast path's 90s margin is a resolve-level
+//     distinction, not claimed here);
+//   - pre-dispatch AND pre-apply owner+generation re-checks: an async
+//     transport can span a sign-out or account switch;
+//   - post-dispatch drift on a WRITE yields unconfirmed (never Confirmed):
+//     the write may still have landed;
+//   - every URL is built from the validated origin and re-checked
+//     structurally before the bearer leaves (defense-in-depth; the REAL
+//     redirect protection remains the transport adapter's obligation:
+//     disable redirect following or re-validate every hop).
+// HardenedTransport receives the store during execute: production adapters
+// ignore it; tests inject mid-flight session changes through it.
+
+pub trait HardenedTransport {
+    fn execute(
+        &mut self,
+        store: &mut SessionStore,
+        full_url: &str,
+        req: &t::TransportRequest,
+        bearer: &str,
+    ) -> HttpOutcome;
+}
+
+/// A begun owner-effect boundary: validated origin, owner-bound token,
+/// captured (owner, generation) for drift checks.
+pub struct HardenedOwnerContext {
+    pub owner: String,
+    pub generation: i64,
+    pub origin: EndpointOrigin,
+    pub token: String,
+}
+
+pub enum HardenedBegin {
+    Ready(HardenedOwnerContext),
+    SignInUnconfirmed,
+    Unavailable,
+}
+
+pub fn hardened_begin(
+    store: &mut SessionStore,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+) -> HardenedBegin {
+    if !store.is_secure_storage_available() {
+        return HardenedBegin::SignInUnconfirmed;
+    }
+    let owner = match store.user_id() {
+        Some(u) if !crate::kotlin_text::kotlin_is_blank(u) => u.to_string(),
+        _ => return HardenedBegin::SignInUnconfirmed,
+    };
+    let origin = match validated_origin(settings) {
+        Some(o) => o,
+        None => return HardenedBegin::Unavailable,
+    };
+    let token = match resolve_access_token(store, now_secs, refresh) {
+        AccessTokenResolution::Valid(t) => t,
+        AccessTokenResolution::Missing | AccessTokenResolution::ReauthenticationRequired => {
+            return HardenedBegin::SignInUnconfirmed
+        }
+        AccessTokenResolution::TemporarilyUnavailable => return HardenedBegin::Unavailable,
+    };
+    if !crate::session_token::valid_token_for_owner(&token, &owner, now_secs) {
+        return HardenedBegin::SignInUnconfirmed;
+    }
+    let generation = store.session_generation();
+    HardenedBegin::Ready(HardenedOwnerContext { owner, generation, origin, token })
+}
+
+/// Owner+generation re-check (withCurrentSession parity): true only when
+/// the store still holds the captured owner at the captured generation.
+pub fn hardened_session_intact(store: &mut SessionStore, ctx: &HardenedOwnerContext) -> bool {
+    store.with_current_session(&ctx.owner, ctx.generation, |_| true) == Some(true)
+}
+
+/// Build + structurally re-validate a request URL against the origin.
+/// base_rest: true for /rest/v1 paths, false for function paths.
+fn hardened_url(ctx: &HardenedOwnerContext, base_rest: bool, path: &str) -> Option<String> {
+    let base = if base_rest { ctx.origin.rest_url() } else { ctx.origin.base() };
+    let url = format!("{base}{path}");
+    if ctx.origin.allows(&url) { Some(url) } else { None }
+}
+
+pub fn hardened_ensure_membership(
+    store: &mut SessionStore,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HardenedTransport,
+    topic_id: &str,
+) -> bool {
+    let ctx = match hardened_begin(store, now_secs, refresh, settings) {
+        HardenedBegin::Ready(c) => c,
+        _ => return false,
+    };
+    let user_id = match t::current_user_id(Some(&ctx.owner)) { Some(u) => u, None => return false };
+    let req = t::ensure_membership_request(&user_id, topic_id);
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return false };
+    if !hardened_session_intact(store, &ctx) { return false; }
+    let outcome = http.execute(store, &url, &req, ctx.token.trim());
+    if !hardened_session_intact(store, &ctx) { return false; }
+    match outcome {
+        HttpOutcome::Response { status, .. } => t::membership_success(status),
+        _ => false,
+    }
+}
+
+pub fn hardened_fetch_messages(
+    store: &mut SessionStore,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HardenedTransport,
+    topic_id: &str,
+) -> Vec<CircleMessage> {
+    let ctx = match hardened_begin(store, now_secs, refresh, settings) {
+        HardenedBegin::Ready(c) => c,
+        _ => return vec![],
+    };
+    let req = t::fetch_messages_request(topic_id);
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return vec![] };
+    if !hardened_session_intact(store, &ctx) { return vec![]; }
+    let outcome = http.execute(store, &url, &req, ctx.token.trim());
+    if !hardened_session_intact(store, &ctx) { return vec![]; }
+    match outcome {
+        HttpOutcome::Response { status, body } if (200..300).contains(&status) => {
+            match body_to_string(body).as_deref().map(|r| parse_circle_messages(r, topic_id, Some(&ctx.owner))) {
+                Some(Some(msgs)) => msgs,
+                _ => vec![],
+            }
+        }
+        _ => vec![],
+    }
+}
+
+/// Post drift semantics: a session change BEFORE dispatch cancels the write
+/// (Failed); a change AFTER dispatch means the write may have landed ->
+/// SoftEchoUnconfirmed, NEVER Confirmed.
+pub fn hardened_post_message(
+    store: &mut SessionStore,
+    now_secs: i64,
+    now_ms: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HardenedTransport,
+    topic_id: &str,
+    content: &str,
+) -> PostResult {
+    let fail = |outcome: t::PostOutcome, message| PostResult { outcome, message };
+    let ctx = match hardened_begin(store, now_secs, refresh, settings) {
+        HardenedBegin::Ready(c) => c,
+        _ => return fail(t::PostOutcome::Failed, None),
+    };
+    let trimmed = crate::kotlin_text::kotlin_trim(content).to_string();
+    if !t::post_content_allowed(&trimmed) {
+        return fail(t::PostOutcome::Failed, None);
+    }
+    let alias = soft_alias_for(&ctx.owner);
+    let req = t::post_message_request(topic_id, &ctx.owner, &alias, &trimmed);
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return fail(t::PostOutcome::Failed, None) };
+    if !hardened_session_intact(store, &ctx) { return fail(t::PostOutcome::Failed, None); }
+    let outcome = http.execute(store, &url, &req, ctx.token.trim());
+    if !hardened_session_intact(store, &ctx) {
+        // The request already left; confirmation can no longer be trusted
+        // to belong to the still-current owner session.
+        return PostResult { outcome: t::PostOutcome::SoftEchoUnconfirmed, message: None };
+    }
+    let (status, body) = match outcome {
+        HttpOutcome::Response { status, body } => (status, body),
+        _ => return fail(t::PostOutcome::Failed, None),
+    };
+    if !(200..300).contains(&status) {
+        return fail(t::PostOutcome::Failed, None);
+    }
+    let raw = match body_to_string(body) {
+        Some(r) => r,
+        None => return fail(t::PostOutcome::Failed, None),
+    };
+    match crate::sync_codec::JsonParser::new(&raw).parse() {
+        Err(_) => soft_echo(topic_id, alias, trimmed, now_ms),
+        Ok(v) => match &v {
+            crate::sync_codec::JsonValue::Array(rows) => match rows.first() {
+                Some(row @ crate::sync_codec::JsonValue::Object(_)) => {
+                    let id_raw = crate::kotlin_text::kotlin_trim(
+                        &crate::sync_codec::aosp_opt_string(row, "id", ""),
+                    ).to_string();
+                    let remote_id = if id_raw.is_empty() { None } else { Some(id_raw) };
+                    let created_raw = crate::sync_codec::aosp_opt_string(row, "created_at", "");
+                    let timestamp_ms = crate::notifications::parse_iso_timestamp(Some(&created_raw));
+                    PostResult {
+                        outcome: t::PostOutcome::Confirmed { remote_id: remote_id.clone(), timestamp_ms },
+                        message: Some(CircleMessage {
+                            channel_id: topic_id.to_string(),
+                            sender_alias: alias,
+                            content: trimmed,
+                            timestamp_ms,
+                            is_self: true,
+                            persona_id: None,
+                            remote_id,
+                            is_flagged: false,
+                        }),
+                    }
+                }
+                _ => PostResult { outcome: t::PostOutcome::Failed, message: None },
+            },
+            _ => soft_echo(topic_id, alias, trimmed, now_ms),
+        },
+    }
+}
+
+pub fn hardened_flag_message(
+    store: &mut SessionStore,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HardenedTransport,
+    remote_message_id: &str,
+) -> bool {
+    let ctx = match hardened_begin(store, now_secs, refresh, settings) {
+        HardenedBegin::Ready(c) => c,
+        _ => return false,
+    };
+    let req = t::flag_message_request(remote_message_id);
+    let Some(url) = hardened_url(&ctx, true, &req.path) else { return false };
+    if !hardened_session_intact(store, &ctx) { return false; }
+    let outcome = http.execute(store, &url, &req, ctx.token.trim());
+    if !hardened_session_intact(store, &ctx) { return false; }
+    match outcome {
+        HttpOutcome::Response { status, body } => match body_to_string(body) {
+            Some(b) => t::flag_success(status, &b),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// Hardened pulse. Token present -> full owner-effect boundary (pre-dispatch
+/// check only; the pulse carries no result to apply). Token absent ->
+/// anon-key pulse still requires a validated configured absolute origin
+/// (the parity gate is `configured` only).
+pub fn hardened_community_pulse(
+    store: Option<&mut SessionStore>,
+    now_secs: i64,
+    refresh: &dyn Fn(&str) -> Result<RefreshResponse, ()>,
+    settings: &crate::supabase_config::ClientSettings,
+    http: &mut dyn HardenedTransport,
+) -> bool {
+    let req = t::pulse_request();
+    match store {
+        Some(store) => {
+            let ctx = match hardened_begin(store, now_secs, refresh, settings) {
+                HardenedBegin::Ready(c) => c,
+                _ => return false,
+            };
+            let Some(url) = hardened_url(&ctx, false, &req.path) else { return false };
+            if !hardened_session_intact(store, &ctx) { return false; }
+            let bearer = t::pulse_bearer(Some(&ctx.token), &settings.api_key).to_string();
+            matches!(http.execute(store, &url, &req, &bearer), HttpOutcome::Response { status, .. } if (200..300).contains(&status))
+        }
+        None => {
+            let origin = match validated_origin(settings) { Some(o) => o, None => return false };
+            let ctx = HardenedOwnerContext {
+                owner: String::new(),
+                generation: 0,
+                origin,
+                token: String::new(),
+            };
+            let Some(url) = hardened_url(&ctx, false, &req.path) else { return false };
+            let bearer = t::pulse_bearer(None, &settings.api_key).to_string();
+            // No store for the anonymous pulse: pass a throwaway insecure
+            // store; production adapters ignore it, tests must not mutate.
+            let mut scratch = SessionStore::new(false);
+            matches!(http.execute(&mut scratch, &url, &req, &bearer), HttpOutcome::Response { status, .. } if (200..300).contains(&status))
+        }
+    }
+}
