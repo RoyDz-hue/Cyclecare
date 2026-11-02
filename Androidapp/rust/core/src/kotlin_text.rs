@@ -136,3 +136,20 @@ pub fn kotlin_equals_ignore_case(a: &str, b: &str) -> bool {
                 || java_simple_lower(x) == java_simple_lower(y)
         })
 }
+
+/// Kotlin String.take(n): at most n UTF-16 code units, surrogate-safe
+/// (never splits a supplementary-plane pair; a leading lone high surrogate
+/// at the boundary is dropped with its pair kept whole).
+pub fn take_utf16(s: &str, n: usize) -> String {
+    let mut units = 0usize;
+    let mut end = s.len();
+    for (i, c) in s.char_indices() {
+        let w = c.len_utf16();
+        if units + w > n {
+            end = i;
+            break;
+        }
+        units += w;
+    }
+    s[..end].to_string()
+}
