@@ -137,9 +137,19 @@ pub fn kotlin_equals_ignore_case(a: &str, b: &str) -> bool {
         })
 }
 
-/// Kotlin String.take(n): at most n UTF-16 code units, surrogate-safe
-/// (never splits a supplementary-plane pair; a leading lone high surrogate
-/// at the boundary is dropped with its pair kept whole).
+/// Kotlin String.take(n): at most n UTF-16 code units.
+///
+/// KNOWN INTENTIONAL DIVERGENCE (JVM-probed 2026-11-02, kotlinc 2.1.0 /
+/// JRE 21, TakeProbe.kt): Kotlin take counts UTF-16 units and CAN split a
+/// surrogate pair at an odd boundary - "a"x499 + "🌸" (501 units) .take(500)
+/// yields 499 a's plus a LONE HIGH SURROGATE (0xD83C), which Java's UTF-8
+/// encoder then emits as the replacement byte '?' (0x3F) on the wire
+/// (500 bytes total, tail ...61 3f). A Rust String cannot represent a lone
+/// surrogate, so this helper is surrogate-safe by construction: the same
+/// input yields 499 a's (the whole pair is dropped). Neither version
+/// preserves the emoji; the wire-visible difference is exactly one trailing
+/// '?' replacement character vs nothing. At even boundaries the two agree
+/// ("a"x498 + "🌸" .take(500) keeps the whole pair; locked in corpus).
 pub fn take_utf16(s: &str, n: usize) -> String {
     let mut units = 0usize;
     let mut end = s.len();

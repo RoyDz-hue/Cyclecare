@@ -74,3 +74,18 @@ fn status_chain_verbatim_order() {
     assert_eq!(topics_status(Valid, Some(Http(200)), Some(3)), Ok);
     assert_eq!(topics_status(Valid, Some(Http(200)), None), Unavailable);
 }
+
+#[test]
+fn take_utf16_surrogate_boundary_jvm_probed() {
+    // JVM probe 2026-11-02 (TakeProbe.kt): Kotlin take(500) on
+    // "a"x499 + "🌸" keeps a LONE HIGH SURROGATE 0xD83C (UTF-8 wire: '?'),
+    // unrepresentable in Rust; this helper drops the whole pair instead.
+    // Even boundaries agree exactly.
+    let odd = format!("{}\u{1F338}", "a".repeat(499));
+    assert_eq!(cyclecare_core::kotlin_text::take_utf16(&odd, 500), "a".repeat(499));
+    let even = format!("{}\u{1F338}", "a".repeat(498));
+    assert_eq!(
+        cyclecare_core::kotlin_text::take_utf16(&even, 500),
+        format!("{}\u{1F338}", "a".repeat(498))
+    );
+}
