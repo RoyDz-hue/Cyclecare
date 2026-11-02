@@ -27,10 +27,10 @@ NOT_PORTED	data/payment/PaymentModels.kt
 PORTED	data/payment/PaymentSafety.kt	payment_safety.rs
 NOT_PORTED	data/payment/SupabasePaymentService.kt	
 PARTIAL	data/repository/CycleRepository.kt	cycle_math.rs ports calculateDayPrediction
-NOT_PORTED	data/supabase/AuthErrorMessages.kt	
+PORTED	data/supabase/AuthErrorMessages.kt	auth_errors.rs: for_response/fallback for all 9 operations, 28 corpus rows locked vs verbatim Kotlin execution
 NOT_PORTED	data/supabase/HealthSyncV3Transport.kt	
 PARTIAL	data/supabase/OnboardingQuestionService.kt	onboarding_questions.rs fallback bank; edge fn host
-NOT_PORTED	data/supabase/SupabaseAuthService.kt	
+PORTED	data/supabase/SupabaseAuthService.kt	auth_uri.rs+auth_link.rs+auth_flows.rs+auth_google.rs+auth_session.rs+pkce.rs+auth_errors.rs+session_token.rs: callback parse, email-link/PKCE trees, all email/guest/password flows, Google URL builders + isCycleCareAdmin, session-store bridge to the executed session-manager refresh machine (103+ executed rows); host glue remaining: okhttp live transport, Keystore/EncryptedSharedPrefs persistence layer
 NOT_PORTED	data/supabase/SupabaseConfig.kt	
 NOT_PORTED	data/supabase/SupabaseModels.kt	
 PARTIAL	data/supabase/SupabaseSessionManager.kt	session_token.rs resolve/expiry/JWT decode

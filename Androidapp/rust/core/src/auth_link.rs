@@ -9,11 +9,25 @@
 //! observable outcomes: result class + message, session writes, request count.
 //!
 //! AuthPreferences state model mirrors the REAL AuthPreferences (security/
-//! AuthPreferences.kt): clearSession clears tokens/expiry/pkce/user/pending
-//! fields, sets accountMode="ANONYMOUS" and bumps session_generation_v3 via
-//! checked add (Math.addExact). Note: the JVM probe's prefs stub cleared
-//! accountMode to null instead; the c-rows never route through clearSession so
-//! their locked values are unaffected.
+//! AuthPreferences.kt), executed on the JVM through its unitTest seam
+//! (fixtures/oracle/auth/results_prefs.tsv, rows s01-s03). SCOPE OF THAT
+//! EVIDENCE: the seam substitutes an in-memory SharedPreferences, so what was
+//! executed is the real getter/setter/generation/guard LOGIC over a plaintext
+//! map - NOT EncryptedSharedPreferences, NOT Keystore, NOT any encryption
+//! behavior. Encrypted production storage remains unverified host glue.
+//! Also note: writeSecureString REMOVES the key on insecure stores (s03);
+//! that is current-source semantics and a safety concern (silent credential
+//! loss), NOT an accepted target fallback for the migration.
+//! Locked semantics: accountMode is a
+//! non-null String defaulting to "ANONYMOUS"; the userId setter bumps
+//! session_generation_v3 (Math.addExact) whenever the value changes;
+//! clearSession clears tokens/expiry/pkce/user/pending fields, sets
+//! accountMode="ANONYMOUS" and bumps the generation; insecure stores drop
+//! credential writes (writeSecureString removes the key instead).
+//! The full link corpus (c01-c20) was re-executed against the REAL
+//! AuthPreferences class - result classes and messages are identical to the
+//! stub run; the only field-level difference was the store-default
+//! accountMode on rows that never write it, which this model now mirrors.
 //!
 //! Transport and clock are injected seams, mirroring PaymentUseCase's
 //! constructor-injected seams (learning: test at the seams production owns).
@@ -113,6 +127,8 @@ fn opt_long(obj: &JsonValue, key: &str, fallback: i64) -> i64 {
 #[derive(Debug, Clone, Default)]
 pub struct AuthPrefsState {
     pub is_secure_storage_available: bool,
+    /// Real getter default is "ANONYMOUS" (prefs.getString(KEY_ACCOUNT_MODE,
+    /// "ANONYMOUS") ?: "ANONYMOUS"); modeled as Some("ANONYMOUS") from fresh().
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub session_expires_at_seconds: i64,
@@ -125,6 +141,9 @@ pub struct AuthPrefsState {
     pub is_pending_guest_email_link: bool,
     pub needs_password_setup: bool,
     pub session_generation: i64,
+    /// deviceId (AuthPreferences.kt:342-350): get-or-generate-and-persist;
+    /// generation is host glue, modeled via FlowSeams.new_device_id.
+    pub device_id: Option<String>,
 }
 
 impl AuthPrefsState {
@@ -132,8 +151,22 @@ impl AuthPrefsState {
         AuthPrefsState {
             is_secure_storage_available: true,
             session_generation: 0,
+            account_mode: Some("ANONYMOUS".to_string()),
             ..Default::default()
         }
+    }
+
+    /// Real userId setter: bumps session_generation_v3 (checked add) when the
+    /// value changes, then writeSecureString (insecure store removes the key).
+    pub fn set_user_id(&mut self, value: Option<String>) {
+        let normalized = if !self.is_secure_storage_available { None } else { value };
+        if self.user_id != normalized {
+            self.session_generation = self
+                .session_generation
+                .checked_add(1)
+                .expect("session generation overflow");
+        }
+        self.user_id = normalized;
     }
 
     /// Real AuthPreferences.clearSession: drops tokens/user/pending state,
@@ -156,7 +189,8 @@ impl AuthPrefsState {
         self.account_mode = Some("ANONYMOUS".to_string());
     }
 
-    fn clear_pending_auth_flow(&mut self, clear_pending_email: bool) {
+    /// pub for the sibling flows module (same service, split files).
+    pub fn clear_pending_auth_flow(&mut self, clear_pending_email: bool) {
         self.google_pkce_verifier = None;
         self.pending_auth_action = None;
         if clear_pending_email {
@@ -179,6 +213,7 @@ pub struct AuthUser {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthOutcome {
     Success { user: AuthUser, message: String },
+    VerificationRequired(String),
     Error(String),
 }
 
@@ -186,6 +221,8 @@ pub enum AuthOutcome {
 pub struct HttpResponse {
     pub successful: bool,
     pub body: String,
+    /// Raw Location header when present (createGoogleLinkUrl falls back to it).
+    pub header_location: Option<String>,
 }
 
 /// Injected transport: method, url, optional JSON body. Err = network failure
@@ -197,6 +234,11 @@ pub type Transport<'a> = dyn FnMut(&str, &str, Option<&str>) -> Result<HttpRespo
 pub fn email_is_confirmed(user: &JsonValue) -> bool {
     // AOSP optString turns an explicit JSON null into the literal "null",
     // which is NOT blank; mirrored by aosp_opt_string.
+    // CURRENT-SOURCE PARITY ONLY (rows c17/c18): an explicit null
+    // email_confirmed_at is accepted as confirmed. That is what the Kotlin
+    // source does today; it is NOT an accepted security design and NOT
+    // authorization to rely on it for actual account linking. Flagged for
+    // migration safety review; do not tighten or loosen without that review.
     !kotlin_is_blank(&aosp_opt_string(user, "email_confirmed_at", ""))
         || !kotlin_is_blank(&aosp_opt_string(user, "confirmed_at", ""))
 }
@@ -243,7 +285,8 @@ pub fn save_session(prefs: &mut AuthPrefsState, json: &JsonValue, mode: &str, no
     let user = opt_object(json, "user").unwrap_or(json);
     prefs.account_mode = Some(mode.to_string());
     let uid = aosp_opt_string(user, "id", "");
-    prefs.user_id = if_blank(uid).or_else(|| prefs.user_id.clone());
+    let assigned = if_blank(uid).or_else(|| prefs.user_id.clone());
+    prefs.set_user_id(assigned);
     prefs.user_email = if_blank(aosp_opt_string(user, "email", ""));
     prefs.access_token = if_blank(aosp_opt_string(json, "access_token", ""));
     prefs.refresh_token = if_blank(aosp_opt_string(json, "refresh_token", ""));
@@ -329,7 +372,8 @@ pub fn complete_email_link(
         .unwrap_or_else(|| {
             now_seconds + value("expires_in").and_then(|v| v.parse::<i64>().ok()).unwrap_or(3600)
         });
-    prefs.user_id = Some(aosp_opt_string(&user, "id", ""));
+    let new_user_id = aosp_opt_string(&user, "id", "");
+    prefs.set_user_id(Some(new_user_id));
     let email = if_blank(aosp_opt_string(&user, "email", ""))
         .or_else(|| prefs.pending_email.clone())
         .unwrap_or_default();
@@ -455,7 +499,7 @@ mod tests {
     }
 
     fn resp(ok: bool, body: &str) -> HttpResponse {
-        HttpResponse { successful: ok, body: body.to_string() }
+        HttpResponse { successful: ok, body: body.to_string(), header_location: None }
     }
 
     struct Row {
@@ -539,6 +583,42 @@ mod tests {
         rows
     }
 
+    /// Real-AuthPreferences store semantics locked by executing the actual
+    /// class through its unitTest seam (fixtures/oracle/auth/results_prefs.tsv,
+    /// rows s01-s03): userId changes bump the generation; clearSession bumps
+    /// again, resets accountMode to "ANONYMOUS" and clears session fields;
+    /// insecure stores drop credential writes.
+    #[test]
+    fn prefs_store_semantics_match_real_authprefs() {
+        let mut p = AuthPrefsState::fresh();
+        p.set_user_id(Some("u-1".into()));
+        assert_eq!(p.session_generation, 1, "s01: userId change bumps generation");
+        p.access_token = Some("AT".into());
+        p.refresh_token = Some("RT".into());
+        p.session_expires_at_seconds = 12345;
+        p.account_mode = Some("EMAIL".into());
+        p.pending_email = Some("p@q.r".into());
+        p.pending_auth_action = Some("GOOGLE".into());
+        p.google_pkce_verifier = Some("ver".into());
+        p.is_pending_guest_email_link = true;
+        p.needs_password_setup = true;
+        p.clear_session();
+        assert_eq!(p.session_generation, 2, "s01: clearSession bumps again");
+        assert_eq!(p.account_mode.as_deref(), Some("ANONYMOUS"));
+        assert!(p.user_id.is_none() && p.user_email.is_none());
+        assert!(p.access_token.is_none() && p.refresh_token.is_none());
+        assert_eq!(p.session_expires_at_seconds, 0);
+        assert!(p.pending_email.is_none() && p.pending_auth_action.is_none());
+        assert!(p.google_pkce_verifier.is_none());
+        assert!(!p.is_pending_guest_email_link && !p.needs_password_setup);
+
+        // s03: insecure store drops credential writes (writeSecureString removes).
+        let mut insecure = AuthPrefsState::fresh();
+        insecure.is_secure_storage_available = false;
+        insecure.set_user_id(Some("u-3".into()));
+        assert_eq!(insecure.user_id, None, "s03: insecure store drops userId");
+    }
+
     #[test]
     fn link_tree_matches_kotlin_corpus() {
         let rows = load_rows();
@@ -567,6 +647,7 @@ mod tests {
                 AuthOutcome::Success { user, message } => {
                     ("success", message.clone(), user.id.clone())
                 }
+                AuthOutcome::VerificationRequired(m) => ("verify", m.clone(), String::new()),
                 AuthOutcome::Error(e) => ("error", e.clone(), String::new()),
             };
             assert_eq!(cls, get("result"), "{} class", row.id);

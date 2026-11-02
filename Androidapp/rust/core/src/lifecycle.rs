@@ -138,6 +138,13 @@ impl SessionStore {
             .unwrap_or(0)
     }
 
+    /// Bridge-only raw generation write (auth_session view construction);
+    /// mirrors reading an existing store, not a userId change, so no bump.
+    pub fn set_session_generation_for_bridge(&mut self, value: i64) {
+        self.entries
+            .insert("session_generation_v3".to_string(), value.to_string());
+    }
+
     fn bump_generation(&mut self) {
         // Math.addExact semantics: panic on overflow is unreachable in
         // practice; use wrapping to mirror long wraparound defensively.
