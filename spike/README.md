@@ -42,3 +42,16 @@ Known limits (stated, not hidden):
   codec is present). The maven AAR binary itself is not executed here.
 - Keystore-invalidated DBs are unrecoverable by ANY app; a Rust app must
   detect, preserve files untouched, and re-authenticate via the server.
+
+## Fixture assembly modes (updated)
+
+`assemble_fixture.py` has exactly one row source: `spike/fixture/cyclecare-fixture-v9-rows.sql`.
+Never concatenate the transcribed file's INSERT lines into the fixture - they
+exist only for the column-diff check and will collide on primary keys.
+
+- Room-verified (CI): `python3 spike/fixture/assemble_fixture.py` - DDL and the
+  identity hash come from the real Room dump (`Androidapp/app/build/spike/room-schema-dump.txt`).
+- Transcription-grade (local, no Android toolchain):
+  `python3 spike/fixture/assemble_fixture.py --transcribed` - DDL and hash come
+  from the hand transcription, output is labeled TRANSCRIPTION-GRADE. Any parity
+  proven against it is parity vs hand transcription, NOT vs Room.
