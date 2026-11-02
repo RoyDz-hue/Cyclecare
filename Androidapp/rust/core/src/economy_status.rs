@@ -78,6 +78,36 @@ pub enum WalletNumber {
 /// Double.toString uses scientific notation ("1.0E22") while Rust Display
 /// prints full digits. Balances up to 3 decimal places never reach that
 /// range; tracked, not silently claimed exact.
+
+/// Java Double.toString semantics for wallet amounts (Android org.json types
+/// decimal JSON numbers as Double; verified against Android org.json docs -
+/// the Maven org.json 20240303 artifact types them as BigDecimal instead,
+/// which the production `value !is Double` check would REJECT, so Android's
+/// Double typing is the intended runtime and this port targets it).
+/// Rules: plain notation for 1e-3 <= |v| < 1e7 (integral values get ".0"),
+/// scientific "1.0E22"/"1.0E-4" outside that band. Shortest round-trip
+/// digits from Rust's formatter, which matches Java's Schubfach output for
+/// these magnitudes (documented residual risk for exotic bit patterns).
+pub fn java_double_to_string(f: f64) -> String {
+    if f == 0.0 {
+        return if f.is_sign_negative() { "-0.0".to_string() } else { "0.0".to_string() };
+    }
+    let a = f.abs();
+    if (1e-3..1e7).contains(&a) {
+        let plain = format!("{f}");
+        if plain.contains('.') {
+            plain
+        } else {
+            format!("{plain}.0")
+        }
+    } else {
+        let sci = format!("{f:e}"); // e.g. "1e22", "1.2345e7", "1e-4"
+        let (mant, exp) = sci.split_once('e').unwrap();
+        let mant = if mant.contains('.') { mant.to_string() } else { format!("{mant}.0") };
+        format!("{mant}E{exp}")
+    }
+}
+
 pub fn verified_coin_amount(field: &str, value: WalletNumber) -> Result<String, String> {
     match value {
         WalletNumber::NotANumber => Err(format!("Cloud wallet {field} was not a number")),
@@ -96,7 +126,9 @@ pub fn verified_coin_amount(field: &str, value: WalletNumber) -> Result<String, 
                 // arrive as Double here, so reject defensively.
                 Err(format!("Cloud wallet {field} was not a number"))
             } else {
-                Ok(format!("{f}"))
+                // Kotlin: BigDecimal(value.toString()) with Android Double
+                // typing = BigDecimal(Double.toString(v)); toPlainString.
+                Ok(java_double_to_string(f))
             }
         }
     }
@@ -232,5 +264,22 @@ mod probe_locked_merge_tests {
         let refs: Vec<&RestrictionRecord> = recs.iter().collect();
         let merged = merge_restrictions(&refs, now);
         assert_eq!(merged.final_until.as_deref(), Some("2026-11-02T09:00:00.500Z"));
+    }
+}
+
+#[cfg(test)]
+mod probe_locked_amount_text_tests {
+    use super::*;
+
+    #[test]
+    fn java_double_text() {
+        // Android org.json Double typing: BigDecimal(Double.toString(v)).
+        assert_eq!(java_double_to_string(363.0), "363.0");
+        assert_eq!(java_double_to_string(0.1), "0.1");
+        assert_eq!(java_double_to_string(363.5), "363.5"); // 363.500 -> Double 363.5
+        assert_eq!(java_double_to_string(1e22), "1.0E22");
+        assert_eq!(java_double_to_string(0.0001), "1.0E-4");
+        assert_eq!(verified_coin_amount("coin_balance", WalletNumber::Integer(363)).unwrap(), "363");
+        assert_eq!(verified_coin_amount("coin_balance", WalletNumber::Decimal(363.0)).unwrap(), "363.0");
     }
 }

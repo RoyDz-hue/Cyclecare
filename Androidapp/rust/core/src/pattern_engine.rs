@@ -65,7 +65,10 @@ pub struct BaselineMetrics {
     pub observed_cycle_intervals: i32,
 }
 
-/// Kotlin Double.roundToInt: Math.round semantics (floor(x + 0.5)).
+/// Kotlin Double.roundToInt, probe-locked (RoundProbe, kotlinc 2.1.0/JRE 21):
+/// floor(x + 0.5) = Math.round semantics, ties toward +infinity
+/// (2.5->3, -2.5->-2, -1.5->-1). NOT kotlin.math.round (which is ties-to-even:
+/// round(2.5)=2). Ops' conflation of the two resolved by execution.
 fn kotlin_round_to_int(x: f64) -> i32 {
     (x + 0.5).floor() as i32
 }
