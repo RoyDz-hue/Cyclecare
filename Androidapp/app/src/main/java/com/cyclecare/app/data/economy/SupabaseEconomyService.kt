@@ -200,8 +200,8 @@ class SupabaseEconomyService(
                     UserEconomyTier.entries.find { it.name.equals(nativeParsed.optString("tier"), true) } ?: UserEconomyTier.FREE,
                     IdentityRank.entries.find { it.name.equals(nativeParsed.optString("rank"), true) } ?: IdentityRank.LUMEN,
                     BigDecimal(nativeParsed.optString("coinBalance")), BigDecimal(nativeParsed.optString("lifetimeEarned")), BigDecimal(nativeParsed.optString("lifetimeSpent")),
-                    nativeParsed.optString("activeFrame").ifBlank { null }, nativeParsed.optString("activeArtifact").ifBlank { "cycle_coin" }, null,
-                    nativeParsed.optString("activeAvatarArt").ifBlank { null }, nativeParsed.optString("activeTheme").ifBlank { "SOOTHING_ROSE" },
+                    nativeParsed.optString("activeFrame").ifBlank { null }, nativeParsed.optString("activeArtifact", "cycle_coin"), null,
+                    nativeParsed.optString("activeAvatarArt").ifBlank { null }, nativeParsed.optString("activeTheme", "SOOTHING_ROSE"),
                     0L, nativeParsed.optString("lastMinedDate").ifBlank { null }, nativeUnlocked, finalStatus, finalReasonOut, finalUntilOut, nativeGifted)
             } else {
                 finalStatus = activeStatus
