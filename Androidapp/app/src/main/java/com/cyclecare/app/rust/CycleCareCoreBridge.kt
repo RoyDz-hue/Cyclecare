@@ -2,20 +2,23 @@ package com.cyclecare.app.rust
 
 import android.util.Log
 import com.cyclecare.app.ui.screens.isCompletePin as kotlinIsCompletePin
+import org.json.JSONObject
 
 /**
- * Transitional JNI bridge to the Rust cyclecare-core cdylib. The Kotlin host
- * stays authoritative: when the native library is absent (older installs,
- * ABI without a packaged .so, load failure) every call falls back to the
+ * Transitional JNI bridge to the Rust cyclecare-core cdylib (core-ffi crate,
+ * JSON dispatcher). The Kotlin host stays authoritative: when the native
+ * library is absent or a call fails, every contract falls back to the
  * production Kotlin implementation, so app behavior never depends on the
  * spike artifact.
  *
- * Two contract shapes:
- *  - Identity-free computations (PIN shape) are called directly.
- *  - Identity-dependent computations MUST go through [withIdentitySnapshot]:
- *    the caller passes the owner + sessionGeneration captured before its
- *    async boundary; a stale snapshot discards the native result and uses the
- *    Kotlin fallback. This mirrors CycleCareViewModel's stillOwns re-checks.
+ * Native contract (rust/HOST-INTEGRATION.md):
+ *   nativeCoreHandshake(): Int                 -> always 42
+ *   nativeCall(contract, payloadJson): String  -> {"ok": ...} or {"error": ...}
+ *
+ * Identity-dependent contracts MUST go through [withIdentitySnapshot]: the
+ * caller passes the owner + sessionGeneration captured before its async
+ * boundary; a stale snapshot discards the native result and uses the Kotlin
+ * fallback. This mirrors CycleCareViewModel's stillOwns re-checks.
  */
 object CycleCareCoreBridge {
 
@@ -40,11 +43,19 @@ object CycleCareCoreBridge {
         return nativeState
     }
 
+    /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
+    fun call(contract: String, payload: JSONObject): JSONObject? {
+        if (ensureLoaded() != NativeState.LOADED) return null
+        return runCatching {
+            val reply = JSONObject(nativeCall(contract, payload.toString()))
+            if (reply.has("ok")) reply else null
+        }.getOrNull()
+    }
+
     /** Quick-unlock PIN shape (identity-free). Pure; no user data leaves the device. */
     fun isCompletePin(pin: String): Boolean {
-        if (ensureLoaded() == NativeState.LOADED) {
-            runCatching { nativeIsCompletePin(pin) }.getOrNull()?.let { return it }
-        }
+        val ok = call("is_complete_pin", JSONObject().put("pin", pin))
+        if (ok != null) return ok.optBoolean("ok", false)
         return kotlinIsCompletePin(pin)
     }
 
@@ -67,6 +78,6 @@ object CycleCareCoreBridge {
         return if (owner == currentOwner() && sessionGeneration == currentSessionGeneration()) result else fallback()
     }
 
-    private external fun nativeIsCompletePin(pin: String): Boolean
     private external fun nativeCoreHandshake(): Int
+    private external fun nativeCall(contract: String, payloadJson: String): String
 }

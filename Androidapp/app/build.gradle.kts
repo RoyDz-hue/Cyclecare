@@ -227,14 +227,10 @@ val rustAbiMap = mapOf(
 tasks.register("packageRustCore") {
     doLast {
         rustAbiMap.forEach { (triple, abi) ->
-            // Accept the JNI slice artifact or the migration owner's FFI crate
-            // artifact; both are packaged under the single runtime name
-            // libcyclecare_core.so (see rust/HOST-INTEGRATION.md).
-            val candidates = listOf(
-                File("$rootDir/rust/core-jni/target/$triple/release/libcyclecare_core_jni.so"),
-                File("$rootDir/rust/core-ffi/target/$triple/release/libcyclecare_core_ffi.so"),
-            )
-            val so = candidates.firstOrNull { it.exists() }
+            // The migration owner's FFI crate artifact, packaged under the
+            // single runtime name libcyclecare_core.so (rust/HOST-INTEGRATION.md).
+            val so = File("$rootDir/rust/core-ffi/target/$triple/release/libcyclecare_core_ffi.so")
+                .takeIf { it.exists() }
             if (so != null) {
                 val outDir = File("$rootDir/rust/core-jni/jniLibs/$abi")
                 outDir.mkdirs()

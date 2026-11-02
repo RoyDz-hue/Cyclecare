@@ -8,13 +8,16 @@ owned by the migration worker) and NOT whole-migration completion.
 ## What exists
 
 - `rust/core/` - cyclecare-core v10 (183 contract tests; pure, no UI/IO).
-- `rust/core-jni/` - cdylib crate exporting JNI symbols consumed by
-  `app/src/main/java/com/cyclecare/app/rust/CycleCareCoreBridge.kt`.
-  COMPILE-UNVERIFIED in the ops sandbox (no Rust toolchain); first compile
-  happens in a bounded toolchain run.
+- `rust/core-ffi/` - the migration owner's cdylib dispatcher crate consumed
+  by `app/src/main/java/com/cyclecare/app/rust/CycleCareCoreBridge.kt`.
+  Envelope {"ok": ...} / {"error": ...}; panics caught at the boundary.
+  Contracts: sanitize_coin_amount, is_complete_pin, parse_local_date_iso,
+  validate_period_date_strings, decide_reconnect, decide_reconnect_trailing,
+  evaluate_safety, compute_baseline, verified_coin_amount, merge_restrictions.
+  Android cross-build UNPROVEN (host-only so far).
 - Gradle packaging: `app/build.gradle.kts` adds jniLibs srcDir
-  `rust/core-jni/jniLibs` + `packageRustCore` (preBuild) that copies
-  `target/<triple>/release/libcyclecare_core_jni.so` to
+  `rust/core-ffi/jniLibs` + `packageRustCore` (preBuild) that copies
+  `target/<triple>/release/libcyclecare_core_ffi.so` to
   `jniLibs/<abi>/libcyclecare_core.so`. Missing .so = silent skip, Kotlin
   fallback keeps the app fully functional.
 - Proof path: Settings quick-unlock PIN validation (identity-free) routes
@@ -45,3 +48,16 @@ owned by the migration worker) and NOT whole-migration completion.
 - roundToInt tie behavior - pending verbatim probe (RoundProbe.kt forwarded).
 - Android wrapper (sqlcipher-android) readback of a Rust-written DB - unproven.
 - Dioxus/wry host integration - unverified (migration worker's track).
+
+## Dioxus wasm screen track (owner's; integration constraints found by review)
+
+- Scaffold dist inspected (v1): no remote code - the only URLs are doc
+  comments; the single fetch() is wasm-bindgen's local .wasm load.
+- INTEGRATION REQUIREMENT: WebAssembly instantiation via fetch on a file://
+  origin is blocked in WebView; the host must serve assets through
+  WebViewAssetLoader (https://appassets.androidplatform.net origin) or the
+  wasm init must use the ArrayBuffer (non-streaming) path. To be settled when
+  the real screen's host Activity is wired.
+- Host rules from main: local assets origin only, navigation allowlist, no
+  remote JS, minSdk 24 preserved, signing + screen-capture/privacy settings
+  preserved.
