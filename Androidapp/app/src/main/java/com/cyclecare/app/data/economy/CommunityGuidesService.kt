@@ -1,6 +1,7 @@
 package com.cyclecare.app.data.economy
 
 import com.cyclecare.app.data.supabase.SupabaseConfig
+import com.cyclecare.app.data.supabase.AccessTokenResolution
 import com.cyclecare.app.data.supabase.SupabaseSessionManager
 import com.cyclecare.app.security.AuthPreferences
 import kotlinx.coroutines.Dispatchers
@@ -80,11 +81,11 @@ class CommunityGuidesService(
      */
     suspend fun fetchTopicsWithStatus(): TopicsFetch = withContext(Dispatchers.IO) {
         val token = when (val resolution = SupabaseSessionManager.resolveAccessToken(authPreferences)) {
-            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.Valid -> resolution.token
-            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.Missing,
-            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.ReauthenticationRequired ->
+            is AccessTokenResolution.Valid -> resolution.token
+            is AccessTokenResolution.Missing,
+            is AccessTokenResolution.ReauthenticationRequired ->
                 return@withContext TopicsFetch(emptyList(), CircleServiceStatus.SIGN_IN_UNCONFIRMED)
-            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.TemporarilyUnavailable ->
+            is AccessTokenResolution.TemporarilyUnavailable ->
                 return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
         }
         val request = Request.Builder()
