@@ -50,8 +50,10 @@ workflows:
       - name: Targeted unit tests
         script: |
           set -e
+          set -o pipefail
           cd Androidapp
           chmod +x gradlew
+          mkdir -p ../build-logs
           ./gradlew testDebugUnitTest \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
@@ -63,7 +65,8 @@ workflows:
             --tests "com.cyclecare.app.AccountStartPolicyTest" \
             --tests "com.cyclecare.app.ReturningUserReopenTest" \
             --tests "com.cyclecare.app.ReopenSplashGateTest" \
-            --tests "com.cyclecare.app.domain.ai.CareAiSourceContractTest"
+            --tests "com.cyclecare.app.domain.ai.CareAiSourceContractTest" \
+            2>&1 | tee ../build-logs/test-run.log
       - name: Build unsigned slim APK (arm64, minified)
         script: |
           set -e
