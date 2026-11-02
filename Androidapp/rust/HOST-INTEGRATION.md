@@ -142,3 +142,21 @@ snapshots - no local/account/wallet writes.
 Integration note: core-ffi v5's Cargo.toml shipped path "../cyclecare-core"
 again (wrong even inside its own tarball layout, where the sibling crate is
 "core"); re-fixed to "../core" on the branch. Owner notified.
+
+## Isolated call-site adapters (spike, @2cb4558+)
+
+RustLifecycleAdapters.kt (com.cyclecare.app.rust) owns the guarded reopen ->
+onboarding -> wallet slice for an existing owner:
+- startupGate(auth, profilePresent, settingsOnboardingCompleted): native gate
+  with Kotlin fallback reproducing ViewModel init:334-340 verbatim.
+- effectiveUserId(auth): native with AuthPreferences fallback.
+- verifiedProfileParse / reconcileOfflineClaim: parse/decision passthroughs
+  over caller-fetched bodies; null fallback keeps the Kotlin parsers. The
+  transport (OkHttp) stays in SupabaseEconomyService.
+- SessionSnapshot + sessionSnapshot(auth): AuthPreferences-backed store the
+  session_token resolver will consume once resolve_access_token is exposed.
+Every adapter captures effectiveUserId + sessionGeneration and runs native
+inside withIdentitySnapshot; a stale snapshot silently uses the Kotlin path.
+Nothing in production flow references this file yet.
+Portable compile of CycleCareCoreBridge + RustLifecycleAdapters against
+minimal stubs: clean (kotlinc 2.1.0, JDK17). Full-app compile remains open.
