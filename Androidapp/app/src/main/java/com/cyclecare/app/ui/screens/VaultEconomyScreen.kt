@@ -234,59 +234,7 @@ fun VaultEconomyScreen(
                     ) {
                         Column {
                             val balanceBlock: @Composable () -> Unit = {
-                                Column {
-                                    Text(
-                                        text = "BALANCE",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = Color(0xFFB8860B),
-                                        letterSpacing = 1.sp
-                                    )
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = when (walletStatus) {
-                                                com.cyclecare.app.ui.viewmodel.WalletStatus.READY,
-                                                com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
-                                                    CoinFormatter.format(profile.coinBalance)
-                                                com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING -> "…"
-                                                else -> "—"
-                                            },
-                                            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.READY ||
-                                            walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE) {
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            InteractiveArtifact3D(
-                                                drawableRes = R.drawable.cycle_coin,
-                                                size = 34.dp,
-                                                isInteractive = false
-                                            )
-                                        }
-                                    }
-                                    // Status note: a wallet is always identity-bound. A failed
-                                    // refresh never looks like a real zero balance.
-                                    when (walletStatus) {
-                                        com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING ->
-                                            Text("Checking your coins…", style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        com.cyclecare.app.ui.viewmodel.WalletStatus.NO_SESSION ->
-                                            Text("Sign in to see your coins.", style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
-                                            Text("Last known balance - couldn't refresh just now.",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE ->
-                                            Text("Balance unavailable right now.", style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        else -> Unit
-                                    }
-                                    if (onRetryWallet != null &&
-                                        (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ||
-                                            walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE)) {
-                                        TextButton(onClick = onRetryWallet) { Text("Try again") }
-                                    }
-                                }
+                                WalletBalanceBlock(profile = profile, walletStatus = walletStatus, onRetryWallet = onRetryWallet)
                             }
                             // Tier & Multiplier Badge, with the page help
                             // action beside it in genuinely reserved
@@ -922,3 +870,70 @@ fun VaultEconomyScreen(
     }
 }
 
+
+
+/** The Hub/Atelier balance block, extracted so the five wallet states can be
+ * rendered and pixel-verified without the full screen's repository wiring.
+ * The coin icon renders its static path here: at 34dp an idle rotation adds
+ * nothing and the static path is the one snapshot tooling can capture. */
+@Composable
+fun WalletBalanceBlock(
+    profile: EconomyProfile,
+    walletStatus: com.cyclecare.app.ui.viewmodel.WalletStatus,
+    onRetryWallet: (() -> Unit)? = null
+) {
+    Column {
+        Text(
+            text = "BALANCE",
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = Color(0xFFB8860B),
+            letterSpacing = 1.sp
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = when (walletStatus) {
+                    com.cyclecare.app.ui.viewmodel.WalletStatus.READY,
+                    com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
+                        CoinFormatter.format(profile.coinBalance)
+                    com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING -> "…"
+                    else -> "—"
+                },
+                style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.READY ||
+                walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE) {
+                Spacer(modifier = Modifier.width(8.dp))
+                InteractiveArtifact3D(
+                    drawableRes = R.drawable.cycle_coin,
+                    size = 34.dp,
+                    isInteractive = false,
+                    enableIdleRotation = false
+                )
+            }
+        }
+        // Status note: a wallet is always identity-bound. A failed refresh
+        // never looks like a real zero balance.
+        when (walletStatus) {
+            com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING ->
+                Text("Checking your coins…", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            com.cyclecare.app.ui.viewmodel.WalletStatus.NO_SESSION ->
+                Text("Sign in to see your coins.", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
+                Text("Last known balance - couldn't refresh just now.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE ->
+                Text("Balance unavailable right now.", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> Unit
+        }
+        if (onRetryWallet != null &&
+            (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ||
+                walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE)) {
+            TextButton(onClick = onRetryWallet) { Text("Try again") }
+        }
+    }
+}
