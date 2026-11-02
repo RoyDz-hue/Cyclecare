@@ -133,3 +133,67 @@ fn timeline_matches_probe_including_first_seen_tiebreak() {
     assert!(tl.iter().all(|e| e.cycle_length_days == 0 && e.pattern_noticed.is_none()));
     assert!(generate_monthly_timeline(&[]).is_empty());
 }
+
+// JVM probe 2026-11-02 (kotlinc 2.1.0/JRE 21, en_US): every reachable stored
+// FlowLevel/EnergyLevel enum NAME through report + timeline. Locks the
+// SPOTTING inclusion, the UNUSUALLY_HEAVY underscore branch, the bleeding-set
+// exclusion of SPOTTING, and first-seen energy tie-breaking.
+fn logs_enum() -> Vec<LearningLog> {
+    vec![
+        llog("2026-09-01", "SPOTTING", "VERY_LOW", "cramps", 0, ""),
+        llog("2026-09-02", "LIGHT", "LOW", "cramps", 0, ""),
+        llog("2026-09-03", "MODERATE", "NORMAL", "fatigue", 0, ""),
+        llog("2026-09-04", "HEAVY", "GOOD", "fatigue", 0, ""),
+        llog("2026-09-05", "UNUSUALLY_HEAVY", "HIGH", "headache", 0, ""),
+        llog("2026-09-06", "NONE", "UNKNOWN", "", 0, ""),
+        llog("2026-09-07", "", "", "", 0, ""),
+        llog("2026-10-01", "SPOTTING", "VERY_LOW", "cramps", 0, ""),
+        llog("2026-10-02", "UNUSUALLY_HEAVY", "GOOD", "cramps", 0, ""),
+        llog("2026-10-03", "HEAVY", "HIGH", "nausea", 0, ""),
+    ]
+}
+
+#[test]
+fn fixture_enum_names_report() {
+    let text = generate_clinician_report_text(
+        &settings(28, 5, "2026-10-26"),
+        &logs_enum(),
+        Some(&profile("EXACT")),
+        today(),
+    );
+    let expected = "CYCLECARE \u{2014} USER-ENTERED SUMMARY\n\
+Generated: Nov 2, 2026\n\
+This summary reproduces saved information. It is not a diagnosis or a clinical assessment.\n\
+\n\
+SETUP SETTINGS (not measured averages)\n\
+\u{2022} Cycle-length setting: 28 days\n\
+\u{2022} Bleeding-duration setting: 5 days\n\
+\u{2022} Last period start date entered: 2026-10-26\n\
+\n\
+SAVED DAILY LOGS (10 dates)\n\
+\u{2022} Date range: 2026-09-01 to 2026-10-03\n\
+\u{2022} Flow entries: HEAVY (2), SPOTTING (2), UNUSUALLY HEAVY (2), LIGHT (1), MODERATE (1)\n\
+\u{2022} Symptom tags: Cramps (4), Fatigue (2), Headache (1), Nausea (1)\n\
+\u{2022} Pain ratings: None entered\n\
+\n\
+OPTIONAL DISCUSSION PROMPTS FROM SAVED ENTRIES\n\
+1. I recorded Cramps on 4 saved dates. Is there anything specific I should monitor or bring to a follow-up?\n\
+2. I recorded Fatigue on 2 saved dates. Is there anything specific I should monitor or bring to a follow-up?\n\
+3. I recorded Headache on 1 saved date. Is there anything specific I should monitor or bring to a follow-up?\n\
+4. I recorded heavy flow on 4 saved dates. What details would be useful to track or discuss?";
+    assert_eq!(text, expected);
+}
+
+#[test]
+fn fixture_enum_names_timeline() {
+    let tl = generate_monthly_timeline(&logs_enum());
+    assert_eq!(tl.len(), 2);
+    assert_eq!(tl[0].month_title, "October 2026");
+    assert_eq!(tl[0].period_bleeding_days, 2); // SPOTTING excluded
+    assert_eq!(tl[0].dominant_energy, "VERY LOW");
+    assert_eq!(tl[0].dominant_symptom, "Cramps");
+    assert_eq!(tl[1].month_title, "September 2026");
+    assert_eq!(tl[1].period_bleeding_days, 4);
+    assert_eq!(tl[1].dominant_energy, "VERY LOW"); // first-seen wins the 4-way tie
+    assert_eq!(tl[1].dominant_symptom, "Cramps");
+}
