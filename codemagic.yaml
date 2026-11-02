@@ -93,13 +93,15 @@ workflows:
               echo "(no $f)"
             fi
           done
+          mkdir -p ../build-logs
+          set -o pipefail
           ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" recordPaparazziDebug -Ppaparazzi \
             --tests "com.cyclecare.app.ui.ScreensScreenshotTest" \
             --tests "com.cyclecare.app.ui.ShellFrameScreenshotTest" \
             --tests "com.cyclecare.app.ui.HomeFrameScreenshotTest" \
             --tests "com.cyclecare.app.ui.CompactShellScreenshotTest" \
             --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
-            --tests "com.cyclecare.app.ui.CareConsentScreenshotTest"
+            --tests "com.cyclecare.app.ui.CareConsentScreenshotTest" 2>&1 | tee ../build-logs/goldens-record.log
       - name: Capture expanded consent details (interactive, Robolectric)
         script: |
           set -e
@@ -109,6 +111,7 @@ workflows:
     artifacts:
       - Androidapp/app/src/test/snapshots/images/*.png
       - Androidapp/app/build/outputs/captures/*.png
+      - build-logs/*.log
   cyclecare-device-verify:
     name: CycleCare emulator inset verification (real window insets)
     max_build_duration: 60
@@ -121,9 +124,11 @@ workflows:
       - name: Build debug app and instrumented test APKs
         script: |
           set -e
+          set -o pipefail
           cd Androidapp
           chmod +x gradlew
-          ./gradlew assembleDebug assembleDebugAndroidTest
+          mkdir -p ../build-logs
+          ./gradlew assembleDebug assembleDebugAndroidTest 2>&1 | tee ../build-logs/device-verify-build.log
       - name: Create and boot Android emulator (1080x2400, 420dpi, API 36)
         script: |
           set -e
@@ -154,3 +159,4 @@ workflows:
           adb shell emu kill || true
     artifacts:
       - device-verify/*.png
+      - build-logs/*.log
