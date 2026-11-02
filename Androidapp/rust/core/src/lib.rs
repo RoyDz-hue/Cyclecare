@@ -24,6 +24,7 @@ pub mod reconnect_policy;
 pub mod pin;
 pub mod pin_verify;
 pub mod app_lock;
+pub mod supabase_config;
 pub mod secure_store;
 pub mod cycle_math;
 pub mod notifications;

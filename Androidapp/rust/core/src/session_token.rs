@@ -79,7 +79,7 @@ fn decode_websafe(b: u8) -> i32 {
 const SKIP: i32 = -1;
 const EQUALS: i32 = -2;
 
-fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+pub fn b64url_decode(s: &str) -> Option<Vec<u8>> {
     // Base64.decode(String, flags) decodes str.getBytes() - UTF-8 on Android.
     let input = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(input.len() * 3 / 4);
