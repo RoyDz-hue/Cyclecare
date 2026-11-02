@@ -1,0 +1,92 @@
+//! Port of the CycleCareViewModel.updateCalculations cycle-anchor slice
+//! (repo main@31b88f5, ccvm L469-501) plus HomeScreen's snapshot-card
+//! inputs: hasCycleAnchor, cycleStartIsApproximate, daysUntilNextPeriod,
+//! nextPeriodDate. Semantics locked against the JVM (kotlinc 2.1.0/JRE 21
+//! probe, 15 classify rows + 5 stepping rows in tests/home_anchor_corpus.rs):
+//! - trim() is Kotlin no-arg trim = kotlin_is_whitespace-based (NBSP/2007/202F
+//!   ARE trimmed - probe rows c13/c14), NOT Java <= ' '.
+//! - "don't know" matches with BOTH apostrophes (' and U+2019).
+//! - next period start is STRICTLY after today: when last start == today it
+//!   steps a full cycle (probe row n1); when it is already after today it
+//!   stays (n2). Cycle length clamps to 21..=45 before stepping (n4).
+
+use crate::cycle_math::parse_local_date_iso;
+use crate::kotlin_text::kotlin_is_whitespace;
+use chrono::NaiveDate;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CycleAnchorState {
+    pub has_cycle_anchor: bool,
+    pub cycle_start_is_approximate: bool,
+    pub days_until_next_period: i32,
+    pub next_period_date: Option<NaiveDate>,
+}
+
+fn kotlin_trim(s: &str) -> &str {
+    s.trim_matches(kotlin_is_whitespace)
+}
+
+/// (unknown_date_choice, unknown_cycle_length_choice, approximate_choice).
+pub fn classify_choices(
+    date_choice_raw: Option<&str>,
+    cycle_length_choice_raw: Option<&str>,
+) -> (bool, bool, bool) {
+    let date_choice = date_choice_raw.map(kotlin_trim).unwrap_or("").to_lowercase();
+    let unknown_date = date_choice.is_empty()
+        || date_choice == "unknown"
+        || date_choice.contains("don't know")
+        || date_choice.contains("don\u{2019}t know")
+        || date_choice == "it varies";
+    let clc = cycle_length_choice_raw.map(kotlin_trim).unwrap_or("").to_lowercase();
+    let unknown_cl = clc.is_empty()
+        || clc == "unknown"
+        || clc.contains("don't know")
+        || clc.contains("don\u{2019}t know")
+        || clc.contains("changes");
+    let approximate = date_choice.starts_with("approximate:")
+        || matches!(
+            date_choice.as_str(),
+            "today" | "a few days ago" | "about a week ago" | "about two weeks ago"
+        );
+    (unknown_date, unknown_cl, approximate)
+}
+
+/// Next period start strictly after `today`, stepping by the clamped cycle
+/// length. Kotlin: while (!nextStart.isAfter(today)) nextStart += cycleLength.
+pub fn next_period_after(last_start: NaiveDate, today: NaiveDate, average_cycle_length: i32) -> NaiveDate {
+    let cycle_length = average_cycle_length.clamp(21, 45) as i64;
+    let mut next = last_start;
+    while next <= today {
+        next += chrono::Duration::days(cycle_length);
+    }
+    next
+}
+
+pub fn compute_anchor_state(
+    last_period_start_date: &str,
+    date_choice_raw: Option<&str>,
+    cycle_length_choice_raw: Option<&str>,
+    average_cycle_length: i32,
+    today: NaiveDate,
+) -> CycleAnchorState {
+    let (unknown_date, unknown_cl, approximate) = classify_choices(date_choice_raw, cycle_length_choice_raw);
+    // Kotlin isNotBlank on the RAW settings string (no trim).
+    let last_non_blank = !last_period_start_date.chars().all(kotlin_is_whitespace)
+        && !last_period_start_date.is_empty();
+    let has_anchor = last_non_blank && !unknown_date && !unknown_cl;
+    let next = if has_anchor {
+        parse_local_date_iso(last_period_start_date)
+            .map(|ls| next_period_after(ls, today, average_cycle_length))
+    } else {
+        None
+    };
+    let days_until = next
+        .map(|n| (n - today).num_days().max(0) as i32)
+        .unwrap_or(0);
+    CycleAnchorState {
+        has_cycle_anchor: has_anchor,
+        cycle_start_is_approximate: approximate,
+        days_until_next_period: days_until,
+        next_period_date: next,
+    }
+}

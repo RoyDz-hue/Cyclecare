@@ -21,6 +21,28 @@ pub enum CyclePhase {
     Luteal,
 }
 
+impl CyclePhase {
+    /// Verbatim CycleModels.kt titles (repo main@31b88f5).
+    pub fn kotlin_title(&self) -> &'static str {
+        match self {
+            CyclePhase::Menstrual => "Menstruation",
+            CyclePhase::Follicular => "Follicular Phase",
+            CyclePhase::Ovulation => "Fertile & Ovulation",
+            CyclePhase::Luteal => "Luteal Phase",
+        }
+    }
+
+    /// Verbatim CycleModels.kt colorHex (0xAARRGGBB, repo main@31b88f5).
+    pub fn kotlin_color_hex(&self) -> u32 {
+        match self {
+            CyclePhase::Menstrual => 0xFF8A3B4A,
+            CyclePhase::Follicular => 0xFF55745F,
+            CyclePhase::Ovulation => 0xFF9B6B2C,
+            CyclePhase::Luteal => 0xFF695873,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayPrediction {
     pub date: NaiveDate,

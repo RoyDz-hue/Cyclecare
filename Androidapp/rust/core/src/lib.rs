@@ -68,3 +68,4 @@ pub mod pkce;
 pub mod auth_flows;
 pub mod auth_google;
 pub mod auth_session;
+pub mod home_anchor;
