@@ -39,6 +39,8 @@ pub mod economy_rules;
 pub mod storage_schema;
 pub mod earn_coins;
 pub mod sync_codec;
+pub mod track_log;
+pub mod track_vm;
 pub mod sync_protocol;
 pub mod md5;
 pub mod lifecycle;
