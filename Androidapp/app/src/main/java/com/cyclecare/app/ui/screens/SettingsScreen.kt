@@ -286,7 +286,7 @@ fun SettingsScreenContent(
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
                                 Text(
-                                    text = "Create or sign in with email",
+                                    text = "Create or sign in",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )
