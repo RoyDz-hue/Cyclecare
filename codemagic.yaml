@@ -7,6 +7,7 @@ workflows:
       cache_paths:
         - $HOME/.gradle/caches
         - $HOME/.gradle/wrapper
+        - $HOME/.m2
     scripts:
       - name: Route org.robolectric via Google-hosted Maven Central mirror
         script: |
@@ -27,6 +28,25 @@ workflows:
               }
           }
           GRADLE
+      - name: Prefetch Robolectric runtime jar (bounded, logged)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          VER="14-robolectric-10818077-i7"
+          BASE="https://maven-central.storage-download.googleapis.com/maven2/org/robolectric/android-all-instrumented/$VER"
+          DEST="$HOME/.m2/repository/org/robolectric/android-all-instrumented/$VER"
+          mkdir -p "$DEST"
+          for f in "android-all-instrumented-$VER.jar" "android-all-instrumented-$VER.pom"; do
+            if [ ! -s "$DEST/$f" ]; then
+              echo "fetching $f"
+              curl -fsSL --max-time 240 -o "$DEST/$f" "$BASE/$f"
+            fi
+            ls -la "$DEST/$f"
+          done
+          echo "prefetch complete"
+          } 2>&1 | tee build-logs/robolectric-prefetch.log
       - name: Targeted unit tests
         script: |
           set -e
@@ -51,6 +71,7 @@ workflows:
     artifacts:
       - Androidapp/app/build/outputs/apk/**/*.apk
       - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
+      - build-logs/*.log
   cyclecare-goldens:
     name: CycleCare golden refresh (Paparazzi, JDK21)
     max_build_duration: 60
@@ -126,6 +147,7 @@ workflows:
       cache_paths:
         - $HOME/.gradle/caches
         - $HOME/.gradle/wrapper
+        - $ANDROID_HOME/system-images
     scripts:
       - name: Build debug app and instrumented test APKs
         script: |
@@ -135,24 +157,61 @@ workflows:
           chmod +x gradlew
           mkdir -p ../build-logs
           ./gradlew assembleDebug assembleDebugAndroidTest 2>&1 | tee ../build-logs/device-verify-build.log
-      - name: Create and boot Android emulator (1080x2400, 420dpi, API 36)
+      - name: Inspect installed Android SDK images (bounded)
         script: |
           set -e
           set -o pipefail
           mkdir -p build-logs
           {
+          echo "== system-images dir =="
+          ls -R "$ANDROID_HOME/system-images" 2>/dev/null || echo "(none installed)"
+          echo "== sdkmanager installed =="
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | grep -i "system-images" || echo "(sdkmanager lists none)"
+          } 2>&1 | tee build-logs/sdk-inventory.log
+      - name: Ensure a usable system image (bounded 10 min)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          IMG=$(ls "$ANDROID_HOME/system-images" 2>/dev/null | grep -E '^android-[0-9]+$' | sort -t- -k2 -n | tail -1 || true)
+          if [ -n "$IMG" ]; then
+            VARIANT=$(ls "$ANDROID_HOME/system-images/$IMG" | grep -E 'google_apis|default' | head -1)
+            ABI=$(ls "$ANDROID_HOME/system-images/$IMG/$VARIANT" | grep -E 'arm64|x86_64' | head -1)
+            echo "reusing installed image: system-images;$IMG;$VARIANT;$ABI"
+            echo "system-images;$IMG;$VARIANT;$ABI" > build-logs/avd-image.txt
+          else
+            echo "no installed image; installing system-images;android-36;google_apis;arm64-v8a (bounded)"
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "system-images;android-36;google_apis;arm64-v8a" < /dev/null &
+            IPID=$!
+            for i in $(seq 1 120); do kill -0 $IPID 2>/dev/null || break; sleep 5; done
+            if kill -0 $IPID 2>/dev/null; then
+              kill $IPID 2>/dev/null
+              echo "UNSUPPORTED: system image install exceeded 10 minutes on this runner"
+              exit 1
+            fi
+            wait $IPID
+            echo "system-images;android-36;google_apis;arm64-v8a" > build-logs/avd-image.txt
+          fi
+          cat build-logs/avd-image.txt
+          } 2>&1 | tee build-logs/ensure-image.log
+      - name: Create AVD and boot emulator (bounded 10 min)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          IMAGE=$(cat build-logs/avd-image.txt)
+          echo "using image: $IMAGE"
           AVDMGR="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           EMU="$ANDROID_HOME/emulator/emulator"
-          yes | "$SDKMGR" --licenses > /dev/null || true
-          "$SDKMGR" --install "system-images;android-36;google_apis;arm64-v8a" < /dev/null || true
-          echo no | "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_6 --force \
-            || echo no | "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel --force
+          echo no | "$AVDMGR" create avd -n ccverify -k "$IMAGE" -d pixel_6 --force \
+            || echo no | "$AVDMGR" create avd -n ccverify -k "$IMAGE" -d pixel --force
           "$EMU" -avd ccverify -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save > build-logs/emulator-console.log 2>&1 &
           adb wait-for-device
-          # Bounded boot wait: fail the step instead of burning the build window.
           BOOTED=""
-          for i in $(seq 1 120); do
+          for i in $(seq 1 110); do
             BOOTED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
             [ "$BOOTED" = "1" ] && break
             sleep 5
@@ -161,14 +220,29 @@ workflows:
           [ "$BOOTED" = "1" ]
           adb shell wm size && adb shell wm density
           } 2>&1 | tee build-logs/emulator-step.log
-      - name: Run production inset screenshot tests
+      - name: Run production inset screenshot tests (bounded 8 min)
         script: |
           set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
           adb install -r Androidapp/app/build/outputs/apk/debug/app-debug.apk
           adb install -r Androidapp/app/build/outputs/androidTest/apk/debug/app-debug-androidTest.apk
           adb shell am instrument -w \
             -e class com.cyclecare.app.DeviceInsetsScreenshotTest \
-            com.cyclecare.app.debug.test/androidx.test.runner.AndroidJUnitRunner
+            com.cyclecare.app.debug.test/androidx.test.runner.AndroidJUnitRunner > build-logs/instrumentation.log 2>&1 &
+          JPID=$!
+          for i in $(seq 1 96); do kill -0 $JPID 2>/dev/null || break; sleep 5; done
+          if kill -0 $JPID 2>/dev/null; then
+            kill $JPID 2>/dev/null
+            echo "instrumentation exceeded 8 minutes"
+            cat build-logs/instrumentation.log || true
+            exit 1
+          fi
+          wait $JPID; RC=$?
+          cat build-logs/instrumentation.log
+          [ $RC -eq 0 ]
+          } 2>&1 | tee build-logs/instrument-step.log
       - name: Collect screenshots
         script: |
           mkdir -p device-verify
