@@ -32,7 +32,7 @@ data class CareResponse(
 
 data class CareMemoryMessage(val role: String, val content: String)
 
-internal const val REMOTE_CARE_SOURCE = "CycleCare Expert"
+internal const val REMOTE_CARE_SOURCE = "CycleCare Assistant"
 
 /** Pre-rebrand server label, still accepted so mixed-version fleets stay classified. */
 internal const val LEGACY_REMOTE_CARE_SOURCE = "CycleCare AI"
@@ -48,9 +48,13 @@ internal fun serverSelectedSource(data: JSONObject): String = serverSelectedSour
     data.optString("provider", "").ifBlank { data.optString("source", "") }
 )
 
+/** Pre-Assistant rebrand label; old installs and saved history still carry it. */
+internal const val EXPERT_REMOTE_CARE_SOURCE = "CycleCare Expert"
+
 internal fun isRemoteCareResponse(source: String): Boolean =
     (source == REMOTE_CARE_SOURCE || source.startsWith("$REMOTE_CARE_SOURCE · ")) ||
-        (source == LEGACY_REMOTE_CARE_SOURCE || source.startsWith("$LEGACY_REMOTE_CARE_SOURCE · "))
+        (source == LEGACY_REMOTE_CARE_SOURCE || source.startsWith("$LEGACY_REMOTE_CARE_SOURCE · ")) ||
+        (source == EXPERT_REMOTE_CARE_SOURCE || source.startsWith("$EXPERT_REMOTE_CARE_SOURCE · "))
 
 internal data class CareRequestPrivacySnapshot(
     val owner: String,

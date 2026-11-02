@@ -294,7 +294,7 @@ private fun AiConsentCard(
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Enable Assistant answers", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
             Text(
-                "CycleCare can answer online through the Assistant. Your question and relevant cycle context are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
+                "CycleCare can answer online through the Assistant. Your question, relevant cycle context and chat history are sent securely, only when you chat. It's tied to this account and you can turn it off anytime in Settings.",
                 style = MaterialTheme.typography.bodySmall
             )
             val manifest = uiState.aiProcessorManifest

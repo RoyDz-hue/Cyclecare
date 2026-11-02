@@ -773,7 +773,7 @@ class CycleCareViewModel(
         // Enabling is explicit but never optimistic: require a fresh eligible manifest and server receipt.
         viewModelScope.launch {
             val token = authPreferences.accessToken
-            val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.cyclecare.app.domain.ai.ConsentResult.Failure("Sign in to enable your CycleCare Expert")
+            val manifestResult = if (!token.isNullOrBlank()) processorConsentService.fetchManifest(token) else com.cyclecare.app.domain.ai.ConsentResult.Failure("Sign in to enable your CycleCare Assistant")
             val manifest = (manifestResult as? com.cyclecare.app.domain.ai.ConsentResult.Success)?.manifest
             // The fresh manifest must still match what the user was shown; a changed
             // fingerprint/revision/set aborts and re-displays instead of granting

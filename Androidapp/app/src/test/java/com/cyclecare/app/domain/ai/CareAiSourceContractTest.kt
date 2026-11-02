@@ -14,8 +14,8 @@ import org.robolectric.annotation.Config
 class CareAiSourceContractTest {
     @Test
     fun deployedCycleCareAiSourceIsRecognizedAndCuratedFallbackIsNot() {
-        assertTrue(isRemoteCareResponse("CycleCare Expert"))
-        assertTrue(isRemoteCareResponse("CycleCare Expert · Cohere"))
+        assertTrue(isRemoteCareResponse("CycleCare Assistant"))
+        assertTrue(isRemoteCareResponse("CycleCare Assistant · Cohere"))
         assertFalse(isRemoteCareResponse("Curated Clinical Knowledge"))
         assertFalse(isRemoteCareResponse("Edge AI Gateway"))
     }
@@ -23,7 +23,7 @@ class CareAiSourceContractTest {
     @Test
     fun serverMetadataNeverLeaksProviderOrRoutingDetails() {
         for (value in listOf("GEMINI", "OPENROUTER", "COHERE", "HYBRID", "POLLINATIONS", "arbitrary-provider")) {
-            assertEquals("CycleCare Expert", serverSelectedSource(value))
+            assertEquals("CycleCare Assistant", serverSelectedSource(value))
         }
     }
 
@@ -31,18 +31,23 @@ class CareAiSourceContractTest {
     fun actualGatewayRootSourceIsNormalizedRatherThanNestedAnswerData() {
         for (provider in listOf("COHERE", "GEMINI", "OPENROUTER")) {
             val envelope = JSONObject().put("success", true)
-                .put("source", "CycleCare Expert · $provider")
+                .put("source", "CycleCare Assistant · $provider")
                 .put("data", JSONObject().put("summary", "Educational answer"))
-            assertEquals("CycleCare Expert", serverSelectedSource(envelope))
+            assertEquals("CycleCare Assistant", serverSelectedSource(envelope))
         }
     }
 
     @Test
     fun legacyPreRebrandServerLabelsStayClassifiedAndNormalize() {
+        // Labels emitted by older app/server versions must stay classified so
+        // saved history keeps its remote-response treatment after the renames.
         assertTrue(isRemoteCareResponse("CycleCare AI"))
         assertTrue(isRemoteCareResponse("CycleCare AI · Cohere"))
-        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject().put("source", "CycleCare AI · Cohere")))
-        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject().put("provider", "COHERE")))
-        assertEquals("CycleCare Expert", serverSelectedSource(JSONObject()))
+        assertTrue(isRemoteCareResponse("CycleCare Expert"))
+        assertTrue(isRemoteCareResponse("CycleCare Expert · Cohere"))
+        assertEquals("CycleCare Assistant", serverSelectedSource(JSONObject().put("source", "CycleCare AI · Cohere")))
+        assertEquals("CycleCare Assistant", serverSelectedSource(JSONObject().put("source", "CycleCare Expert · Cohere")))
+        assertEquals("CycleCare Assistant", serverSelectedSource(JSONObject().put("provider", "COHERE")))
+        assertEquals("CycleCare Assistant", serverSelectedSource(JSONObject()))
     }
 }
