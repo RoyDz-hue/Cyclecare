@@ -147,6 +147,16 @@ class SupabaseEconomyService(
             if (profileStatus !in VALID_ACCOUNT_STATUSES) throw Rejected("Account status could not be verified")
             if (!stillOwns(initial)) throw Rejected("Session changed before wallet acceptance")
 
+            // Isolated spike wiring (RustLifecycleConfig.WALLET_PARSE_ENABLED=false):
+            // native verified_profile_parse over the two bodies already fetched
+            // above; null (disabled, native missing, or native rejection) runs
+            // the original Kotlin merge below unchanged.
+            val nativeParsed = if (com.cyclecare.app.rust.RustLifecycleConfig.WALLET_PARSE_ENABLED)
+                com.cyclecare.app.rust.RustLifecycleAdapters.verifiedProfileParse(
+                    authPreferences, body, profBody, java.time.Instant.now().toString()
+                )?.takeIf { it.has("coinBalance") && it.has("lifetimeEarned") && it.has("lifetimeSpent") && it.has("status") }
+            else null
+
             val tierStr = obj.optString("tier", "FREE")
             val rankStr = obj.optString("rank", "LUMEN")
             val unlockedSet = mutableSetOf("cycle_coin")
@@ -174,9 +184,34 @@ class SupabaseEconomyService(
                 expiries.filterNotNull().maxOrNull()?.toString() else null
             val gifted = mutableListOf<String>()
             obj.optJSONArray("artifacts")?.let { list -> for (i in 0 until list.length()) { val a = list.optJSONObject(i); val raw = a?.optString("id").orEmpty().ifBlank { a?.optString("name").orEmpty() }; if (raw.isNotBlank()) { EconomyCatalog.findItem(raw)?.let { gifted += it.name; unlockedSet += it.id } ?: gifted.add(raw) } } }
+            val finalStatus: String
+            val finalReasonOut: String?
+            val finalUntilOut: String?
+            val walletProfile: EconomyProfile
+            if (nativeParsed != null) {
+                finalStatus = nativeParsed.optString("status")
+                finalReasonOut = nativeParsed.optString("suspensionReason").ifBlank { null }
+                finalUntilOut = nativeParsed.optString("suspendedUntil").ifBlank { null }
+                val nativeUnlocked = mutableSetOf<String>()
+                nativeParsed.optJSONArray("unlockedItemIds")?.let { l -> for (i in 0 until l.length()) { val id = l.optString(i); if (id.isNotBlank()) nativeUnlocked += id } }
+                val nativeGifted = mutableListOf<String>()
+                nativeParsed.optJSONArray("giftedArtifacts")?.let { l -> for (i in 0 until l.length()) { val g = l.optString(i); if (g.isNotBlank()) nativeGifted += g } }
+                walletProfile = EconomyProfile(initial.owner,
+                    UserEconomyTier.entries.find { it.name.equals(nativeParsed.optString("tier"), true) } ?: UserEconomyTier.FREE,
+                    IdentityRank.entries.find { it.name.equals(nativeParsed.optString("rank"), true) } ?: IdentityRank.LUMEN,
+                    BigDecimal(nativeParsed.optString("coinBalance")), BigDecimal(nativeParsed.optString("lifetimeEarned")), BigDecimal(nativeParsed.optString("lifetimeSpent")),
+                    nativeParsed.optString("activeFrame").ifBlank { null }, nativeParsed.optString("activeArtifact").ifBlank { "cycle_coin" }, null,
+                    nativeParsed.optString("activeAvatarArt").ifBlank { null }, nativeParsed.optString("activeTheme").ifBlank { "SOOTHING_ROSE" },
+                    0L, nativeParsed.optString("lastMinedDate").ifBlank { null }, nativeUnlocked, finalStatus, finalReasonOut, finalUntilOut, nativeGifted)
+            } else {
+                finalStatus = activeStatus
+                finalReasonOut = finalReason
+                finalUntilOut = finalUntil
+                walletProfile = EconomyProfile(initial.owner, UserEconomyTier.entries.find { it.name.equals(tierStr, true) } ?: UserEconomyTier.FREE, IdentityRank.entries.find { it.name.equals(rankStr, true) } ?: IdentityRank.LUMEN, balance, earned, spent, obj.optString("active_frame").ifBlank { null }, obj.optString("active_artifact", "cycle_coin"), null, obj.optString("active_avatar_art").ifBlank { null }, obj.optString("active_theme", "SOOTHING_ROSE"), 0L, obj.optString("last_mined_date").ifBlank { null }, unlockedSet, activeStatus, finalReason, finalUntil, gifted)
+            }
             authPreferences.withCurrentSession(initial.owner, initial.session) {
-                authPreferences.setAccountRestriction(activeStatus, finalReason, finalUntil)
-                EconomyResult.Success(EconomyProfile(initial.owner, UserEconomyTier.entries.find { it.name.equals(tierStr, true) } ?: UserEconomyTier.FREE, IdentityRank.entries.find { it.name.equals(rankStr, true) } ?: IdentityRank.LUMEN, balance, earned, spent, obj.optString("active_frame").ifBlank { null }, obj.optString("active_artifact", "cycle_coin"), null, obj.optString("active_avatar_art").ifBlank { null }, obj.optString("active_theme", "SOOTHING_ROSE"), 0L, obj.optString("last_mined_date").ifBlank { null }, unlockedSet, activeStatus, finalReason, finalUntil, gifted))
+                authPreferences.setAccountRestriction(finalStatus, finalReasonOut, finalUntilOut)
+                EconomyResult.Success(walletProfile)
             } ?: throw Rejected("Session changed before wallet acceptance")
         } catch (e: CancellationException) { throw e
         } catch (e: Rejected) { EconomyResult.Error("${e.message}. Please retry before using the shared vault.")
@@ -215,8 +250,31 @@ class SupabaseEconomyService(
                 .build()
 
             val rpcResponse = client.newCall(rpcRequest).execute()
+            // Isolated spike wiring (RustLifecycleConfig.RECONCILE_DECISION_ENABLED=false):
+            // native reconcile_offline_claim decision over the response; the body
+            // is captured once so the Kotlin path below still sees it unchanged
+            // when native is disabled or unavailable.
+            val rpcBodyCaptured = if (com.cyclecare.app.rust.RustLifecycleConfig.RECONCILE_DECISION_ENABLED)
+                rpcResponse.body?.string().orEmpty() else null
+            if (rpcBodyCaptured != null) {
+                when (com.cyclecare.app.rust.RustLifecycleAdapters.reconcileOfflineClaim(
+                    authPreferences, rpcResponse.isSuccessful, rpcBodyCaptured,
+                    currentProfile.coinBalance.toPlainString(), currentProfile.lifetimeEarned.toPlainString(),
+                    currentProfile.rank.name, pendingDate)?.optString("outcome")) {
+                    "APPLIED" -> { /* decided below with the shared body parse */ }
+                    "ALREADY_RECORDED" -> {
+                        authPreferences.clearPendingOfflineClaim()
+                        val verifiedCloud = fetchVerifiedProfile(effectiveId)
+                        val rolledBackProfile = if (verifiedCloud is EconomyResult.Success) verifiedCloud.data else currentProfile
+                        return@withContext EconomyResult.Success(rolledBackProfile, "Your daily reward was already recorded.")
+                    }
+                    "REFETCH" -> return@withContext fetchVerifiedProfile(effectiveId)
+                    "OFFLINE_KEPT" -> return@withContext EconomyResult.Success(currentProfile, "Your reward will sync when you're back online.")
+                    else -> Unit
+                }
+            }
             if (rpcResponse.isSuccessful) {
-                val body = rpcResponse.body?.string().orEmpty()
+                val body = rpcBodyCaptured ?: rpcResponse.body?.string().orEmpty()
                 if (body.isNotBlank()) {
                     val resObj = JSONObject(body)
                     if (resObj.optBoolean("success", false)) {

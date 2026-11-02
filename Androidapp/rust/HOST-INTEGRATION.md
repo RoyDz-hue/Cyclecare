@@ -174,3 +174,19 @@ init-time economyService.fetchVerifiedProfile(initOwner) call. MainActivity
 consumes the results via uiState (hasCompletedInitialAuth :179, isAppLocked
 :210, showOnboarding :251) - no MainActivity edit needed. Wallet parse and
 reconcile adapters remain ready-but-unwired pending this slice's proof.
+
+## Wallet call-site wiring (@post-82974e6)
+
+SupabaseEconomyService.fetchVerifiedProfile: after both server bodies are
+fetched and owner/status-validated, native verified_profile_parse (behind
+RustLifecycleConfig.WALLET_PARSE_ENABLED=false) produces the merged profile;
+null (disabled/unavailable/native rejection or missing load-bearing fields)
+runs the original Kotlin merge verbatim. Commit still goes through
+withCurrentSession(owner, session) unchanged.
+SupabaseEconomyService.reconcilePendingOfflineClaims: native
+reconcile_offline_claim decision (behind RECONCILE_DECISION_ENABLED=false)
+over the captured response body; ALREADY_RECORDED/REFETCH/OFFLINE_KEPT act on
+the native outcome, APPLIED shares the single Kotlin apply path on the same
+captured body; native unavailable falls through to the unchanged Kotlin path
+(the captured body is reused, never double-consumed).
+All switches ship false; enabling requires device proof on the exact HEAD.

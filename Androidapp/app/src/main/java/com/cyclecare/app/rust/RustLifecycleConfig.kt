@@ -7,4 +7,6 @@ package com.cyclecare.app.rust
  */
 object RustLifecycleConfig {
     const val STARTUP_GATE_ENABLED = false
+    const val WALLET_PARSE_ENABLED = false
+    const val RECONCILE_DECISION_ENABLED = false
 }
