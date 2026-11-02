@@ -6,7 +6,7 @@ description = "Read-only JNI bridge over cyclecare-core pure functions. JSON in,
 
 [lib]
 name = "cyclecare_core"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 cyclecare-core = { path = "../core" }

@@ -180,7 +180,11 @@ pub fn aosp_opt_string(obj: &JsonValue, key: &str, default: &str) -> String {
         _ => None,
     };
     match v {
-        None | Some(JsonValue::Null) => default.to_string(),
+        None => default.to_string(),
+        // AOSP optString(name, fallback): JSON null -> JSONObject.NULL ->
+        // JSON.toString -> String.valueOf(NULL) -> the literal "null", NOT the
+        // fallback (OptStringNullProbe executed on AOSP14 classes).
+        Some(JsonValue::Null) => "null".to_string(),
         Some(JsonValue::Str(s)) => s.clone(),
         Some(JsonValue::Bool(b)) => b.to_string(),
         Some(n @ (JsonValue::Int(_) | JsonValue::Long(_) | JsonValue::Double(_))) => {

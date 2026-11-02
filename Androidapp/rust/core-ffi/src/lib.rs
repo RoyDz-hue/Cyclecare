@@ -123,13 +123,18 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 v["profBody"].as_str().unwrap_or(""),
                 v["nowIso"].as_str().unwrap_or(""),
             ) {
+                // Nullable string fields emit "" (never JSON null): the Kotlin
+                // consumer applies optString(...).ifBlank { null }, and AOSP
+                // optString renders JSON null as the literal "null" STRING
+                // (OptStringNullProbe on AOSP14 classes). "" is the only value
+                // that round-trips to production null through that consumer.
                 Ok(p) => serde_json::json!({"ok": {"userId": p.user_id, "tier": p.tier, "rank": p.rank,
                     "coinBalance": p.coin_balance, "lifetimeEarned": p.lifetime_earned,
-                    "lifetimeSpent": p.lifetime_spent, "activeFrame": p.active_frame,
-                    "activeArtifact": p.active_artifact, "activeAvatarArt": p.active_avatar_art,
-                    "activeTheme": p.active_theme, "lastMinedDate": p.last_mined_date,
+                    "lifetimeSpent": p.lifetime_spent, "activeFrame": p.active_frame.unwrap_or_default(),
+                    "activeArtifact": p.active_artifact, "activeAvatarArt": p.active_avatar_art.unwrap_or_default(),
+                    "activeTheme": p.active_theme, "lastMinedDate": p.last_mined_date.unwrap_or_default(),
                     "unlockedItemIds": p.unlocked_item_ids, "status": p.status,
-                    "suspensionReason": p.suspension_reason, "suspendedUntil": p.suspended_until,
+                    "suspensionReason": p.suspension_reason.unwrap_or_default(), "suspendedUntil": p.suspended_until.unwrap_or_default(),
                     "giftedArtifacts": p.gifted_artifacts}}).to_string(),
                 Err(m) => err(&m),
             }

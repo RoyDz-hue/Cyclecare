@@ -47,3 +47,4 @@ pub mod reconcile;
 pub mod onboarding_questions;
 pub mod ai_consent_tap;
 pub mod care_policy;
+pub mod currency_locale;

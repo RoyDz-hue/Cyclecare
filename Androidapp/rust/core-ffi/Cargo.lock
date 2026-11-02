@@ -102,6 +102,7 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "num-bigint",
+ "num-traits",
  "regex",
  "ryu",
  "serde_json",
