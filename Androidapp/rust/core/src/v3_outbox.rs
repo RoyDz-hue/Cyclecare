@@ -43,8 +43,20 @@ pub struct ConflictRow {
 
 /// Injected DAO seam. Production: HealthSyncDao inside withTransaction;
 /// the adapter owns atomicity of each commit group.
+/// Typed DAO failure. Kotlin parity: HealthSyncLocalDao suspend functions
+/// THROW on database error; where the source has no surrounding catch
+/// (pending reads at :68/:72, retry at :110) the exception leaves
+/// executeV3Outbox. Swallowing an error as an empty result would corrupt
+/// ordering/rebase decisions, so the seams are fallible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum V3DaoError {
+    Db,
+}
+
 pub trait V3SyncDao {
-    fn pending(&mut self, owner: &str) -> Vec<OutboxEntry>;
+    /// :66-67. Err propagates out of run_v3_outbox (Kotlin: the throw at
+    /// :68/:72 is outside the per-op try).
+    fn pending(&mut self, owner: &str) -> Result<Vec<OutboxEntry>, V3DaoError>;
     /// The withTransaction commit group for an applied/duplicate ACK.
     /// ONE FALLIBLE ATOMIC TRANSACTION. Inside it the implementation MUST,
     /// in order: (1) evaluate `gate` (the in-transaction current() check) -
@@ -66,8 +78,12 @@ pub trait V3SyncDao {
         new_revision: i64,
         gate: &mut dyn FnMut() -> bool,
     ) -> CommitOutcome;
-    fn put_conflict(&mut self, conflict: ConflictRow);
-    fn retry(&mut self, owner: &str, operation_id: &str, next_attempt_at: i64, message: &str);
+    /// :104-105, called inside the per-op try (:94-103): Err is caught like
+    /// any exception -> blocked + retry.
+    fn put_conflict(&mut self, conflict: ConflictRow) -> Result<(), V3DaoError>;
+    /// :94-95, called from the catch block (:108-111): a throw there is NOT
+    /// re-caught - Err propagates out of run_v3_outbox.
+    fn retry(&mut self, owner: &str, operation_id: &str, next_attempt_at: i64, message: &str) -> Result<(), V3DaoError>;
 }
 
 /// Typed commit result: gate drift (no retry, not counted) is distinct from
@@ -108,15 +124,15 @@ pub fn run_v3_outbox(
     server: i64,
     current: &mut dyn FnMut() -> bool,
     now_ms: &mut dyn FnMut() -> i64,
-) -> i32 {
+) -> Result<i32, V3DaoError> {
     let _ = session; // session participates via the `current` closure.
     if !current() {
-        return 0;
+        return Ok(0);
     }
     let mut applied = 0i32;
     let mut blocked_records: std::collections::HashSet<String> = std::collections::HashSet::new();
     // pending sorted by revision, take 100, operationIds only (re-read per op).
-    let mut ops = dao.pending(owner);
+    let mut ops = dao.pending(owner)?; // :68 — outside the per-op try
     ops.sort_by_key(|e| e.revision);
     let operation_ids: Vec<String> = ops.into_iter().take(100).map(|e| e.operation_id).collect();
     for operation_id in operation_ids {
@@ -124,7 +140,7 @@ pub fn run_v3_outbox(
             break;
         }
         // Re-read after each ACK: a prior operation may have rebased this one.
-        let e = match dao.pending(owner).into_iter().find(|p| p.operation_id == operation_id) {
+        let e = match dao.pending(owner)?.into_iter().find(|p| p.operation_id == operation_id) {
             Some(e) => e,
             None => continue,
         };
@@ -171,7 +187,8 @@ pub fn run_v3_outbox(
                     break;
                 }
                 let next = now_ms() + retry_backoff_ms(e.attempts);
-                dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                // :110 — a throw inside the catch block is not re-caught.
+                dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
                 continue;
             }
         };
@@ -218,12 +235,22 @@ pub fn run_v3_outbox(
                 }
                 // Latest pending for the record: maxByOrNull(revision) = FIRST
                 // max on ties (Kotlin), not last.
-                let latest = dao
-                    .pending(owner)
-                    .into_iter()
-                    .filter(|p| p.record_id == e.record_id)
-                    .reduce(|a, b| if b.revision > a.revision { b } else { a })
-                    .unwrap_or_else(|| e.clone());
+                let latest = match dao.pending(owner) {
+                    Ok(v) => v
+                        .into_iter()
+                        .filter(|p| p.record_id == e.record_id)
+                        .reduce(|a, b| if b.revision > a.revision { b } else { a })
+                        .unwrap_or_else(|| e.clone()),
+                    Err(_) => {
+                        // :96 is INSIDE the per-op try -> catch path (:108-111).
+                        if !current() {
+                            break;
+                        }
+                        let next = now_ms() + retry_backoff_ms(e.attempts);
+                        dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
+                        continue;
+                    }
+                };
                 let remote_value = r
                     .remote_payload
                     .as_ref()
@@ -235,7 +262,7 @@ pub fn run_v3_outbox(
                         break;
                     }
                     let next = now_ms() + retry_backoff_ms(e.attempts);
-                    dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                    dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
                     continue;
                 }
                 let remote_revision = match r.revision {
@@ -245,11 +272,11 @@ pub fn run_v3_outbox(
                             break;
                         }
                         let next = now_ms() + retry_backoff_ms(e.attempts);
-                        dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                        dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
                         continue;
                     }
                 };
-                dao.put_conflict(ConflictRow {
+                if dao.put_conflict(ConflictRow {
                     owner: owner.to_string(),
                     record_id: e.record_id.clone(),
                     operation_id: latest.operation_id.clone(),
@@ -260,7 +287,16 @@ pub fn run_v3_outbox(
                     remote_payload: remote_value.map(|v| crate::sync_codec::json_value_to_string(&v)),
                     remote_tombstone: r.remote_tombstone,
                     created_ms: now_ms(),
-                });
+                }).is_err()
+                {
+                    // :100 is INSIDE the per-op try -> catch path (:108-111).
+                    if !current() {
+                        break;
+                    }
+                    let next = now_ms() + retry_backoff_ms(e.attempts);
+                    dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
+                    continue;
+                }
             }
             _ => {
                 // error("v3_operation_rejected") -> catch branch.
@@ -269,11 +305,11 @@ pub fn run_v3_outbox(
                     break;
                 }
                 let next = now_ms() + retry_backoff_ms(e.attempts);
-                dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
             }
         }
     }
-    applied
+    Ok(applied)
 }
 
 fn obj_get<'a>(obj: &'a JsonValue, key: &str) -> Option<&'a JsonValue> {

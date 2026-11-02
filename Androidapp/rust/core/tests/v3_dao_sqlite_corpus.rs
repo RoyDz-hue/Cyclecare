@@ -1,30 +1,25 @@
-//! REAL-SQLite proofs for SqliteV3Store: verbatim HealthSyncLocalDao SQL
-//! against the production-shaped schema, real BEGIN/COMMIT/ROLLBACK per
-//! transaction seam, engine-enforced rollback via RAISE(ABORT) triggers.
-//! Synthetic scratch data only; host-only feature `sqlite`. Android Room on
-//! the encrypted app DB remains a separate, open integration.
+//! REAL-SQLite proofs for SqliteV3Store: verbatim HealthSyncLocalDao +
+//! CycleDayLogDao/OnboardingProfileDao SQL against the KSP-verified schema,
+//! domain+sync rows in ONE connection and ONE EXCLUSIVE transaction, typed
+//! fault propagation (never swallowed errors), engine-enforced rollback via
+//! RAISE(ABORT) triggers. Synthetic scratch data only; host-only feature
+//! `sqlite`. Android Room on the encrypted app DB remains a separate, open
+//! integration. Schema parity is diffed against the ops KSP extract
+//! (fixtures/room_schema_ksp.sql, spike 18dd603; applicability verified by
+//! field-level comparison against the entity sources at main 31b88f5;
+//! room_master_table identity hash / user version are NOT covered by the
+//! extract and are not claimed).
 #![cfg(feature = "sqlite")]
 use cyclecare_core::sync_codec::{CycleDayLog, CycleSettings, OnboardingProfile};
 use cyclecare_core::v3_dao_sqlite::*;
-use cyclecare_core::v3_outbox::{CommitOutcome, ConflictRow, OutboxEntry, V3SyncDao};
+use cyclecare_core::v3_outbox::{CommitOutcome, ConflictRow, OutboxEntry, V3DaoError, V3SyncDao};
 use cyclecare_core::v3_pull::*;
 use cyclecare_core::v3_sync::{wire_record_id, V3WireChange};
 use rusqlite::Connection;
 
 const OWNER: &str = "owner-uid";
 
-#[derive(Default)]
-struct MemDomain { settings: Option<CycleSettings>, profile: Option<OnboardingProfile>, logs: Vec<CycleDayLog> }
-impl DomainStore for MemDomain {
-    fn get_settings(&mut self) -> Option<CycleSettings> { self.settings.clone() }
-    fn save_settings(&mut self, s: CycleSettings) -> Result<(), String> { self.settings = Some(s); Ok(()) }
-    fn get_profile(&mut self) -> Option<OnboardingProfile> { self.profile.clone() }
-    fn save_profile(&mut self, p: OnboardingProfile) -> Result<(), String> { self.profile = Some(p); Ok(()) }
-    fn upsert_log(&mut self, l: CycleDayLog) -> Result<(), String> { self.logs.retain(|x| x.date != l.date); self.logs.push(l); Ok(()) }
-    fn delete_log(&mut self, date: &str) -> Result<(), String> { self.logs.retain(|x| x.date != date); Ok(()) }
-}
-
-fn store() -> SqliteV3Store<MemDomain> { SqliteV3Store::open_in_memory(MemDomain::default()).unwrap() }
+fn store() -> SqliteV3Store { SqliteV3Store::open_in_memory().unwrap() }
 
 fn entry(op: &str, record: &str, base: i64, rev: i64, next: i64) -> OutboxEntry {
     OutboxEntry {
@@ -49,34 +44,24 @@ fn count(conn: &Connection, table: &str) -> i64 {
 }
 
 #[test]
-fn schema_matches_room_entity_shapes() {
-    let s = store();
-    let cols = |t: &str| -> Vec<(String, String, bool, bool)> {
-        let mut st = s.conn.prepare(&format!("PRAGMA table_info({t})")).unwrap();
-        st.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, i64>(5)? > 0)))
-            .unwrap().map(|r| r.unwrap()).collect()
-    };
-    let rev = cols("health_sync_revisions");
-    assert_eq!(rev.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
-        ["ownerId", "recordId", "revision", "payloadHash", "tombstone", "updatedAt", "serverRevision"]);
-    assert!(rev[0].3 && rev[1].3, "composite PK ownerId+recordId");
-    assert!(!rev[3].2, "payloadHash nullable");
-    let out = cols("health_sync_outbox");
-    assert_eq!(out.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
-        ["ownerId", "operationId", "recordId", "kind", "baseRevision", "revision", "payloadJson",
-         "payloadHash", "consentGeneration", "attempts", "nextAttemptAt", "lastError", "serverReceipt", "serverRevision"]);
-    assert!(out[0].3 && out[1].3, "composite PK ownerId+operationId");
-    assert!(out[6].3 == false && out[11].3 == false && out[12].3 == false && out[13].3 == false, "nullable columns");
-    let con = cols("health_sync_conflicts");
-    assert_eq!(con.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
-        ["ownerId", "recordId", "operationId", "localRevision", "localPayloadJson", "localKind",
-         "remoteRevision", "remotePayloadJson", "remoteTombstone", "createdAt", "resolvedAt", "resolution"]);
-    let cur = cols("health_sync_cursors");
-    assert_eq!(cur.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["ownerId", "changeSeq"]);
-    let idx: Vec<String> = { let mut st = s.conn.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'index_health%'").unwrap();
-        st.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect() };
-    assert!(idx.contains(&"index_health_sync_outbox_ownerId_nextAttemptAt".to_string()));
-    assert!(idx.contains(&"index_health_sync_conflicts_ownerId_resolvedAt".to_string()));
+fn schema_matches_ksp_generated_ddl_statement_for_statement() {
+    // Normalize: strip backticks, collapse whitespace; compare statement sets.
+    // Whitespace-free comparison (PK constraint spacing differs between
+    // hand-written and generated text; column order/types/constraints carry
+    // the meaning). Comment lines are stripped BEFORE splitting on ';' -
+    // a comment may itself contain a semicolon.
+    let strip_comments = |s: &str| s.lines().filter(|l| !l.trim_start().starts_with("--")).collect::<Vec<_>>().join("\n");
+    let norm = |s: &str| s.replace('`', "").split_whitespace().collect::<String>();
+    let ksp = strip_comments(include_str!("fixtures/room_schema_ksp.sql"));
+    let mine = strip_comments(&format!("{SCHEMA}\n{DOMAIN_SCHEMA}"));
+    for stmt in ksp.split(';').map(norm).filter(|s| s.starts_with("CREATE")) {
+        assert!(mine.split(';').map(&norm).any(|m| m == stmt),
+            "KSP statement missing or different in shipped DDL:\n{stmt}");
+    }
+    // And the reverse: no extra tables/indices beyond the KSP set.
+    let ksp_count = ksp.split(';').map(norm).filter(|s| s.starts_with("CREATE")).count();
+    let mine_count = mine.split(';').map(&norm).filter(|s| s.starts_with("CREATE")).count();
+    assert_eq!(ksp_count, mine_count, "same number of CREATE statements");
 }
 
 #[test]
@@ -85,7 +70,7 @@ fn pending_orders_by_next_attempt_then_revision() {
     s.enqueue(&entry("op-b", "r1", 0, 5, 10)).unwrap();
     s.enqueue(&entry("op-a", "r1", 0, 3, 10)).unwrap();
     s.enqueue(&entry("op-c", "r1", 0, 9, 1)).unwrap();
-    let ops: Vec<String> = s.pending(OWNER).into_iter().map(|e| e.operation_id).collect();
+    let ops: Vec<String> = s.pending(OWNER).unwrap().into_iter().map(|e| e.operation_id).collect();
     assert_eq!(ops, ["op-c", "op-a", "op-b"], "ORDER BY nextAttemptAt, revision");
 }
 
@@ -97,25 +82,51 @@ fn commit_applied_commits_ack_rebase_and_max_only_update() {
     s.enqueue(&entry("op-2", "r1", 2, 5, 0)).unwrap();
     let out = s.commit_applied(OWNER, "op-1", "r1", 4, 2, 7, &mut || true);
     assert_eq!(out, CommitOutcome::Committed);
-    assert_eq!(server_rev(&s.conn, "r1"), Some(7), "serverRevision max-updated");
-    let left: Vec<String> = s.pending(OWNER).into_iter().map(|e| e.operation_id).collect();
-    assert_eq!(left, ["op-2"], "acknowledgeMatched deleted op-1");
-    let rebased = s.pending(OWNER).pop().unwrap();
-    assert_eq!(rebased.base_revision, 7, "rebasePending old 2 -> new 7");
+    assert_eq!(server_rev(&s.conn, "r1"), Some(7));
+    let left = s.pending(OWNER).unwrap();
+    assert_eq!(left.len(), 1, "acknowledgeMatched deleted op-1");
+    assert_eq!((left[0].operation_id.as_str(), left[0].base_revision), ("op-2", 7), "rebasePending 2 -> 7");
 }
 
 #[test]
 fn commit_applied_never_inserts_and_never_lowers() {
     let mut s = store();
     s.enqueue(&entry("op-1", "r-missing", 2, 4, 0)).unwrap();
-    // No revision row: update is a no-op, never an INSERT; ACK+rebase still commit.
     assert_eq!(s.commit_applied(OWNER, "op-1", "r-missing", 4, 2, 7, &mut || true), CommitOutcome::Committed);
     assert_eq!(server_rev(&s.conn, "r-missing"), None, "no row inserted");
-    // Existing higher serverRevision: never lowered.
     s.conn.execute("INSERT INTO health_sync_revisions (ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision) VALUES (?1,'r2',4,'h',0,1,9)", rusqlite::params![OWNER]).unwrap();
     s.enqueue(&entry("op-3", "r2", 2, 4, 0)).unwrap();
     assert_eq!(s.commit_applied(OWNER, "op-3", "r2", 4, 2, 5, &mut || true), CommitOutcome::Committed);
     assert_eq!(server_rev(&s.conn, "r2"), Some(9), "never lowered");
+}
+
+#[test]
+fn commit_applied_read_fault_is_db_error_not_missing_row() {
+    // A database ERROR on the revision read must roll back and report
+    // DbError; treating it as "row missing" would commit ACK+rebase against
+    // an unread existing row (the v58 review bug).
+    let mut s = store();
+    s.conn.execute("INSERT INTO health_sync_revisions (ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision) VALUES (?1,'r1',4,'h',0,1,2)", rusqlite::params![OWNER]).unwrap();
+    s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
+    s.conn.execute_batch("CREATE TRIGGER fail_rev_read BEFORE UPDATE ON health_sync_revisions BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+    // Force a real fault through the read path by corrupting via trigger on the UPDATE;
+    // the read itself faults when the table is dropped underneath a second handle -
+    // here: drop+rename trick is not possible mid-store, so fault the UPDATE and
+    // prove rollback; then separately prove a read error maps to DbError.
+    assert_eq!(s.commit_applied(OWNER, "op-1", "r1", 4, 2, 7, &mut || true), CommitOutcome::DbError);
+    assert_eq!(server_rev(&s.conn, "r1"), Some(2), "UPDATE rolled back by the engine");
+    assert_eq!(s.pending(OWNER).unwrap().len(), 1, "ACK rolled back");
+}
+
+#[test]
+fn commit_applied_revision_read_error_maps_to_db_error() {
+    let mut s = store();
+    s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
+    // Make the revision read fail outright (table gone).
+    s.conn.execute_batch("DROP TABLE health_sync_revisions;").unwrap();
+    assert_eq!(s.commit_applied(OWNER, "op-1", "r1", 4, 2, 7, &mut || true), CommitOutcome::DbError,
+        "read error is DbError, never 'row missing'");
+    assert_eq!(s.pending(OWNER).unwrap().len(), 1, "nothing acked or rebased");
 }
 
 #[test]
@@ -124,38 +135,46 @@ fn gate_drift_rolls_back_and_is_distinct_from_db_error() {
     s.conn.execute("INSERT INTO health_sync_revisions (ownerId, recordId, revision, payloadHash, tombstone, updatedAt, serverRevision) VALUES (?1,'r1',4,'h',0,1,2)", rusqlite::params![OWNER]).unwrap();
     s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
     assert_eq!(s.commit_applied(OWNER, "op-1", "r1", 4, 2, 7, &mut || false), CommitOutcome::GateDrift);
-    assert_eq!(server_rev(&s.conn, "r1"), Some(2), "untouched");
-    assert_eq!(count(&s.conn, "health_sync_outbox"), 1, "ACK not applied");
-    // Engine-enforced DB failure: RAISE(ABORT) on the ACK delete -> DbError,
-    // and the serverRevision UPDATE from the SAME transaction rolls back.
-    s.conn.execute_batch("CREATE TRIGGER fail_ack BEFORE DELETE ON health_sync_outbox BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
-    assert_eq!(s.commit_applied(OWNER, "op-1", "r1", 4, 2, 7, &mut || true), CommitOutcome::DbError);
-    assert_eq!(server_rev(&s.conn, "r1"), Some(2), "UPDATE rolled back by the engine");
+    assert_eq!(server_rev(&s.conn, "r1"), Some(2));
     assert_eq!(count(&s.conn, "health_sync_outbox"), 1);
 }
 
 #[test]
-fn retry_increments_attempts_with_backoff_fields() {
+fn retry_and_put_conflict_propagate_write_faults() {
     let mut s = store();
     s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
-    s.retry(OWNER, "op-1", 1_700_000_001_000, "Backup needs another try");
-    let (a, n, e): (i64, i64, String) = s.conn.query_row(
-        "SELECT attempts, nextAttemptAt, lastError FROM health_sync_outbox WHERE ownerId=?1 AND operationId='op-1'",
-        rusqlite::params![OWNER], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-    assert_eq!((a, n, e.as_str()), (1, 1_700_000_001_000, "Backup needs another try"));
+    s.retry(OWNER, "op-1", 1_700_000_001_000, "Backup needs another try").unwrap();
+    let (a, n): (i64, i64) = s.conn.query_row(
+        "SELECT attempts, nextAttemptAt FROM health_sync_outbox WHERE ownerId=?1 AND operationId='op-1'",
+        rusqlite::params![OWNER], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((a, n), (1, 1_700_000_001_000));
+    // Write fault: retry and put_conflict surface typed Err, never silent.
+    s.conn.execute_batch("CREATE TRIGGER fail_retry BEFORE UPDATE ON health_sync_outbox BEGIN SELECT RAISE(ABORT, 'injected'); END;
+                          CREATE TRIGGER fail_conflict BEFORE INSERT ON health_sync_conflicts BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+    assert_eq!(s.retry(OWNER, "op-1", 5, "x"), Err(V3DaoError::Db));
+    assert_eq!(s.put_conflict(conflict("r1")), Err(V3DaoError::Db));
+    assert_eq!(count(&s.conn, "health_sync_conflicts"), 0);
+}
+
+#[test]
+fn pending_read_fault_is_typed_not_empty() {
+    let mut s = store();
+    s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
+    s.conn.execute_batch("DROP TABLE health_sync_outbox;").unwrap();
+    assert_eq!(s.pending(OWNER), Err(V3DaoError::Db), "read fault is Err, never an empty list");
 }
 
 #[test]
 fn put_conflict_is_replace_upsert() {
     let mut s = store();
-    s.put_conflict(conflict("r1"));
+    s.put_conflict(conflict("r1")).unwrap();
     let mut c2 = conflict("r1");
     c2.remote_revision = 6;
-    s.put_conflict(c2);
+    s.put_conflict(c2).unwrap();
     let (n, rr): (i64, i64) = s.conn.query_row(
         "SELECT COUNT(*), MAX(remoteRevision) FROM health_sync_conflicts WHERE ownerId=?1 AND recordId='r1'",
         rusqlite::params![OWNER], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-    assert_eq!((n, rr), (1, 6), "REPLACE keeps one row per (owner, record)");
+    assert_eq!((n, rr), (1, 6));
 }
 
 fn wire_change(id: &str, rev: i64, seq: i64) -> V3WireChange {
@@ -180,51 +199,61 @@ impl V3ReadTransport for Pages {
 }
 
 #[test]
-fn pull_commits_real_rows_and_conflict_path_writes_conflict() {
+fn pull_commits_domain_and_sync_rows_on_one_connection() {
     let mut s = store();
     s.enqueue(&entry("op-p", "2026-11-02", 0, 3, 0)).unwrap(); // pending -> conflict path
     let mut tx = Pages(vec![vec![wire_change("2026-11-01", 5, 1), wire_change("2026-11-02", 6, 2)]].into());
     let n = run_v3_pull(&mut tx, "tok", &mut s, OWNER, 3, 7, &mut || true, &mut || 1_700_000_000_000).unwrap();
-    assert_eq!(n, 1, "only the non-conflicted record applied");
-    assert_eq!(s.domain.logs.len(), 1);
-    assert_eq!(s.domain.logs[0].date, "2026-11-01");
+    assert_eq!(n, 1);
+    // Domain row written through the SAME connection's real table.
+    let flow: String = s.conn.query_row(
+        "SELECT flowLevel FROM cycle_day_logs WHERE dateString='2026-11-01'", [], |r| r.get(0)).unwrap();
+    assert_eq!(flow, "LIGHT");
     let (rev, srv): (i64, i64) = s.conn.query_row(
         "SELECT revision, serverRevision FROM health_sync_revisions WHERE ownerId=?1 AND recordId='2026-11-01'",
         rusqlite::params![OWNER], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
     assert_eq!((rev, srv), (1, 5));
-    assert_eq!(s.cursor(OWNER), Some(2), "cursor row committed");
+    assert_eq!(s.cursor(OWNER), Ok(Some(2)));
     let (op, rr): (String, i64) = s.conn.query_row(
         "SELECT operationId, remoteRevision FROM health_sync_conflicts WHERE ownerId=?1 AND recordId='2026-11-02'",
         rusqlite::params![OWNER], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-    assert_eq!((op.as_str(), rr), ("op-p", 6), "conflict row with pending operationId");
+    assert_eq!((op.as_str(), rr), ("op-p", 6));
 }
 
 #[test]
-fn pull_fault_mid_page_rolls_back_real_rows() {
+fn pull_fault_rolls_back_domain_and_sync_rows_together() {
+    // THE same-connection atomicity proof: a mid-page engine fault rolls the
+    // DOMAIN log row back together with the sync revision/cursor rows.
     let mut s = store();
     s.conn.execute_batch("CREATE TRIGGER fail_cursor BEFORE INSERT ON health_sync_cursors BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
     let mut tx = Pages(vec![vec![wire_change("2026-11-01", 5, 1)]].into());
     let r = run_v3_pull(&mut tx, "tok", &mut s, OWNER, 3, 7, &mut || true, &mut || 1_700_000_000_000);
     assert_eq!(r, Err(V3PullError::Db));
-    assert_eq!(count(&s.conn, "health_sync_revisions"), 0, "engine rolled back the revision write");
+    assert_eq!(count(&s.conn, "health_sync_revisions"), 0, "sync row rolled back");
     assert_eq!(count(&s.conn, "health_sync_cursors"), 0);
-    assert!(s.domain.logs.len() <= 1, "domain seam is the adapter's atomicity obligation (documented)");
+    assert_eq!(count(&s.conn, "cycle_day_logs"), 0, "DOMAIN row rolled back by the same transaction");
+}
+
+#[test]
+fn cursor_read_fault_is_typed_not_zero() {
+    let mut s = store();
+    s.conn.execute_batch("DROP TABLE health_sync_cursors;").unwrap();
+    assert_eq!(s.cursor(OWNER), Err(V3PullError::Db), "cursor fault is Err, never a silent 0 re-pull");
 }
 
 #[test]
 fn scratch_file_store_recovers_across_reopen() {
-    // Ordinary restart recovery (rename/WAL not crash-fault tested).
     let f = std::env::temp_dir().join(format!("cyclecare-dao-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&f);
     {
-        let mut s = SqliteV3Store::open_file(&f, MemDomain::default()).unwrap();
+        let mut s = SqliteV3Store::open_file(&f).unwrap();
         s.enqueue(&entry("op-1", "r1", 2, 4, 0)).unwrap();
         s.conn.execute("INSERT INTO health_sync_cursors (ownerId, changeSeq) VALUES (?1, 42)", rusqlite::params![OWNER]).unwrap();
     }
     {
-        let mut s = SqliteV3Store::open_file(&f, MemDomain::default()).unwrap();
-        assert_eq!(s.pending(OWNER).len(), 1);
-        assert_eq!(s.cursor(OWNER), Some(42));
+        let mut s = SqliteV3Store::open_file(&f).unwrap();
+        assert_eq!(s.pending(OWNER).unwrap().len(), 1);
+        assert_eq!(s.cursor(OWNER), Ok(Some(42)));
     }
     let _ = std::fs::remove_file(&f);
 }

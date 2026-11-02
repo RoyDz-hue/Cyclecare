@@ -83,7 +83,7 @@ impl V3PullTx for MemTx<'_> {
     }
 }
 impl V3PullStore for MemStore {
-    fn cursor(&mut self, _o: &str) -> Option<i64> { self.st.cursor }
+    fn cursor(&mut self, _o: &str) -> Result<Option<i64>, V3PullError> { Ok(self.st.cursor) }
     fn transaction(&mut self, body: &mut dyn FnMut(&mut dyn V3PullTx) -> Result<i32, V3PullError>) -> Result<i32, V3PullError> {
         let snapshot = self.st.clone();
         self.cursor_puts = 0;

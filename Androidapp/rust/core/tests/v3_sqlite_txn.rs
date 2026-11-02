@@ -8,7 +8,7 @@ use cyclecare_core::sync_codec::{log_payload, parse_log_payload, CycleDayLog, Cy
 use cyclecare_core::v3_outbox::*;
 use cyclecare_core::v3_pull::*;
 use cyclecare_core::v3_sync::{wire_record_id, V3WireChange, V3WireReceipt};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 const OWNER: &str = "owner-uid";
 
@@ -91,8 +91,8 @@ impl V3PullTx for SqlTx<'_> {
     }
 }
 impl V3PullStore for SqlPull {
-    fn cursor(&mut self, o: &str) -> Option<i64> {
-        self.conn.query_row("SELECT seq FROM cursor WHERE owner=?", params![o], |r| r.get(0)).ok()
+    fn cursor(&mut self, o: &str) -> Result<Option<i64>, V3PullError> {
+        dbe(self.conn.query_row("SELECT seq FROM cursor WHERE owner=?", params![o], |r| r.get(0)).optional())
     }
     fn transaction(&mut self, body: &mut dyn FnMut(&mut dyn V3PullTx) -> Result<i32, V3PullError>) -> Result<i32, V3PullError> {
         let tx = dbe(self.conn.transaction())?;
@@ -121,7 +121,7 @@ fn real_db_pull_commits_a_clean_page() {
     let r = run_v3_pull(&mut tx, "tok", &mut store, OWNER, 3, 11, &mut || true, &mut || 1);
     assert_eq!(r, Ok(2));
     assert_eq!(count(&store.conn, "logs"), 2);
-    assert_eq!(store.cursor(OWNER), Some(11));
+    assert_eq!(store.cursor(OWNER), Ok(Some(11)));
 }
 
 #[test]
@@ -144,13 +144,14 @@ fn real_db_fault_mid_page_rolls_back_domain_revisions_and_cursor() {
 // ---------------------------- outbox commit -------------------------------
 struct SqlOutbox { conn: Connection }
 impl V3SyncDao for SqlOutbox {
-    fn pending(&mut self, _o: &str) -> Vec<OutboxEntry> {
-        let mut s = self.conn.prepare("SELECT operation_id,record_id,kind,base_revision,revision,payload_json,consent_generation,attempts,next_attempt_at FROM pending").unwrap();
-        s.query_map([], |r| Ok(OutboxEntry {
+    fn pending(&mut self, _o: &str) -> Result<Vec<OutboxEntry>, V3DaoError> {
+        let mut s = self.conn.prepare("SELECT operation_id,record_id,kind,base_revision,revision,payload_json,consent_generation,attempts,next_attempt_at FROM pending").map_err(|_| V3DaoError::Db)?;
+        let rows = s.query_map([], |r| Ok(OutboxEntry {
             owner: OWNER.into(), operation_id: r.get(0)?, record_id: r.get(1)?, kind: r.get(2)?,
             base_revision: r.get(3)?, revision: r.get(4)?, payload_json: r.get(5)?,
             payload_hash: "h".into(), consent_generation: r.get(6)?, attempts: r.get(7)?, next_attempt_at: r.get(8)?,
-        })).unwrap().map(|x| x.unwrap()).collect()
+        })).map_err(|_| V3DaoError::Db)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|_| V3DaoError::Db)
     }
     fn commit_applied(&mut self, _o: &str, op: &str, id: &str, _entry_rev: i64, base: i64, new_rev: i64, gate: &mut dyn FnMut() -> bool) -> CommitOutcome {
         let tx = match self.conn.transaction() { Ok(t) => t, Err(_) => return CommitOutcome::DbError };
@@ -169,9 +170,9 @@ impl V3SyncDao for SqlOutbox {
             Err(_) => CommitOutcome::DbError, // drop = rollback
         }
     }
-    fn put_conflict(&mut self, _c: ConflictRow) {}
-    fn retry(&mut self, _o: &str, op: &str, next: i64, _m: &str) {
-        self.conn.execute("UPDATE pending SET next_attempt_at=?, attempts=attempts+1 WHERE operation_id=?", params![next, op]).unwrap();
+    fn put_conflict(&mut self, _c: ConflictRow) -> Result<(), V3DaoError> { Ok(()) }
+    fn retry(&mut self, _o: &str, op: &str, next: i64, _m: &str) -> Result<(), V3DaoError> {
+        self.conn.execute("UPDATE pending SET next_attempt_at=?, attempts=attempts+1 WHERE operation_id=?", params![next, op]).map(|_| ()).map_err(|_| V3DaoError::Db)
     }
 }
 
@@ -202,7 +203,7 @@ fn real_db_outbox_commit_updates_max_only_and_rebases() {
     seed(&dao.conn);
     // Existing server_revision 4 < ACK 5: raised to 5; op1 acked; op2 rebased 4->5.
     let n = run_v3_outbox(&mut Tx1(Some(ack("op1", "2026-11-05", 5))), "tok", &mut dao, OWNER, 7, 3, 11, &mut || true, &mut || 1_000);
-    assert_eq!(n, 1);
+    assert_eq!(n, Ok(1));
     let srv: i64 = dao.conn.query_row("SELECT server_revision FROM revisions", [], |r| r.get(0)).unwrap();
     assert_eq!(srv, 5);
     assert_eq!(count(&dao.conn, "pending"), 1);
@@ -221,7 +222,7 @@ fn real_db_outbox_fault_in_rebase_rolls_back_ack_and_revision_then_retries() {
          BEGIN SELECT RAISE(ABORT,'injected_fault'); END;",
     ).unwrap();
     let n = run_v3_outbox(&mut Tx1(Some(ack("op1", "2026-11-05", 5))), "tok", &mut dao, OWNER, 7, 3, 11, &mut || true, &mut || 1_000);
-    assert_eq!(n, 0, "not counted");
+    assert_eq!(n, Ok(0), "not counted");
     let srv: i64 = dao.conn.query_row("SELECT server_revision FROM revisions", [], |r| r.get(0)).unwrap();
     assert_eq!(srv, 4, "revision UPDATE rolled back by the engine");
     assert_eq!(count(&dao.conn, "pending"), 2, "op1 DELETE rolled back");
@@ -240,7 +241,7 @@ fn real_db_gate_drift_inside_txn_writes_nothing_and_does_not_retry() {
     // Gate reads: entry, loop, post-ACK, then IN-TXN (4th) drifts.
     let mut gate = || { calls.set(calls.get() + 1); calls.get() != 4 };
     let n = run_v3_outbox(&mut Tx1(Some(ack("op1", "2026-11-05", 5))), "tok", &mut dao, OWNER, 7, 3, 11, &mut gate, &mut || 1_000);
-    assert_eq!(n, 0);
+    assert_eq!(n, Ok(0));
     assert_eq!(count(&dao.conn, "pending"), 2);
     let attempts: i64 = dao.conn.query_row("SELECT attempts FROM pending WHERE operation_id='op1'", [], |r| r.get(0)).unwrap();
     assert_eq!(attempts, 0, "gate drift is not a retry");

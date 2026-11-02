@@ -76,7 +76,10 @@ pub trait V3PullTx: DomainStore {
 /// returning the error. The pre-loop cursor read is outside the txn, as in
 /// the source.
 pub trait V3PullStore {
-    fn cursor(&mut self, owner: &str) -> Option<i64>;
+    /// :113-114 read. Fallible: Kotlin's dao.cursor throw propagates out of
+    /// pull (no try/catch in :151); swallowing it as cursor 0 would re-pull
+    /// the entire changelog.
+    fn cursor(&mut self, owner: &str) -> Result<Option<i64>, V3PullError>;
     fn transaction(
         &mut self,
         body: &mut dyn FnMut(&mut dyn V3PullTx) -> Result<i32, V3PullError>,
@@ -110,7 +113,7 @@ pub fn run_v3_pull(
 ) -> Result<i32, V3PullError> {
     let _ = local; // participates via the `current` closure.
     let mut count = 0i32;
-    let _cursor_start = store.cursor(owner).unwrap_or(0);
+    let _cursor_start = store.cursor(owner)?.unwrap_or(0); // :151
     let mut cursor = _cursor_start;
     while current() {
         let page = transport
