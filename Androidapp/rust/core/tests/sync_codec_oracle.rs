@@ -57,7 +57,7 @@ fn log_payloads_and_hashes_match_aosp() {
         assert_eq!(hash(Some(&payload)), expected[2], "hash mismatch for {}", c[0]);
         checked += 1;
     }
-    assert!(checked >= 8);
+    assert!(checked >= 9); // cl09: 7.3f sleep_hours widening (targeted AOSP oracle, ops numeric trace)
 }
 
 #[test]

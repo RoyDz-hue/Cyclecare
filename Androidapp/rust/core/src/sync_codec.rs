@@ -505,6 +505,11 @@ impl<'a> JsonParser<'a> {
 // ---------- Domain models (from HealthSyncLocal.kt contracts) ----------
 
 #[derive(Debug, Clone, PartialEq)]
+// CONSOLIDATION DEBT (tracked, deliberately unbound): this entity is also
+// defined in the other module with a DIFFERENT float width - care_policy
+// uses f64 (domain math), sync_codec uses f32 (Room entity parity, Float).
+// Do not unify widths or convert silently: the v3 DAO/codec path is
+// f32-exact per the ops numeric trace; care_policy f64 is separate.
 pub struct CycleDayLog {
     pub date: String,
     pub flow: String,

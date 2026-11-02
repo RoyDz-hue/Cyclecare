@@ -16,7 +16,7 @@ The AOSP set is the production-faithful one (devices ship libcore org.json).
 
 Locked device behaviors evidenced here:
 - Insertion key order; -0.0 -> "-0"; integral doubles strip ".0"
-- Float->Double widening (36.6f -> 36.599998474121094)
+- Float->Double widening (36.6f -> 36.599998474121094; 7.3f -> 7.300000190734863, cl09 - targeted rerun for the ops numeric trace, whole set re-executed and byte-identical)
 - AOSP tokener: octal "010" -> 8, hex "0x", exponent literals -> Double,
   integer/long/double number typing
 - integer() out-of-range -> "type_" (range_ unreachable in integer())
@@ -26,8 +26,8 @@ Locked device behaviors evidenced here:
 - Profile parse ignores unknown keys (forward compat); settings parse rejects
   them (unknown_*); profile parse always resets is_completed/age/terms flags.
 
-Counts: 8 log + 3 settings + 2 profile payload/hash cases, 18 log-parse,
-10 settings-parse, 9 profile-parse cases, 1 hash-null case = 42 cases,
+Counts: 9 log + 3 settings + 2 profile payload/hash cases, 18 log-parse,
+10 settings-parse, 9 profile-parse cases, 1 hash-null case = 43 cases,
 all matched byte-exact by cyclecare_core::sync_codec (tests/sync_codec_oracle.rs).
 
 ## Cross-version source evidence (added 2026-11-02, v13)

@@ -9,7 +9,7 @@
 use cyclecare_core::v3_consent::journal_explicit_snapshot;
 use cyclecare_core::v3_dao_sqlite::SqliteV3Store;
 use cyclecare_core::v3_outbox::{run_v3_outbox, V3Transport};
-use cyclecare_core::v3_owner_router::OwnerScopedStores;
+use cyclecare_core::v3_owner_router::{OwnerBindError, OwnerScopedStores};
 use cyclecare_core::v3_pull::{run_v3_pull, V3ReadTransport};
 use cyclecare_core::v3_sync::{wire_record_id, V3WireChange, V3WireOperation, V3WireReceipt};
 
@@ -17,8 +17,8 @@ const SESSION: i64 = 7;
 const LOCAL: i64 = 3;
 const SERVER: i64 = 11;
 
-fn tmpdir() -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("cyclecare-e2e-{}", std::process::id()));
+fn tmpdir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("cyclecare-e2e-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -59,7 +59,7 @@ impl V3ReadTransport for NoChanges {
 
 #[test]
 fn full_sync_cycle_routes_per_owner_through_the_provider() {
-    let d = tmpdir();
+    let d = tmpdir("cycle");
     let mut p = OwnerScopedStores::new(&d);
     let alice = || Some("alice".to_string());
 
@@ -112,5 +112,62 @@ fn full_sync_cycle_routes_per_owner_through_the_provider() {
     // 6. Sign-out resolves the guest file, which is empty of owner data.
     let guest = || None;
     assert_eq!(count(p.current(&mut { guest }).unwrap(), "cycle_day_logs"), 0);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+fn remote_log_change(owner: &str, date: &str, rev: i64, seq: i64, notes: &str) -> V3WireChange {
+    let payload = format!(
+        r#"{{"date":"{date}","flow":"LIGHT","energy":"","mood":"","symptoms":"","vaginal_health":"","urinary_health":"","cervical_mucus":"","ovulation_test":"NONE","bbt_celsius":0,"sleep_hours":0,"sleep_quality":"","water_glasses":0,"notes":"{notes}","pain_intensity":0}}"#
+    );
+    V3WireChange {
+        record_id: wire_record_id(owner, date), revision: rev, change_seq: seq,
+        payload: Some(cyclecare_core::sync_codec::JsonParser::new(&format!(
+            r#"{{"kind":"UPSERT","logicalRecordId":"{date}","value":{payload}}}"#)).parse().unwrap()),
+        tombstone: false, payload_hash: None, logical_record_id: Some(date.into()),
+    }
+}
+
+struct OnePage(std::collections::VecDeque<Vec<V3WireChange>>);
+impl V3ReadTransport for OnePage {
+    fn read_changes(&mut self, _a: i64, _l: i64, _g: i64, _t: &str) -> Result<Vec<V3WireChange>, ()> {
+        Ok(self.0.pop_front().unwrap_or_default())
+    }
+}
+
+#[test]
+fn bound_runner_refuses_blank_owners_and_binds_store_to_operation_owner() {
+    let d = tmpdir("bound");
+    let mut p = OwnerScopedStores::new(&d);
+    // Blank owners can never reach the guest database with an owner argument.
+    for blank in ["", "   ", "\u{00A0}", "\u{2007}"] {
+        let r: Result<(), OwnerBindError> = p.run_for_owner(blank, |_| ());
+        assert!(matches!(r, Err(OwnerBindError::Mismatch { .. })), "blank owner {blank:?} refused");
+    }
+    assert!(std::fs::read_dir(&d).unwrap().next().is_none(), "refusals perform no I/O");
+    // Real remote-domain writes through the binding land in the owner's own
+    // file: the owner argument resolves the store AND scopes the operation.
+    let mut alice_page = OnePage(vec![vec![remote_log_change("alice", "2026-11-06", 5, 1, "alice-remote")]].into());
+    p.run_for_owner("alice", |s| {
+        run_v3_pull(&mut alice_page, "tok", s, "alice", LOCAL, SERVER, &mut || true, &mut || 5_000)
+    }).unwrap().unwrap();
+    let mut bob_page = OnePage(vec![vec![remote_log_change("bob", "2026-11-06", 3, 1, "bob-remote")]].into());
+    p.run_for_owner("bob", |s| {
+        run_v3_pull(&mut bob_page, "tok", s, "bob", LOCAL, SERVER, &mut || true, &mut || 6_000)
+    }).unwrap().unwrap();
+    let notes = |p: &mut OwnerScopedStores, owner: &'static str| -> Option<String> {
+        p.run_for_owner(owner, |s| {
+            s.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok()
+        }).unwrap()
+    };
+    assert_eq!(notes(&mut p, "alice").as_deref(), Some("alice-remote"));
+    assert_eq!(notes(&mut p, "bob").as_deref(), Some("bob-remote"));
+    drop(p);
+    // Reopen isolation: a fresh provider over the same directory sees the
+    // same two isolated files; nothing leaked across owners on disk.
+    let mut p2 = OwnerScopedStores::new(&d);
+    assert_eq!(notes(&mut p2, "alice").as_deref(), Some("alice-remote"), "alice data persists across reopen");
+    assert_eq!(notes(&mut p2, "bob").as_deref(), Some("bob-remote"), "bob data persists across reopen");
+    let files: Vec<String> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(files.len(), 2, "exactly the two owner files, no guest file was ever created");
     let _ = std::fs::remove_dir_all(&d);
 }

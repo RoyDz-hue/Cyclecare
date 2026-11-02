@@ -39,6 +39,19 @@ pub fn namespace_for(owner_identity: &str) -> String {
 
 /// Resolves stores at call time, mirroring the provider + the per-name
 /// instance caches (INSTANCE / OWNER_INSTANCES, CycleCareDatabase.kt:107-114).
+/// Owner-binding failure: the operation owner cannot be bound to a resolved
+/// store identity. Blank/whitespace owners are rejected here rather than
+/// silently routed to the legacy guest database with an owner argument
+/// (SupabaseSyncService.kt:117 - owner_required).
+#[derive(Debug, PartialEq)]
+pub enum OwnerBindError {
+    /// The operation owner resolved to a different store identity than its
+    /// own namespace - refused before any I/O.
+    Mismatch { resolved_name: String },
+    /// Opening the resolved store failed.
+    Store(String),
+}
+
 pub struct OwnerScopedStores {
     dir: PathBuf,
     stores: HashMap<String, SqliteV3Store>,
@@ -77,6 +90,27 @@ impl OwnerScopedStores {
             self.stores.insert(name.clone(), store);
         }
         Ok(self.stores.get_mut(&name).expect("just inserted"))
+    }
+
+    /// THE binding entry point for sync operations: the operation owner is
+    /// used BOTH to resolve the store and as the operation's owner argument,
+    /// so store identity and operation owner cannot diverge. A blank owner
+    /// resolves to the legacy name, which never equals its namespace - the
+    /// mismatch is refused before any I/O. Per-owner generation checks stay
+    /// with the flow-level `current` gate inside each transaction.
+    pub fn run_for_owner<R>(
+        &mut self,
+        owner: &str,
+        body: impl FnOnce(&mut SqliteV3Store) -> R,
+    ) -> Result<R, OwnerBindError> {
+        let name = Self::name_for(Some(owner));
+        if name != namespace_for(owner) {
+            return Err(OwnerBindError::Mismatch { resolved_name: name });
+        }
+        let store = self
+            .for_identity(Some(owner))
+            .map_err(|e| OwnerBindError::Store(e.to_string()))?;
+        Ok(body(store))
     }
 
     /// OwnerScopedDatabaseProvider.current(): the owner comes from

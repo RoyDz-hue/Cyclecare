@@ -61,6 +61,11 @@ pub fn is_logging_intent(input: &str) -> bool {
 /// Full CycleDayLog Room entity (cycle_day_logs DDL, 15 columns), so
 /// merge() preserves every non-wire field like Kotlin's data class copy().
 #[derive(Debug, Clone, PartialEq)]
+// CONSOLIDATION DEBT (tracked, deliberately unbound): this entity is also
+// defined in the other module with a DIFFERENT float width - care_policy
+// uses f64 (domain math), sync_codec uses f32 (Room entity parity, Float).
+// Do not unify widths or convert silently: the v3 DAO/codec path is
+// f32-exact per the ops numeric trace; care_policy f64 is separate.
 pub struct CycleDayLog {
     pub date_string: String,
     pub flow_level: String,
