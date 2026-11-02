@@ -18,6 +18,11 @@ class SupabaseSyncService(
     private val databaseProvider: OwnerScopedDatabaseProvider = OwnerScopedDatabaseProvider(authPreferences.context, authPreferences)
 ) {
     private fun conflictSafeProtocolReleased() = false
+
+    /** False while the conflict-safe wire protocol is unreleased: the guarded
+     * cloud-backup path (syncAll) uploads nothing, whatever the UI promises. */
+    val isOnlineBackupActive: Boolean
+        get() = conflictSafeProtocolReleased()
     private fun wireRecordId(owner: String, logicalId: String) = UUID.nameUUIDFromBytes("cyclecare-v3:$owner:$logicalId".toByteArray(Charsets.UTF_8)).toString()
     private fun current(owner: String, session: Long, local: Long, server: Long) = authPreferences.userId == owner && authPreferences.sessionGeneration == session && authPreferences.healthConsentGeneration == local && authPreferences.serverHealthConsentGeneration == server && authPreferences.isCloudSyncAllowed && !OwnerDataGate.isWiped(authPreferences.context, owner)
     private fun validLogicalId(id: String) = id in setOf("profile", "settings") || runCatching { LocalDate.parse(id) }.isSuccess

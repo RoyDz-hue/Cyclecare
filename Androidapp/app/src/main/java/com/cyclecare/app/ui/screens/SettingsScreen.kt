@@ -363,13 +363,19 @@ fun SettingsScreenContent(
                     Column(modifier = Modifier.padding(18.dp)) {
                         Text("Backup check", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Text(
-                            if (uiState.lastSyncSuccess) "Everything looks good." else "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first.",
+                            if (!uiState.isOnlineBackupActive) "Online backup is off in this version. Your records stay on this device."
+                            else if (uiState.lastSyncSuccess) "Everything looks good."
+                            else "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(uiState.lastSyncMessage, style = MaterialTheme.typography.bodySmall)
-                        if (!uiState.lastSyncSuccess) {
+                        // Hide a stale past result while backup is off in this
+                        // version; the current state line above is the truth.
+                        if (uiState.isOnlineBackupActive) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(uiState.lastSyncMessage, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (uiState.isOnlineBackupActive && !uiState.lastSyncSuccess) {
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(onClick = onTriggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
                                 Text("Check again")
