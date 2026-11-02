@@ -300,3 +300,68 @@ pub fn decide_episode_storage(
         error_message: None,
     }
 }
+
+/// PeriodDateRange (CycleRepository.kt line 28).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeriodDateRange {
+    pub period_start_date: NaiveDate,
+    pub period_end_date: NaiveDate,
+}
+
+impl PeriodDateRange {
+    /// Inclusive duration, always at least 1 day.
+    pub fn duration_days(&self) -> i64 {
+        ((self.period_end_date - self.period_start_date).num_days() + 1).max(1)
+    }
+    pub fn is_valid(&self) -> bool {
+        self.period_end_date >= self.period_start_date
+    }
+    /// Kotlin LocalDate.parse of Room's stored "YYYY-MM-DD" strings; any
+    /// parse failure is null (Kotlin catches all exceptions).
+    pub fn from_strings(start: &str, end: &str) -> Option<PeriodDateRange> {
+        let s = parse_local_date_iso(start)?;
+        let e = parse_local_date_iso(end)?;
+        Some(PeriodDateRange {
+            period_start_date: s,
+            period_end_date: e,
+        })
+    }
+}
+
+/// CycleRepository.PeriodDateValidationResult.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeriodDateValidationResult {
+    pub is_valid: bool,
+    pub error_message: Option<String>,
+    pub duration_days: i64,
+    pub range: Option<PeriodDateRange>,
+    pub warning_message: Option<String>,
+}
+
+/// CycleRepository.Companion.validatePeriodDatePair: delegates to
+/// PeriodDateConsistency.validatePair and attaches the valid range.
+pub fn validate_period_date_pair(
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+    is_ongoing: bool,
+    today: NaiveDate,
+) -> PeriodDateValidationResult {
+    let check = validate_pair(start, end, today, is_ongoing);
+    PeriodDateValidationResult {
+        is_valid: check.is_valid,
+        error_message: check.error_message.map(|e| e.to_string()),
+        duration_days: check.duration_days,
+        range: if check.is_valid {
+            match (start, end) {
+                (Some(s), Some(e)) => Some(PeriodDateRange {
+                    period_start_date: s,
+                    period_end_date: e,
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        },
+        warning_message: check.warning_message,
+    }
+}

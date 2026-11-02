@@ -195,3 +195,125 @@ fn reopen_expired_session_refreshes_and_commits_same_owner() {
     assert_eq!(slice.hub_balance, Some(bigdecimal::BigDecimal::from(363)));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// First-run vs existing-user routing over real scratch storage: an
+/// incomplete onboarding routes to Onboarding; completing onboarding
+/// persists to the DB; the SAME-owner reopen then bypasses first-run to
+/// Home. Not just step navigation — the completion survives process death.
+#[test]
+fn onboarding_completion_persists_through_same_owner_reopen() {
+    use cyclecare_core::account_start::{decide, AccountStartDestination, LocalDataState};
+    let dir = std::env::temp_dir().join(format!("cc-ob-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // First run: profile exists but NOT completed (mid-onboarding death).
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let mut profile = OnboardingProfile::default();
+        profile.is_completed = false;
+        db.insert_or_update_profile(&profile).unwrap();
+    }
+    // Reopen 1: incomplete -> must NOT bypass first-run.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let completed = db.get_profile().unwrap().map(|p| p.is_completed).unwrap_or(false);
+        assert!(!completed);
+        assert_eq!(decide(completed, LocalDataState::Clean, Some(false)), AccountStartDestination::Onboarding);
+    }
+    // User completes onboarding: completion persists.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let mut profile = db.get_profile().unwrap().unwrap();
+        profile.is_completed = true;
+        db.insert_or_update_profile(&profile).unwrap();
+    }
+    // Reopen 2 (same owner): completed -> Home, first-run bypassed.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let completed = db.get_profile().unwrap().map(|p| p.is_completed).unwrap_or(false);
+        assert!(completed, "completion must survive process death");
+        assert_eq!(decide(completed, LocalDataState::Clean, None), AccountStartDestination::Home);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn full_onboarding_answers_persist_profile_and_settings_through_reopen() {
+    use cyclecare_core::account_start::{decide, AccountStartDestination, LocalDataState};
+    use cyclecare_core::onboarding_complete::{complete_onboarding, SettingsPatch};
+    use cyclecare_core::onboarding_vm::OnboardingState;
+    let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let dir = std::env::temp_dir().join(format!("cc-obfull-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // A new owner answers onboarding exactly as the screen drives the VM:
+    // goals, an exact start date, a typical exact end date, cycle length,
+    // symptoms, fertile reminder off, cloud sync declined.
+    let mut s = OnboardingState::new();
+    s.set_age_verified(true);
+    s.set_terms_agreed(true);
+    s.toggle_goal("Track my periods");
+    s.toggle_goal("Understand my cycle");
+    s.set_exact_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(), t);
+    s.set_exact_end_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(), t);
+    s.select_cycle_option("28 days", 28);
+    s.toggle_typical_symptom("Cramps");
+    s.toggle_typical_symptom("Bloating");
+    assert_eq!(
+        s.confirmed_period_end_date(),
+        Some(chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap())
+    );
+    let params = s.completion_params(t);
+    assert_eq!(params.period_start_choice, "EXACT");
+    let outcome = complete_onboarding(&params, "PRIVATE", 1_762_000_000_000, false, false);
+    assert_eq!(outcome.profile.last_period_date_string, "2026-10-20");
+    assert_eq!(outcome.profile.last_period_end_date_string, "2026-10-24");
+    assert_eq!(outcome.profile.selected_goals_csv, "Track my periods,Understand my cycle");
+    assert_eq!(outcome.profile.typical_symptoms_csv, "Cramps,Bloating");
+    assert_eq!(
+        outcome.stored_period_range,
+        Some((
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap()
+        ))
+    );
+
+    // The repository transaction: insert profile, apply the settings copy.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        db.insert_or_update_profile(&outcome.profile).unwrap();
+        let mut settings = db.get_settings().unwrap().unwrap_or_default();
+        let patch: SettingsPatch = outcome.settings_patch.clone();
+        patch.apply_to(&mut settings);
+        db.save_settings(&settings).unwrap();
+    }
+
+    // Reopen (new connection, same owner file): completion and every mapped
+    // field survive; routing goes Home; settings carry the cycle basics.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        let profile = db.get_profile().unwrap().expect("profile persisted");
+        assert!(profile.is_completed);
+        assert_eq!(
+            decide(profile.is_completed, LocalDataState::Clean, None),
+            AccountStartDestination::Home
+        );
+        assert_eq!(profile.last_period_date_string, "2026-10-20");
+        assert_eq!(profile.last_period_end_date_string, "2026-10-24");
+        assert_eq!(profile.approximate_period_choice, "EXACT");
+        assert_eq!(profile.cycle_length_option, "28 days");
+        assert_eq!(profile.cycle_length_days, 28);
+        assert_eq!(profile.period_duration_days, 5);
+        assert_eq!(profile.typical_symptoms_csv, "Cramps,Bloating");
+        assert_eq!(profile.account_mode, "PRIVATE");
+        assert_eq!(profile.completed_at_timestamp, 1_762_000_000_000);
+        let settings = db.get_settings().unwrap().expect("settings persisted");
+        assert!(settings.is_onboarding_completed);
+        assert_eq!(settings.last_period_start_date, "2026-10-20");
+        assert_eq!(settings.average_cycle_length, 28);
+        assert_eq!(settings.period_duration, 5);
+        assert!(!settings.is_app_lock_enabled);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

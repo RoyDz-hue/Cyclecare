@@ -26,7 +26,7 @@ NOT_PORTED	data/payment/MpesaPaymentService.kt
 NOT_PORTED	data/payment/PaymentModels.kt	
 PORTED	data/payment/PaymentSafety.kt	payment_safety.rs
 NOT_PORTED	data/payment/SupabasePaymentService.kt	
-PARTIAL	data/repository/CycleRepository.kt	cycle_math.rs ports calculateDayPrediction
+PARTIAL	data/repository/CycleRepository.kt	cycle_math.rs ports calculateDayPrediction + companion validators (validatePeriodDates/Pair, PeriodDateRange); onboarding_complete.rs ports completeOnboardingWithProfile profile/settings mapping; sync journal + DAO ops remain
 PORTED	data/supabase/AuthErrorMessages.kt	auth_errors.rs: for_response/fallback for all 9 operations, 28 corpus rows locked vs verbatim Kotlin execution
 NOT_PORTED	data/supabase/HealthSyncV3Transport.kt	
 PARTIAL	data/supabase/OnboardingQuestionService.kt	onboarding_questions.rs fallback bank; edge fn host
@@ -99,7 +99,7 @@ NOT_PORTED	ui/theme/MotionPreferences.kt
 NOT_PORTED	ui/theme/Theme.kt	
 NOT_PORTED	ui/theme/Type.kt	
 PARTIAL	ui/viewmodel/CycleCareViewModel.kt	wallet/sync_gate/conflict_resolve pure cores
-NOT_PORTED	ui/viewmodel/OnboardingViewModel.kt	
+PARTIAL	ui/viewmodel/OnboardingViewModel.kt	onboarding_vm.rs ports state + step handlers + completion params; onboarding_complete.rs ports completeOnboarding mapping (20-row JVM corpus); sync journal + dynamic-question AI path remain
 PORTED	util/CoinFormatter.kt	coin_format.rs
 NOT_PORTED	util/DataExportPdf.kt	
 NOT_PORTED	util/NetworkHelper.kt	
