@@ -75,7 +75,7 @@ class SupabaseAuthService(
      * URL bound to the CURRENT anonymous session, so completing the flow
      * upgrades the guest account instead of creating a new one.
      */
-    private fun createGoogleLinkUrl(): String {
+    private suspend fun createGoogleLinkUrl(): String {
         check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Linking is disabled until device security is restored." }
         val token = SupabaseSessionManager.validAccessToken(authPreferences)
             ?: throw IllegalStateException("Your guest session needs a refresh. Reconnect and try again.")
