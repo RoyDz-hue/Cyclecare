@@ -23,6 +23,7 @@ pub mod log_parser;
 pub mod reconnect_policy;
 pub mod pin;
 pub mod pin_verify;
+pub mod app_lock;
 pub mod cycle_math;
 pub mod notifications;
 pub mod pattern_engine;
