@@ -534,3 +534,29 @@ fn transport_error_after_dispatch_is_unconfirmed_never_failed() {
     assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
         cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
 }
+
+#[test]
+fn hardened_post_status_classification_vs_parity() {
+    use cyclecare_core::community_transport::PostOutcome;
+    let settings = remote_settings();
+    let prefs = bound_owner_prefs();
+    // 5xx after send: hardened = unconfirmed (no echo); parity = Failed.
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 503, body: vec![] }]);
+    let mut store = session_store_view(&prefs);
+    let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi there");
+    assert!(matches!(res.outcome, PostOutcome::SoftEchoUnconfirmed) && res.message.is_none());
+    let mut f2 = Fake::new(vec![HttpOutcome::Response { status: 503, body: vec![] }]);
+    let mut store = session_store_view(&prefs);
+    let parity = post_message(&mut store, NOW, NOW*1000, &no_refresh(), &config_from(&settings), &mut f2, "t1", "hi there");
+    assert!(matches!(parity.outcome, PostOutcome::Failed), "source parity unchanged");
+    // 4xx: definitive Failed in both.
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 403, body: vec![] }]);
+    let mut store = session_store_view(&prefs);
+    let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi there");
+    assert!(matches!(res.outcome, PostOutcome::Failed));
+    // 2xx oversize body: hardened = unconfirmed.
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 201, body: vec![b'x'; 97 * 1024] }]);
+    let mut store = session_store_view(&prefs);
+    let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi there");
+    assert!(matches!(res.outcome, PostOutcome::SoftEchoUnconfirmed) && res.message.is_none());
+}

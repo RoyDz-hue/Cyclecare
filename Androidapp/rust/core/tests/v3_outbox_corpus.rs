@@ -35,24 +35,22 @@ impl V3SyncDao for MemDao {
     fn pending(&mut self, owner: &str) -> Vec<OutboxEntry> {
         self.pend.iter().filter(|e| e.owner == owner).cloned().collect()
     }
-    fn revision(&mut self, _o: &str, id: &str) -> Option<cyclecare_core::v3_pull::RevisionRow> {
-        self.revision_rows.get(id).cloned()
-    }
-    fn commit_applied(&mut self, _o: &str, op: &str, id: &str, entry_rev: i64, base: i64, new_rev: i64, target_srv: i64, gate: bool) -> bool {
-        self.commits.push((op.into(), id.into(), new_rev, target_srv, gate));
-        if self.fail_commits || !gate {
-            return false; // rollback: nothing visible
-        }
-        // update-if-exists, never insert, never lower
+    fn commit_applied(&mut self, _o: &str, op: &str, id: &str, entry_rev: i64, base: i64, new_rev: i64, gate: &mut dyn FnMut() -> bool) -> CommitOutcome {
+        let gate_ok = gate(); // evaluated INSIDE the transaction
+        let existing = self.revision_rows.get(id).map(|r| r.server_revision);
+        let target = existing.map(|e| e.max(new_rev)).unwrap_or(new_rev);
+        self.commits.push((op.into(), id.into(), new_rev, target, gate_ok));
+        if !gate_ok { return CommitOutcome::GateDrift; }
+        if self.fail_commits { return CommitOutcome::DbError; } // rollback: nothing visible
         if let Some(row) = self.revision_rows.get_mut(id) {
-            row.server_revision = row.server_revision.max(target_srv);
+            row.server_revision = row.server_revision.max(target);
         }
         self.pend.retain(|e| e.operation_id != op);
         for e in self.pend.iter_mut().filter(|e| e.record_id == id && e.base_revision == base) {
             e.base_revision = new_rev;
         }
         let _ = entry_rev;
-        true
+        CommitOutcome::Committed
     }
     fn put_conflict(&mut self, c: ConflictRow) { self.conflicts.push(c); }
     fn retry(&mut self, _o: &str, op: &str, next_at: i64, _m: &str) {
@@ -248,4 +246,26 @@ fn fault_injected_commit_rolls_back_atomically() {
     assert_eq!(dao.pend.len(), 1, "entry still pending");
     assert_eq!(dao.pend[0].base_revision, 4, "no rebase leaked");
     assert_eq!(dao.revision_rows["2026-11-03"].server_revision, 4, "no server revision leaked");
+}
+
+#[test]
+fn db_error_retries_but_gate_drift_does_not() {
+    // DbError inside the commit transaction -> source catch branch: block + retry.
+    let e = entry("op1", "2026-11-03", 4, 5, 1, 0);
+    let mut dao = MemDao { pend: vec![e.clone()], fail_commits: true, ..Default::default() };
+    let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
+    let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut live(), &mut always_now());
+    assert_eq!(n, 0);
+    assert_eq!(dao.retries, vec![("op1".to_string(), 1_700_000_000_000 + 2_000)], "1000<<1 backoff");
+
+    // Gate drift INSIDE the transaction (4th gate read: entry, loop, post-ACK, in-txn):
+    // no retry, not counted, nothing written.
+    let state = std::cell::RefCell::new(0);
+    let mut gate = || { *state.borrow_mut() += 1; *state.borrow() != 4 };
+    let mut dao = MemDao { pend: vec![e.clone()], ..Default::default() };
+    let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
+    let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut gate, &mut always_now());
+    assert_eq!(n, 0);
+    assert!(dao.retries.is_empty(), "gate drift is NOT a retry");
+    assert_eq!(dao.pend.len(), 1);
 }

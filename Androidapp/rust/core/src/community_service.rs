@@ -608,11 +608,22 @@ pub fn hardened_post_message(
         _ => return PostResult { outcome: t::PostOutcome::SoftEchoUnconfirmed, message: None },
     };
     if !(200..300).contains(&status) {
-        return fail(t::PostOutcome::Failed, None);
+        // 4xx = definitive rejection (Failed). 5xx/gateway/other statuses
+        // after send are AMBIGUOUS: the row may have landed. Proposed
+        // classification only; parity post_message still maps every
+        // non-2xx to Failed (source behavior, untouched).
+        return if (400..500).contains(&status) {
+            fail(t::PostOutcome::Failed, None)
+        } else {
+            PostResult { outcome: t::PostOutcome::SoftEchoUnconfirmed, message: None }
+        };
     }
     let raw = match body_to_string(body) {
         Some(r) => r,
-        None => return fail(t::PostOutcome::Failed, None),
+        // 2xx with an oversize/unreadable body: the write was accepted but
+        // cannot be read back. Parity maps this to Failed; the hardened
+        // proposal treats it as unconfirmed (may have landed).
+        None => return PostResult { outcome: t::PostOutcome::SoftEchoUnconfirmed, message: None },
     };
     match crate::sync_codec::JsonParser::new(&raw).parse() {
         Err(_) => soft_echo(topic_id, alias, trimmed, now_ms),

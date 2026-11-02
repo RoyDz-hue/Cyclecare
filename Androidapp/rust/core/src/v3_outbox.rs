@@ -45,14 +45,17 @@ pub struct ConflictRow {
 /// the adapter owns atomicity of each commit group.
 pub trait V3SyncDao {
     fn pending(&mut self, owner: &str) -> Vec<OutboxEntry>;
-    fn revision(&mut self, owner: &str, record_id: &str) -> Option<crate::v3_pull::RevisionRow>;
-    /// The withTransaction commit group for an applied/duplicate ACK,
-    /// FALLIBLE and ATOMIC: false/Err rolls back everything (no partial
-    /// writes visible). Contract: update the existing revision row's
-    /// server_revision to `target_server_revision` ONLY when a row exists
-    /// and never lower it; then acknowledgeMatched + rebasePending.
-    /// `gate_holds` mirrors the in-transaction current() check; when false
-    /// the implementation must roll back and return false.
+    /// The withTransaction commit group for an applied/duplicate ACK.
+    /// ONE FALLIBLE ATOMIC TRANSACTION. Inside it the implementation MUST,
+    /// in order: (1) evaluate `gate` (the in-transaction current() check) -
+    /// false => roll back and return GateDrift; (2) READ the existing
+    /// revision row; (3) update server_revision to
+    /// max(existing.serverRevision, new_revision) ONLY when the row exists
+    /// (never insert, never lower); (4) acknowledgeMatched; (5)
+    /// rebasePending. Any database error => roll back everything and return
+    /// DbError (source: the exception reaches the catch branch -> blocked +
+    /// retry). Caller obligations (owner/server consent/db-current) are
+    /// carried by `gate`, evaluated INSIDE the transaction.
     fn commit_applied(
         &mut self,
         owner: &str,
@@ -61,11 +64,19 @@ pub trait V3SyncDao {
         entry_revision: i64,
         base_revision: i64,
         new_revision: i64,
-        target_server_revision: i64,
-        gate_holds: bool,
-    ) -> bool;
+        gate: &mut dyn FnMut() -> bool,
+    ) -> CommitOutcome;
     fn put_conflict(&mut self, conflict: ConflictRow);
     fn retry(&mut self, owner: &str, operation_id: &str, next_attempt_at: i64, message: &str);
+}
+
+/// Typed commit result: gate drift (no retry, not counted) is distinct from
+/// a database error (source catch branch: blocked + retry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOutcome {
+    Committed,
+    GateDrift,
+    DbError,
 }
 
 /// Injected V3 transport; Err(()) mirrors a thrown exception (IOException,
@@ -185,15 +196,19 @@ pub fn run_v3_outbox(
                     continue;
                 }
                 let new_revision = e.base_revision + 1;
-                // maxOf(existing.serverRevision, revision); never insert,
-                // never lower (computed here, enforced again by the seam).
-                let target = dao
-                    .revision(owner, &e.record_id)
-                    .map(|r| r.server_revision.max(new_revision))
-                    .unwrap_or(new_revision);
-                let gate = current();
-                if dao.commit_applied(owner, &e.operation_id, &e.record_id, e.revision, e.base_revision, new_revision, target, gate) {
-                    applied += 1;
+                match dao.commit_applied(owner, &e.operation_id, &e.record_id, e.revision, e.base_revision, new_revision, current) {
+                    CommitOutcome::Committed => applied += 1,
+                    // withTransaction returned false: nothing written, no retry.
+                    CommitOutcome::GateDrift => {}
+                    // Exception inside withTransaction -> source catch branch.
+                    CommitOutcome::DbError => {
+                        blocked_records.insert(e.record_id.clone());
+                        if !current() {
+                            break;
+                        }
+                        let next = now_ms() + retry_backoff_ms(e.attempts);
+                        dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                    }
                 }
             }
             "conflict" => {
