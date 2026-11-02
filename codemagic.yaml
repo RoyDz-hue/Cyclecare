@@ -62,6 +62,7 @@ workflows:
             --tests "com.cyclecare.app.ui.GuidedChatsRoomOpenTest" \
             --tests "com.cyclecare.app.AccountStartPolicyTest" \
             --tests "com.cyclecare.app.ReturningUserReopenTest" \
+            --tests "com.cyclecare.app.ReopenSplashGateTest" \
             --tests "com.cyclecare.app.domain.ai.CareAiSourceContractTest"
       - name: Build unsigned slim APK (arm64, minified)
         script: |
