@@ -125,7 +125,8 @@ fun CareScreenContent(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().testTag("care_screen_content")
+        // IME handled by window resize (adjustResize); padding here double-consumed the inset.
+        modifier = modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("care_screen_content")
     ) {
         CareHeader(
             uiState = uiState,

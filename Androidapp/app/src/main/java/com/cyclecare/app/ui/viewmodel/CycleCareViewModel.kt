@@ -291,6 +291,15 @@ class CycleCareViewModel(
             isResolvingSyncConflict = false, syncConflictMessage = null
             ,aiProcessorManifest = null, isLoadingAiProcessorManifest = false
         )
+        // The wipe above protects against leaking the previous owner's data; now
+        // load the NEW owner's own settings/profile so nothing downstream reads
+        // factory defaults (which look like "never completed onboarding").
+        viewModelScope.launch {
+            val reloaded = runCatching { repository.getSettings() to repository.getOnboardingProfile() }.getOrNull()
+            if (reloaded != null && activeUiOwner == owner && activeUiSession == session) {
+                _uiState.value = _uiState.value.copy(settings = reloaded.first, onboardingProfile = reloaded.second)
+            }
+        }
     }
 
     private val _logsMap = MutableStateFlow<Map<String, CycleDayLog>>(emptyMap())
@@ -1381,16 +1390,30 @@ class CycleCareViewModel(
             val localRead = runCatching { repository.getSettings() to repository.getOnboardingProfile() }
             val localSettings = localRead.getOrNull()?.first ?: CycleSettings()
             val localProfile = localRead.getOrNull()?.second
-            val damaged = localRead.isFailure || runCatching { repository.pendingSyncConflicts().isNotEmpty() }.getOrDefault(true)
-            val localValid = localProfile?.isCompleted == true && localSettings.isOnboardingCompleted
+            val conflictsCheck = runCatching { repository.pendingSyncConflicts().isNotEmpty() }
+            // A failed read is UNKNOWN, never "damaged -> re-onboard" and never
+            // "clean -> safe to sync over".
+            val localState = when {
+                localRead.isFailure || conflictsCheck.isFailure ->
+                    com.cyclecare.app.domain.sync.LocalDataState.UNKNOWN
+                conflictsCheck.getOrDefault(false) ->
+                    com.cyclecare.app.domain.sync.LocalDataState.CONFLICTED
+                else -> com.cyclecare.app.domain.sync.LocalDataState.CLEAN
+            }
+            val localValid = localState != com.cyclecare.app.domain.sync.LocalDataState.UNKNOWN &&
+                localProfile?.isCompleted == true && localSettings.isOnboardingCompleted
             val remote = if (checking && (localProfile == null || !localSettings.isOnboardingCompleted))
                 kotlinx.coroutines.withTimeoutOrNull(20_000) { economyService.hasRemoteProfile() } else true
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
-            val destination = com.cyclecare.app.domain.sync.AccountStartPolicy.decide(localValid,damaged,remote)
+            val destination = com.cyclecare.app.domain.sync.AccountStartPolicy.decide(localValid,localState,remote)
             if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=false,
                 cloudProfileCheckFailed=destination==com.cyclecare.app.domain.sync.AccountStartDestination.RETRY,
                 showOnboarding=destination==com.cyclecare.app.domain.sync.AccountStartDestination.ONBOARDING,
                 settings=localSettings,onboardingProfile=localProfile)
+            // Preservation gate: never run sync while the start decision is not
+            // HOME. With conflicts, an unknown local state, or an incomplete
+            // profile, uploading could strand or overwrite owner data.
+            if (destination != com.cyclecare.app.domain.sync.AccountStartDestination.HOME) return@launch
             val result = syncUseCase.executeSync()
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             val restoredSettings = repository.getSettings()

@@ -41,6 +41,7 @@ class SupabaseAuthService(
         private const val AUTH_ACTION_PASSWORD_RESET = "PASSWORD_RESET"
         private const val AUTH_ACTION_GUEST_LINK = "GUEST_LINK"
         private const val AUTH_ACTION_GOOGLE = "GOOGLE"
+        private const val AUTH_ACTION_GOOGLE_LINK = "GOOGLE_LINK"
     }
 
     /** Build a Supabase Google OAuth URL using PKCE; existing local accounts must not be replaced. */
@@ -54,6 +55,55 @@ class SupabaseAuthService(
         return "$authApiUrl/authorize?provider=google" +
             "&redirect_to=${encodedRedirect()}" +
             "&code_challenge=$encodedChallenge&code_challenge_method=s256"
+    }
+
+    /**
+     * Resolve the right Google URL for the current device state: guests get the
+     * identity-link flow (keeps this account and its data), signed-out devices
+     * get plain Google sign-in.
+     */
+    suspend fun resolveGoogleAuthUrl(): String = withContext(Dispatchers.IO) {
+        if (authPreferences.accountMode == "ANONYMOUS" && !authPreferences.userId.isNullOrBlank()) {
+            createGoogleLinkUrl()
+        } else {
+            createGoogleSignInUrl()
+        }
+    }
+
+    /**
+     * Supabase manual identity linking: asks the server for a Google authorize
+     * URL bound to the CURRENT anonymous session, so completing the flow
+     * upgrades the guest account instead of creating a new one.
+     */
+    private fun createGoogleLinkUrl(): String {
+        check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Linking is disabled until device security is restored." }
+        val token = SupabaseSessionManager.validAccessToken(authPreferences)
+            ?: throw IllegalStateException("Your guest session needs a refresh. Reconnect and try again.")
+        val challenge = beginPkceFlow(AUTH_ACTION_GOOGLE_LINK)
+        val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
+        val request = Request.Builder()
+            .url("${authApiUrl.trimEnd('/')}/user/identities/authorize?provider=google" +
+                "&redirect_to=${encodedRedirect()}" +
+                "&code_challenge=$encodedChallenge&code_challenge_method=s256" +
+                "&skip_http_redirect=true")
+            .header("apikey", apiKey)
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+        val response = client.newBuilder().followRedirects(false).build().newCall(request).execute()
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            clearPendingAuthFlow()
+            throw IllegalStateException(AuthErrorMessages.forResponse(body, AuthOperation.ACCOUNT_LINK))
+        }
+        val url = JSONObject(body).optString("url").ifBlank {
+            response.header("Location").orEmpty()
+        }
+        if (url.isBlank()) {
+            clearPendingAuthFlow()
+            throw IllegalStateException(AuthErrorMessages.fallback(AuthOperation.ACCOUNT_LINK))
+        }
+        return url
     }
 
     suspend fun signUp(email: String, password: String): AuthResult = withContext(Dispatchers.IO) {
@@ -128,7 +178,7 @@ class SupabaseAuthService(
             }
             if (!existingToken.isNullOrBlank() && !authPreferences.userId.isNullOrBlank()) {
                 return@withContext if (authPreferences.accountMode == "ANONYMOUS") {
-                    AuthResult.Error("This device has a guest account. Use Create Account to link it, or sign out before switching accounts.")
+                    AuthResult.Error("This device has a guest account. Use Create Account or Continue with Google to keep its progress, or sign out before switching accounts.")
                 } else {
                     AuthResult.Error("You are already signed in. Sign out before switching accounts.")
                 }
@@ -412,7 +462,8 @@ class SupabaseAuthService(
         val action = authPreferences.pendingAuthAction ?:
             if (authPreferences.isPendingGuestEmailLink) AUTH_ACTION_GUEST_LINK else AUTH_ACTION_GOOGLE
         val operation = operationForAction(action)
-        val linkingGuest = action == AUTH_ACTION_GUEST_LINK && authPreferences.isPendingGuestEmailLink
+        val linkingGuest = (action == AUTH_ACTION_GUEST_LINK && authPreferences.isPendingGuestEmailLink) ||
+            action == AUTH_ACTION_GOOGLE_LINK
         val existingUserId = authPreferences.userId
         if (!existingUserId.isNullOrBlank() && !linkingGuest) {
             clearPendingAuthFlow()
@@ -437,6 +488,7 @@ class SupabaseAuthService(
                 return AuthResult.Error(AuthErrorMessages.fallback(operation))
             }
             if (linkingGuest && !existingUserId.isNullOrBlank() && existingUserId != userId) {
+                // A link callback must upgrade THIS account, never switch to another one.
                 clearPendingAuthFlow(clearPendingEmail = true)
                 return AuthResult.Error("This link belongs to a different account. Request a new CycleCare link on this device.")
             }
@@ -517,6 +569,7 @@ class SupabaseAuthService(
         AUTH_ACTION_MAGIC_LINK -> AuthOperation.MAGIC_LINK
         AUTH_ACTION_PASSWORD_RESET -> AuthOperation.PASSWORD_RESET
         AUTH_ACTION_GUEST_LINK -> AuthOperation.ACCOUNT_LINK
+        AUTH_ACTION_GOOGLE_LINK -> AuthOperation.ACCOUNT_LINK
         else -> AuthOperation.GOOGLE
     }
 
@@ -525,6 +578,7 @@ class SupabaseAuthService(
         AUTH_ACTION_MAGIC_LINK -> "You're signed in to CycleCare."
         AUTH_ACTION_PASSWORD_RESET -> "Your reset link is verified. Set a new password to finish."
         AUTH_ACTION_GUEST_LINK -> "Your guest data is now linked to your verified email. Set a password or use email sign-in."
+        AUTH_ACTION_GOOGLE_LINK -> "Your Google account is linked. Your guest progress stays with this account."
         else -> "Your Google account is verified and signed in to CycleCare."
     }
 

@@ -53,6 +53,11 @@ internal object AuthErrorMessages {
         ) {
             return "Guest access is temporarily unavailable. Try again later or sign in with email."
         }
+        if (operation == AuthOperation.ACCOUNT_LINK &&
+            listOf("manual_linking_disabled", "manual linking is disabled").any(details::contains)
+        ) {
+            return "Linking with Google is not available yet. Use Create Account with your email to keep this device's progress."
+        }
         if (operation == AuthOperation.CALLBACK && details.contains("access_denied")) {
             return "Sign-in was cancelled. You can try again whenever you're ready."
         }
@@ -78,7 +83,7 @@ internal object AuthErrorMessages {
         AuthOperation.PASSWORD_RESET -> "We couldn't send password reset instructions right now. Please try again later."
         AuthOperation.GUEST -> "Guest access is temporarily unavailable. Please try again later."
         AuthOperation.CALLBACK -> "We couldn't complete sign-in from that link. Request a new link and try again."
-        AuthOperation.ACCOUNT_LINK -> "We couldn't link your email to this guest account. Please try again later."
+        AuthOperation.ACCOUNT_LINK -> "We couldn't link your account right now. Please try again later."
         AuthOperation.GOOGLE -> "Google sign-in couldn't be completed. Please try again."
         AuthOperation.SET_PASSWORD -> "Your password couldn't be updated right now. Please try again."
     }

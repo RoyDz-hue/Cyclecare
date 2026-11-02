@@ -176,12 +176,18 @@ object LayeredChatOrchestrator {
                 healthParse.energyResult != null ||
                 healthParse.moodResult != null
 
+        // An advice question that mentions symptoms ("How can I ease period
+        // cramps?") is not a personal note. Only treat recognized observations
+        // as loggable when the input reads as a personal report or explicit log
+        // request - the same gate the consent proposal uses.
+        val isPersonalNote = hasRecognizedHealth && CareConversationPolicy.isLoggingIntent(input)
+
         // Check Knowledge Base
         val articles = CareKnowledgeBase.search(input)
         val hasArticle = articles.isNotEmpty()
 
         // CASE A: Successfully recognized intent (Health, Economy, Payment, or Clinical Article)
-        if (hasRecognizedHealth || economyIntent != null || paymentIntent != null || hasArticle) {
+        if (isPersonalNote || economyIntent != null || paymentIntent != null || hasArticle) {
             val article = articles.firstOrNull()
 
             val summaryText = buildString {
@@ -201,19 +207,19 @@ object LayeredChatOrchestrator {
             return LayeredChatResult(
                 mainResponse = CareResponse(
                     summary = summaryText,
-                    whatText = if (hasRecognizedHealth) "Possible observations found: ${healthParse.items.joinToString(", ") { it.label }}. Review them before choosing whether to save." else article?.whatText.orEmpty(),
+                    whatText = if (isPersonalNote) "Possible observations found: ${healthParse.items.joinToString(", ") { it.label }}. Review them before choosing whether to save." else article?.whatText.orEmpty(),
                     understandText = article?.understandText.orEmpty(),
                     careText = article?.careText.orEmpty(),
                     watchText = article?.watchText.orEmpty(),
                     escalateText = article?.escalateText.orEmpty(),
                     safetyAlert = if (safetyEval.level != com.cyclecare.app.data.model.SafetyLevel.LOW) safetyEval else null,
-                    source = if (hasRecognizedHealth) "Gentle Health Logger" else "Curated Clinical Knowledge"
+                    source = if (isPersonalNote) "Gentle Health Logger" else "Curated Clinical Knowledge"
                 ),
-                detectedSymptoms = healthParse.symptomsResult,
-                detectedFlow = healthParse.flowLevelResult,
-                detectedEnergy = healthParse.energyResult,
-                detectedMood = healthParse.moodResult,
-                painIntensity = healthParse.painIntensityResult,
+                detectedSymptoms = if (isPersonalNote) healthParse.symptomsResult else emptyList(),
+                detectedFlow = if (isPersonalNote) healthParse.flowLevelResult else null,
+                detectedEnergy = if (isPersonalNote) healthParse.energyResult else null,
+                detectedMood = if (isPersonalNote) healthParse.moodResult else null,
+                painIntensity = if (isPersonalNote) healthParse.painIntensityResult else 0,
                 gentleProgressCoinsAwarded = 0L,
                 economyIntent = economyIntent,
                 paymentIntent = paymentIntent,

@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -55,10 +56,15 @@ fun AppLockScreen(
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
 
+    // Surface provides LocalContentColor so text without an explicit color
+    // stays readable on the themed background in dark and light mode.
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
             .imePadding()
             .padding(32.dp)
@@ -171,5 +177,6 @@ fun AppLockScreen(
                 )
             }
         }
+    }
     }
 }

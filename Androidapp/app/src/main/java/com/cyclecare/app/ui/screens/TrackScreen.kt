@@ -163,7 +163,8 @@ fun TrackScreenContent(
         (if (selectedMucus.isNotBlank()) 1 else 0) +
         (if (selectedOvulationTest != "NONE") 1 else 0)
 
-    Column(modifier = modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+    // IME handled by window resize (adjustResize); padding here double-consumed the inset.
+    Column(modifier = modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         LazyColumn(
             modifier = Modifier.weight(1f).testTag("track_screen_content"),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 92.dp),

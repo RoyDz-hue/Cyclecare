@@ -266,12 +266,15 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
             // Daily log overlay - opened from Home, or from a date action on Cycle/Calendar
             uiState.isDailyLogOpen -> {
                 BackHandler { viewModel.closeDailyLog() }
+                // Surface sets the theme background AND adaptive content color, so
+                // overlay text/icons stay readable in dark and light mode. Insets are
+                // owned by the hosted screen (single consumer per inset).
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                        .statusBarsPadding()
-                        .navigationBarsPadding()
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -290,17 +293,21 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         currentLog = logsMap[uiState.selectedDate.toString()]
                     )
                 }
+                }
             }
 
             // Ask CycleCare overlay - opened from the floating bubble
             uiState.isAskOpen -> {
                 BackHandler { viewModel.closeAsk() }
+                // Surface sets the theme background AND adaptive content color, so
+                // overlay text/icons stay readable in dark and light mode. Insets are
+                // owned by the hosted screen (single consumer per inset).
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                        .statusBarsPadding()
-                        .navigationBarsPadding()
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -321,6 +328,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         viewModel = viewModel,
                         uiState = uiState
                     )
+                }
                 }
             }
 

@@ -16,6 +16,16 @@ data class CareArticle(
 
 object CareKnowledgeBase {
 
+    // Words that carry no topic signal when matching a free-form question.
+    private val searchStopwords = setOf(
+        "the", "and", "for", "with", "you", "your", "yours", "are", "was", "were",
+        "have", "has", "had", "how", "can", "could", "should", "would", "what",
+        "why", "when", "which", "where", "who", "does", "doing", "done", "will",
+        "about", "tell", "explain", "please", "this", "that", "these", "those",
+        "from", "into", "onto", "out", "off", "not", "any", "some", "get", "got",
+        "make", "feel", "feeling", "really", "very", "much", "many", "way", "ways"
+    )
+
     val articles = listOf(
         CareArticle(
             id = "tired_before_period",
@@ -266,11 +276,29 @@ object CareKnowledgeBase {
         val baseList = if (q.isBlank()) {
             articles
         } else {
-            articles.filter {
-                it.question.lowercase().contains(q) ||
-                it.topic.lowercase().contains(q) ||
-                it.whatText.lowercase().contains(q) ||
-                it.careText.lowercase().contains(q)
+            // Free-form questions rarely appear verbatim in an article, so match
+            // on meaningful word overlap instead of the whole input string.
+            val tokens = Regex("[a-z]+").findAll(q).map { it.value }
+                .filter { it.length > 2 && it !in searchStopwords }.toList()
+            if (tokens.isEmpty()) {
+                articles.filter {
+                    it.question.lowercase().contains(q) ||
+                    it.topic.lowercase().contains(q) ||
+                    it.whatText.lowercase().contains(q) ||
+                    it.careText.lowercase().contains(q)
+                }
+            } else {
+                val minScore = if (tokens.size >= 2) 2 else 1
+                articles.map { article ->
+                    val haystack = listOf(
+                        article.question, article.topic, article.whatText,
+                        article.understandText, article.careText, article.watchText,
+                        article.escalateText
+                    ).joinToString(" ").lowercase()
+                    article to tokens.count { haystack.contains(it) }
+                }.filter { it.second >= minScore }
+                    .sortedByDescending { it.second }
+                    .map { it.first }
             }
         }
 

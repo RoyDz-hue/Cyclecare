@@ -49,6 +49,58 @@ class LayeredChatOrchestratorTest {
     }
 
     @Test
+    fun adviceQuestionReceivesArticleAnswerNotLogProposal() = runBlocking {
+        val result = LayeredChatOrchestrator.processRawChat(
+            rawInput = "How can I ease period cramps?",
+            todayLog = null,
+            settings = settings,
+            economyProfile = EconomyProfile()
+        )
+        assertEquals("Curated Clinical Knowledge", result.mainResponse.source)
+        assertTrue(result.detectedSymptoms.isEmpty())
+        assertTrue(result.mainResponse.careText.isNotBlank())
+        assertFalse(result.mainResponse.summary.contains("possible observations", ignoreCase = true))
+    }
+
+    @Test
+    fun genericAdviceQuestionDoesNotAssertPersonalSymptoms() = runBlocking {
+        val result = LayeredChatOrchestrator.processRawChat(
+            rawInput = "Are cramps normal before a period?",
+            todayLog = null,
+            settings = settings,
+            economyProfile = EconomyProfile()
+        )
+        assertFalse("Gentle Health Logger" == result.mainResponse.source)
+        assertTrue(result.detectedSymptoms.isEmpty())
+        assertNull(result.detectedFlow)
+        assertFalse(result.mainResponse.whatText.contains("Possible observations", ignoreCase = true))
+    }
+
+    @Test
+    fun explicitLogRequestStillProposesObservations() = runBlocking {
+        val result = LayeredChatOrchestrator.processRawChat(
+            rawInput = "Please log cramps today",
+            todayLog = null,
+            settings = settings,
+            economyProfile = EconomyProfile()
+        )
+        assertEquals("Gentle Health Logger", result.mainResponse.source)
+        assertTrue(result.detectedSymptoms.isNotEmpty())
+    }
+
+    @Test
+    fun personalReportStillRoutesToGentleHealthLogger() = runBlocking {
+        val result = LayeredChatOrchestrator.processRawChat(
+            rawInput = "I have bad cramps today",
+            todayLog = null,
+            settings = settings,
+            economyProfile = EconomyProfile()
+        )
+        assertEquals("Gentle Health Logger", result.mainResponse.source)
+        assertTrue(result.detectedSymptoms.isNotEmpty())
+    }
+
+    @Test
     fun redFlagResponseUsesPlainSeekHelpHeaderAndKeepsEscalation() = runBlocking {
         val result = LayeredChatOrchestrator.processRawChat(
             rawInput = "I fainted and I am soaking through pads",

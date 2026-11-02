@@ -120,10 +120,15 @@ fun OnboardingScreen(
         if (uiState.step in 4..6) viewModel.loadDynamicQuestionsForCurrentStep()
     }
 
+    // Surface provides LocalContentColor so text without an explicit color
+    // stays readable on the themed background in dark and light mode.
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
             .padding(horizontal = 24.dp, vertical = 16.dp)
             .testTag("onboarding_screen"),
@@ -437,6 +442,7 @@ fun OnboardingScreen(
             ),
             onDismiss = { viewModel.setShowPrivacyDialog(false) }
         )
+    }
     }
 }
 

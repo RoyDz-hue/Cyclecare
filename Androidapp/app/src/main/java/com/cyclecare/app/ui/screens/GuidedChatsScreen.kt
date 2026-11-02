@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -89,7 +90,11 @@ fun GuidedChatsScreen(
     val selectedChannel = channels.find { it.id == selectedChannelId }
 
 
+    // No window insets here: the app shell owns status/nav/IME when embedded and
+    // the standalone path applies its own padding; consuming them again squeezed
+    // the room between the header and a dead band.
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             // Embedded inside the Space tab the tab row names the section, so the
             // directory level needs no chrome; a compact header remains inside a channel.
@@ -98,7 +103,7 @@ fun GuidedChatsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (embedded) Modifier else Modifier.statusBarsPadding())
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = {
@@ -110,7 +115,8 @@ fun GuidedChatsScreen(
                 Column {
                     Text(
                         text = selectedChannel?.title ?: "Community Circles",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 2
                     )
                     Text(
                         text = if (selectedChannel != null) {
@@ -130,8 +136,7 @@ fun GuidedChatsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .then(if (embedded) Modifier else Modifier.navigationBarsPadding())
-                .imePadding()
+                .then(if (embedded) Modifier else Modifier.navigationBarsPadding().imePadding())
         ) {
             if (selectedChannel == null) {
                 // Topic Directory
@@ -282,7 +287,16 @@ fun GuidedChatsScreen(
                                 text = if (selectedChannel.serverTopicId != null) {
                                     "No reflections here yet. Yours could be the first."
                                 } else {
-                                    "You are offline. Reflections you write stay on this device until the live circle is reachable."
+                                    // The cause is not always connectivity - say what
+                                    // actually happened instead of blaming the network.
+                                    when (repository.lastLiveStatus) {
+                                        com.cyclecare.app.data.economy.CommunityGuidesService.CircleServiceStatus.SIGN_IN_UNCONFIRMED ->
+                                            "The live circle needs a confirmed sign-in, and yours could not be confirmed. Sign in again to continue. Reflections you write stay on this device."
+                                        com.cyclecare.app.data.economy.CommunityGuidesService.CircleServiceStatus.NETWORK ->
+                                            "The live circle could not be reached. Check your connection and try again. Reflections you write stay on this device."
+                                        else ->
+                                            "The live circle is not available right now. Reflections you write stay on this device; please try again in a little while."
+                                    }
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

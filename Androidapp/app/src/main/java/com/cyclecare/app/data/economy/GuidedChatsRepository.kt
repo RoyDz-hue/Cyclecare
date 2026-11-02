@@ -55,8 +55,16 @@ class GuidedChatsRepository {
         get() = liveChannels ?: fallbackChannels
 
     /** Refreshes the circle directory from the server. Returns true when live topics are in use. */
+    /** Why the last live-circle refresh did not yield topics, for honest UI copy. */
+    var lastLiveStatus: CommunityGuidesService.CircleServiceStatus =
+        CommunityGuidesService.CircleServiceStatus.UNAVAILABLE
+        private set
+
     suspend fun refreshChannels(service: CommunityGuidesService): Boolean {
-        val topics = try { service.fetchTopics() } catch (_: Exception) { emptyList() }
+        val fetch = try { service.fetchTopicsWithStatus() }
+            catch (_: Exception) { CommunityGuidesService.TopicsFetch(emptyList(), CommunityGuidesService.CircleServiceStatus.UNAVAILABLE) }
+        lastLiveStatus = fetch.status
+        val topics = fetch.topics
         if (topics.isEmpty()) return false
         liveChannels = topics.map { topic ->
             GuidedChatChannel(

@@ -66,15 +66,49 @@ class CommunityGuidesService(
         }
     }
 
+    /** Why a live-circle request did not return usable topics. */
+    enum class CircleServiceStatus { OK, SIGN_IN_UNCONFIRMED, NETWORK, UNAVAILABLE, EMPTY }
+
+    data class TopicsFetch(val topics: List<ServerTopic>, val status: CircleServiceStatus)
+
     /** Active server-backed circle topics, oldest first. Empty on any failure. */
-    suspend fun fetchTopics(): List<ServerTopic> = withContext(Dispatchers.IO) {
-        val response = authedRequest {
-            url("${SupabaseConfig.restUrl}/chat_topics?select=id,title,description&is_active=eq.true&order=created_at.asc&limit=20")
-            get()
-        } ?: return@withContext emptyList()
+    suspend fun fetchTopics(): List<ServerTopic> = fetchTopicsWithStatus().topics
+
+    /**
+     * Active topics with the real failure reason, so the UI never has to guess
+     * "offline" when the actual cause is an expired session or a server error.
+     */
+    suspend fun fetchTopicsWithStatus(): TopicsFetch = withContext(Dispatchers.IO) {
+        val token = when (val resolution = SupabaseSessionManager.resolveAccessToken(authPreferences)) {
+            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.Valid -> resolution.token
+            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.Missing,
+            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.ReauthenticationRequired ->
+                return@withContext TopicsFetch(emptyList(), CircleServiceStatus.SIGN_IN_UNCONFIRMED)
+            is com.cyclecare.app.data.supabase.SupabaseSessionManager.AccessTokenResolution.TemporarilyUnavailable ->
+                return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
+        }
+        val request = Request.Builder()
+            .header("apikey", SupabaseConfig.anonKey)
+            .header("Authorization", "Bearer ${token.trim()}")
+            .header("Accept", "application/json")
+            .url("${SupabaseConfig.restUrl}/chat_topics?select=id,title,description&is_active=eq.true&order=created_at.asc&limit=20")
+            .get()
+            .build()
+        val response = try {
+            client.newCall(request).execute()
+        } catch (_: java.io.IOException) {
+            return@withContext TopicsFetch(emptyList(), CircleServiceStatus.NETWORK)
+        } catch (_: Exception) {
+            return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
+        }
         response.use {
-            if (!it.isSuccessful) return@withContext emptyList()
-            val raw = boundedBody(it) ?: return@withContext emptyList()
+            when {
+                it.code == 401 || it.code == 403 ->
+                    return@withContext TopicsFetch(emptyList(), CircleServiceStatus.SIGN_IN_UNCONFIRMED)
+                !it.isSuccessful ->
+                    return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
+            }
+            val raw = boundedBody(it) ?: return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
             try {
                 val array = JSONArray(raw)
                 val topics = mutableListOf<ServerTopic>()
@@ -85,9 +119,9 @@ class CommunityGuidesService(
                     if (id.isEmpty() || title.isEmpty()) continue
                     topics.add(ServerTopic(id = id, title = title, description = row.optString("description").trim()))
                 }
-                topics
+                TopicsFetch(topics, if (topics.isEmpty()) CircleServiceStatus.EMPTY else CircleServiceStatus.OK)
             } catch (_: Exception) {
-                emptyList()
+                TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
             }
         }
     }

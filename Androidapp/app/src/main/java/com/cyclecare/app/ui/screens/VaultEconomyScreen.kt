@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -112,7 +113,11 @@ fun VaultEconomyScreen(
     }
     var itemForInsufficientCoins by remember { mutableStateOf<EconomyItem?>(null) }
 
+    // No window insets here: the app shell owns them when embedded and the
+    // standalone path applies its own padding; consuming them again produced
+    // dead bands above the bottom navigation.
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (!embedded) {
             Row(

@@ -183,10 +183,15 @@ fun SettingsScreenContent(
         }
     }
 
+    // Surface provides LocalContentColor so text without an explicit color
+    // stays readable on the themed background in dark and light mode.
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .navigationBarsPadding()
     ) {
         TopAppBar(
@@ -765,16 +770,16 @@ fun SettingsScreenContent(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Text(text = "Expert answers", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(text = "Assistant", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Allow expert answers",
+                                    text = "Allow Assistant answers",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = "Off by default. On the Ask tab, review who answers and what is shared, then allow; revoke anytime here.",
+                                    text = "Off by default. You can turn it on or off anytime.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -785,12 +790,6 @@ fun SettingsScreenContent(
                                 modifier = Modifier.testTag("settings_ai_processing_switch"),
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary)
                             )
-                        }
-                        if (!uiState.isAiSharingAllowed) {
-                            uiState.aiSharingDirectionMessage?.let {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
                         }
                     }
                 }
@@ -863,7 +862,7 @@ fun SettingsScreenContent(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Private by design. Expert answers are optional: when you allow them, your question, recent cycle context and chat history leave this device to produce the answer. Off by default - revoke anytime.",
+                            text = "Private by design. Assistant answers are optional: when you allow them, your question, recent cycle context and chat history leave this device to produce the answer. Off by default - revoke anytime.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -932,6 +931,7 @@ fun SettingsScreenContent(
             },
             dismissButton = { TextButton(onClick = { selectedConflict = null; selectedResolution = null }, enabled = !uiState.isResolvingSyncConflict) { Text("Cancel") } }
         )
+    }
     }
 }
 

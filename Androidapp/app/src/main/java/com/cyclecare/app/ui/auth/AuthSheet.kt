@@ -1,5 +1,7 @@
 package com.cyclecare.app.ui.auth
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -77,6 +80,7 @@ fun AuthSheet(
 
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -358,6 +362,41 @@ fun AuthSheet(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+        // Continue with Google: links the current guest account when one exists,
+        // otherwise starts a fresh Google sign-in.
+        OutlinedButton(
+            onClick = {
+                errorMessage = null
+                coroutineScope.launch {
+                    try {
+                        val url = authService.resolveGoogleAuthUrl()
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (e: Exception) {
+                        errorMessage = e.message ?: "Google sign-in is unavailable right now. Try again later."
+                    }
+                }
+            },
+            enabled = !isLoading,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("google_auth_button"),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Email,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Continue with Google",
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         // Continue Anonymously Button
         OutlinedButton(
             onClick = {
@@ -410,6 +449,8 @@ fun AuthSheet(
     if (showForgotPasswordDialog) {
         var resetEmail by remember { mutableStateOf(email) }
         var resetStatus by remember { mutableStateOf<String?>(null) }
+        var resetIsError by remember { mutableStateOf(false) }
+        var resetSent by remember { mutableStateOf(false) }
         var isResetting by remember { mutableStateOf(false) }
 
         androidx.compose.material3.AlertDialog(
@@ -443,16 +484,23 @@ fun AuthSheet(
                         Text(
                             text = resetStatus ?: "",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (resetIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
             },
             confirmButton = {
+                if (resetSent) {
+                    // One-shot: the email is sent, the only forward step is Done.
+                    TextButton(onClick = { showForgotPasswordDialog = false }) {
+                        Text("Done")
+                    }
+                } else {
                 Button(
                     onClick = {
                         if (resetEmail.isBlank() || !resetEmail.contains("@")) {
                             resetStatus = "Please enter a valid email."
+                            resetIsError = true
                             return@Button
                         }
                         isResetting = true
@@ -462,12 +510,17 @@ fun AuthSheet(
                             when (res) {
                                 is AuthResult.Success -> {
                                     resetStatus = res.message
+                                    resetIsError = false
+                                    resetSent = true
                                 }
                                 is AuthResult.VerificationRequired -> {
                                     resetStatus = res.message
+                                    resetIsError = false
+                                    resetSent = true
                                 }
                                 is AuthResult.Error -> {
                                     resetStatus = res.errorMessage
+                                    resetIsError = true
                                 }
                             }
                         }
@@ -481,10 +534,13 @@ fun AuthSheet(
                         Text("Send Reset Link")
                     }
                 }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showForgotPasswordDialog = false }) {
-                    Text("Cancel")
+                if (!resetSent) {
+                    TextButton(onClick = { showForgotPasswordDialog = false }) {
+                        Text("Cancel")
+                    }
                 }
             }
         )

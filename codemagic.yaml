@@ -27,7 +27,7 @@ workflows:
               }
           }
           GRADLE
-      - name: Targeted unit tests (44 methods, 6 classes)
+      - name: Targeted unit tests
         script: |
           set -e
           cd Androidapp
@@ -39,7 +39,9 @@ workflows:
             --tests "com.cyclecare.app.domain.ai.LayeredChatOrchestratorTest" \
             --tests "com.cyclecare.app.ui.CoinAmountInputTest" \
             --tests "com.cyclecare.app.ui.SettingsPinTest" \
-            --tests "com.cyclecare.app.ui.GuidedChatsRoomOpenTest"
+            --tests "com.cyclecare.app.ui.GuidedChatsRoomOpenTest" \
+            --tests "com.cyclecare.app.AccountStartPolicyTest" \
+            --tests "com.cyclecare.app.ReturningUserReopenTest"
       - name: Build unsigned slim APK (arm64, minified)
         script: |
           set -e
@@ -107,3 +109,48 @@ workflows:
     artifacts:
       - Androidapp/app/src/test/snapshots/images/*.png
       - Androidapp/app/build/outputs/captures/*.png
+  cyclecare-device-verify:
+    name: CycleCare emulator inset verification (real window insets)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Build debug app and instrumented test APKs
+        script: |
+          set -e
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleDebugAndroidTest
+      - name: Create and boot Android emulator (1080x2400, 420dpi, API 36)
+        script: |
+          set -e
+          AVDMGR="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          EMU="$ANDROID_HOME/emulator/emulator"
+          echo "system-images;android-36;google_apis;arm64-v8a"
+          "$SDKMGR" --install "system-images;android-36;google_apis;arm64-v8a" || true
+          "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_6 --force \
+            || "$AVDMGR" create avd -n ccverify -k "system-images;android-36;google_apis;arm64-v8a" -d pixel --force
+          "$EMU" -avd ccverify -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save &
+          adb wait-for-device
+          adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+          adb shell wm size && adb shell wm density
+      - name: Run production inset screenshot tests
+        script: |
+          set -e
+          adb install -r Androidapp/app/build/outputs/apk/debug/app-debug.apk
+          adb install -r Androidapp/app/build/outputs/androidTest/apk/debug/app-debug-androidTest.apk
+          adb shell am instrument -w \
+            -e class com.cyclecare.app.DeviceInsetsScreenshotTest \
+            com.cyclecare.app.debug.test/androidx.test.runner.AndroidJUnitRunner
+      - name: Collect screenshots
+        script: |
+          mkdir -p device-verify
+          adb pull /sdcard/Android/data/com.cyclecare.app.debug/files/. device-verify/ || true
+          ls -la device-verify/ || true
+          adb shell emu kill || true
+    artifacts:
+      - device-verify/*.png
