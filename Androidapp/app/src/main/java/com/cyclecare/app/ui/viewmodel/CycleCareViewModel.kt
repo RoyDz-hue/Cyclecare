@@ -331,13 +331,20 @@ class CycleCareViewModel(
         viewModelScope.launch {
             val settings = repository.getSettings()
             val profile = repository.getOnboardingProfile()
-            val hasCompletedInitialAuth = authPreferences.hasCompletedInitialAuth
-            val needsCloudProfileCheck = hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode &&
-                (profile == null || !settings.isOnboardingCompleted)
+            // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
+            // when enabled, the Rust startup gate computes these flags with a
+            // Kotlin fallback; when disabled, gate stays null and the original
+            // expressions below run unchanged.
+            val gate = if (com.cyclecare.app.rust.RustLifecycleConfig.STARTUP_GATE_ENABLED)
+                com.cyclecare.app.rust.RustLifecycleAdapters.startupGate(
+                    authPreferences, profile != null, settings.isOnboardingCompleted) else null
+            val hasCompletedInitialAuth = gate?.hasCompletedInitialAuth ?: authPreferences.hasCompletedInitialAuth
+            val needsCloudProfileCheck = gate?.needsCloudProfileCheck ?: (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode &&
+                (profile == null || !settings.isOnboardingCompleted))
             val isPinSet = authPreferences.isPinEnabled && !authPreferences.pin.isNullOrBlank()
-            val isLocked = hasCompletedInitialAuth && (isPinSet || authPreferences.isFingerprintEnabled)
-            val showOnboarding = hasCompletedInitialAuth && !needsCloudProfileCheck &&
-                (profile == null || !settings.isOnboardingCompleted)
+            val isLocked = gate?.isLocked ?: (hasCompletedInitialAuth && (isPinSet || authPreferences.isFingerprintEnabled))
+            val showOnboarding = gate?.showOnboarding ?: (hasCompletedInitialAuth && !needsCloudProfileCheck &&
+                (profile == null || !settings.isOnboardingCompleted))
 
             val isCachedBanned = authPreferences.accountStatus.equals("BANNED", ignoreCase = true)
             val isCachedSuspended = authPreferences.accountStatus.equals("SUSPENDED", ignoreCase = true)
@@ -388,7 +395,8 @@ class CycleCareViewModel(
             if (hasCompletedInitialAuth) autoSyncSilently()
             val initOwner = authPreferences.effectiveUserId
             val initSession = authPreferences.sessionGeneration
-            val verifiedEconomy = if (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
+            val fetchWallet = gate?.fetchWallet ?: (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
+            val verifiedEconomy = if (fetchWallet)
                 economyService.fetchVerifiedProfile(initOwner) else null
             if (authPreferences.effectiveUserId == initOwner && authPreferences.sessionGeneration == initSession &&
                 verifiedEconomy is com.cyclecare.app.data.economy.EconomyResult.Success) {
