@@ -101,6 +101,7 @@ workflows:
             --tests "com.cyclecare.app.ui.HomeFrameScreenshotTest" \
             --tests "com.cyclecare.app.ui.CompactShellScreenshotTest" \
             --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
+            --tests "com.cyclecare.app.ui.DarkModeContrastScreenshotTest" \
             --tests "com.cyclecare.app.ui.CareConsentScreenshotTest" 2>&1 | tee ../build-logs/goldens-record.log
       - name: Capture expanded consent details (interactive, Robolectric)
         script: |
