@@ -393,3 +393,106 @@ fn completion_journal_persists_atomically_through_reopen() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn completion_journal_rolls_back_when_a_late_write_fails() {
+    use cyclecare_core::onboarding_complete::complete_onboarding;
+    use cyclecare_core::onboarding_vm::OnboardingState;
+    let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let dir = std::env::temp_dir().join(format!("cc-journal-rb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut s = OnboardingState::new();
+    s.toggle_goal("Track my periods");
+    s.set_exact_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(), t);
+    let outcome = complete_onboarding(&s.completion_params(t), "PRIVATE", 1_762_000_000_000, false, false);
+
+    // Pre-commit baseline state (an earlier owner write), then a trigger
+    // that aborts the LAST write of the completion transaction.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        db.enqueue_outbox(&cyclecare_core::sync_codec::HealthSyncOutboxEntry {
+            owner_id: "u1".into(),
+            operation_id: "pre-existing".into(),
+            record_id: "profile".into(),
+            kind: "UPSERT".into(),
+            base_revision: 0,
+            revision: 1,
+            payload_json: Some("{}".into()),
+            payload_hash: "h".into(),
+            consent_generation: 1,
+            attempts: 0,
+            next_attempt_at: 0,
+            last_error: None,
+            server_receipt: None,
+            server_revision: None,
+        })
+        .unwrap();
+        db.conn_ref()
+            .execute_batch(
+                "CREATE TRIGGER fail_late_outbox BEFORE INSERT ON health_sync_outbox
+                 WHEN NEW.operationId = 'op-fail'
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .unwrap();
+        // The failing write is the settings enqueue - the LAST statement of
+        // the transaction, after profile, settings, and both revisions.
+        let result = db.complete_onboarding_transaction(
+            &outcome, Some("u1"), 3, 1_762_000_000_500, "op-p1", "op-fail",
+        );
+        assert!(result.is_err(), "injected failure must surface");
+        db.conn_ref().execute_batch("DROP TRIGGER fail_late_outbox").unwrap();
+    }
+
+    // Reopen: nothing from the aborted transaction persisted; the pre-existing
+    // row is intact.
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        assert!(db.get_profile().unwrap().is_none(), "profile insert must roll back");
+        assert!(db.get_settings().unwrap().is_none(), "settings save must roll back");
+        assert!(db.get_revision("u1", "profile").unwrap().is_none(), "profile revision must roll back");
+        assert!(db.get_revision("u1", "settings").unwrap().is_none(), "settings revision must roll back");
+        let outbox = db.list_outbox("u1").unwrap();
+        assert_eq!(outbox.len(), 1, "only the pre-existing row remains");
+        assert_eq!(outbox[0].operation_id, "pre-existing");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn completion_journal_rows_are_owner_scoped() {
+    use cyclecare_core::onboarding_complete::complete_onboarding;
+    use cyclecare_core::onboarding_vm::OnboardingState;
+    let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let dir = std::env::temp_dir().join(format!("cc-journal-own-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut s = OnboardingState::new();
+    s.set_exact_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(), t);
+    let outcome = complete_onboarding(&s.completion_params(t), "PRIVATE", 1_762_000_000_000, false, false);
+
+    {
+        let db = StorageDb::open_file(&dir.join("owner.db")).unwrap();
+        db.complete_onboarding_transaction(&outcome, Some("owner-a"), 1, 1000, "a-p", "a-s").unwrap();
+        let a_profile_rev = db.get_revision("owner-a", "profile").unwrap().unwrap();
+        let a_outbox = db.list_outbox("owner-a").unwrap();
+        // A second owner's completion in the same file must not touch
+        // owner-a's journal rows. (Production additionally isolates
+        // profile/settings by opening a separate DB file per owner; within
+        // one file those single-row tables are shared, as in Room.)
+        db.complete_onboarding_transaction(&outcome, Some("owner-b"), 1, 2000, "b-p", "b-s").unwrap();
+        assert_eq!(db.get_revision("owner-a", "profile").unwrap().unwrap(), a_profile_rev);
+        assert_eq!(db.list_outbox("owner-a").unwrap(), a_outbox);
+        let b_rev = db.get_revision("owner-b", "profile").unwrap().unwrap();
+        assert_eq!(b_rev.revision, 1, "owner-b starts its own revision chain");
+        assert_eq!(b_rev.owner_id, "owner-b");
+        assert_eq!(db.list_outbox("owner-b").unwrap().len(), 2);
+        // Blank identity maps to legacy_guest without touching named owners.
+        db.complete_onboarding_transaction(&outcome, Some(""), 1, 3000, "g-p", "g-s").unwrap();
+        assert!(db.get_revision("legacy_guest", "profile").unwrap().is_some());
+        assert_eq!(db.get_revision("owner-a", "profile").unwrap().unwrap(), a_profile_rev);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

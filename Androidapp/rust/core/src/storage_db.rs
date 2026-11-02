@@ -39,6 +39,11 @@ fn int_to_bool(v: i32) -> bool {
 
 impl StorageDb {
     /// Open an in-memory database with the mirrored schema applied.
+    /// Raw connection access for failure-injection in tests.
+    pub fn conn_ref(&self) -> &Connection {
+        &self.conn
+    }
+
     pub fn open_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(DDL)?;
