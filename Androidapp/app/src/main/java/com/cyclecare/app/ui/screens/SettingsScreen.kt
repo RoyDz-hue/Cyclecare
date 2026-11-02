@@ -265,7 +265,7 @@ fun SettingsScreenContent(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Text(
-                                text = "Create or sign in with email to link this guest profile. Google linking is not available for guests yet; using Google would open a different account, and these entries would not be merged.",
+                                text = "Create or sign in to keep this guest profile. Email and Google both stay with this profile, so your entries carry over.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
