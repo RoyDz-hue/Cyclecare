@@ -8,9 +8,15 @@ enum class AccountStartDestination { HOME, ONBOARDING, RETRY }
 enum class LocalDataState { CLEAN, CONFLICTED, UNKNOWN }
 
 object AccountStartPolicy {
+    /** Unresolved sync conflicts never route to onboarding: rerunning setup
+     * would overwrite personal answers and the conflict review lives in
+     * Settings, unreachable while onboarding owns the shell. With valid local
+     * data the user goes HOME (sync stays gated until the review is resolved);
+     * without it the safe destination is a non-destructive RETRY. */
     fun decide(localValid: Boolean, localState: LocalDataState, remoteProfile: Boolean?): AccountStartDestination = when {
-        localState == LocalDataState.CONFLICTED -> AccountStartDestination.ONBOARDING
         localState == LocalDataState.UNKNOWN -> AccountStartDestination.RETRY
+        localState == LocalDataState.CONFLICTED && localValid -> AccountStartDestination.HOME
+        localState == LocalDataState.CONFLICTED -> AccountStartDestination.RETRY
         localValid -> AccountStartDestination.HOME
         remoteProfile == true -> AccountStartDestination.HOME
         remoteProfile == false -> AccountStartDestination.ONBOARDING
