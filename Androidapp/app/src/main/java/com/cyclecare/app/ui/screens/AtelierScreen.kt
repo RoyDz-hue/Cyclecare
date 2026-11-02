@@ -74,6 +74,8 @@ import com.cyclecare.app.ui.components.InteractiveArtifact3D
 @Composable
 fun AtelierScreen(
     profile: EconomyProfile,
+    walletStatus: com.cyclecare.app.ui.viewmodel.WalletStatus = com.cyclecare.app.ui.viewmodel.WalletStatus.READY,
+    onRetryWallet: (() -> Unit)? = null,
     onClaimCoins: () -> Unit,
     onTransferCoins: (recipientEmail: String, amount: java.math.BigDecimal) -> Unit,
     onUnlockItem: (EconomyItem) -> Unit,
@@ -88,6 +90,8 @@ fun AtelierScreen(
 ) {
     VaultEconomyScreen(
         profile = profile,
+        walletStatus = walletStatus,
+        onRetryWallet = onRetryWallet,
         onMineCoins = onClaimCoins,
         onTransferCoins = onTransferCoins,
         onUnlockItem = onUnlockItem,

@@ -337,6 +337,8 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                 BackHandler { viewModel.setVaultOpen(false) }
                 VaultEconomyScreen(
                     profile = uiState.economyProfile,
+                    walletStatus = uiState.walletStatus,
+                    onRetryWallet = { viewModel.refreshWalletNow(force = true) },
                     onMineCoins = { viewModel.mineCoinsManual() },
                     onTransferCoins = { recipient, amount -> viewModel.transferCoins(recipient, amount) },
                     onUnlockItem = { item -> viewModel.unlockArtifact(item) },
@@ -392,6 +394,8 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                             // shared SpaceScreen showed both sections' tabs in both places.
                             AppNavTab.ATELIER -> AtelierScreen(
                                 profile = uiState.economyProfile,
+                                walletStatus = uiState.walletStatus,
+                                onRetryWallet = { viewModel.refreshWalletNow(force = true) },
                                 onClaimCoins = { viewModel.claimCoinsManual() },
                                 onTransferCoins = { recipient, amount -> viewModel.transferCoins(recipient, amount) },
                                 onUnlockItem = { item -> viewModel.unlockArtifact(item) },

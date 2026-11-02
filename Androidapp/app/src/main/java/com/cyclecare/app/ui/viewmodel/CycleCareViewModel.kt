@@ -61,6 +61,14 @@ data class CareChatTurn(
     val timestampMs: Long = System.currentTimeMillis()
 )
 
+/** Wallet display state, always bound to the current identity: NO_SESSION
+ * (no usable credentials for a cloud wallet), LOADING, READY (fresh),
+ * STALE (last-known value for THIS owner, refresh failed), UNAVAILABLE
+ * (no same-owner value to show). Never render a default zero as a real
+ * balance. Anonymous Supabase sessions with valid credentials fetch like any
+ * signed-in wallet; only truly credential-less modes map to NO_SESSION. */
+enum class WalletStatus { NO_SESSION, LOADING, READY, STALE, UNAVAILABLE }
+
 data class CycleUiState(
     val currentDate: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
@@ -131,6 +139,8 @@ data class CycleUiState(
     val showAuthSheet: Boolean = false,
     val showQuickUnlockDialog: Boolean = false,
     val economyProfile: com.cyclecare.app.data.economy.EconomyProfile = com.cyclecare.app.data.economy.EconomyProfile(),
+    val walletStatus: WalletStatus = WalletStatus.NO_SESSION,
+    val syncGatedForConflicts: Boolean = false,
     val isAdmin: Boolean = false,
     val isVaultOpen: Boolean = false,
     val economyToastMessage: String? = null,
@@ -268,6 +278,7 @@ class CycleCareViewModel(
         walletRealtime.stop()
         accountRefreshJob?.cancel()
         walletRefreshJob?.cancel()
+        lastReadyWalletOwner = null
         repository.activateCurrentOwner()
         _logsMap.value = emptyMap()
         resetPrivateConversation()
@@ -275,6 +286,7 @@ class CycleCareViewModel(
         _uiState.value = _uiState.value.copy(
             localDataOwnerKey = owner,
             economyProfile = com.cyclecare.app.data.economy.EconomyProfile(), isAdmin = false,
+            walletStatus = WalletStatus.NO_SESSION, syncGatedForConflicts = false,
             safetyEvaluation = SafetyEngine.evaluate(null), monthlyTimeline = emptyList(), doctorQuestions = emptyList(),
             baselineMetrics = BaselineMetrics(28.0, 28, 28, 28, 0, false, 0, 0), todayAttentionItem = null,
             cycleStartIsApproximate = false, daysUntilNextPeriod = 0, daysUntilOvulation = 0,
@@ -379,8 +391,10 @@ class CycleCareViewModel(
                 economyService.fetchVerifiedProfile(initOwner) else null
             if (authPreferences.effectiveUserId == initOwner && verifiedEconomy is com.cyclecare.app.data.economy.EconomyResult.Success) {
                 val econ = verifiedEconomy.data
+                lastReadyWalletOwner = initOwner
                 _uiState.value = _uiState.value.copy(
                     economyProfile = econ,
+                    walletStatus = WalletStatus.READY,
                     isBanned = econ.isBanned,
                     isSuspended = econ.isSuspended,
                     accountNoticeMessage = econ.suspensionReason
@@ -392,7 +406,7 @@ class CycleCareViewModel(
             if (!authPreferences.isLocalOnlyMode && authPreferences.userId != null && com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)) {
                 val reconciled = miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile)
                 if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
-                    _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
+                    _uiState.value = _uiState.value.copy(economyProfile = reconciled.data, walletStatus = WalletStatus.READY)
                 }
             }
 
@@ -1182,6 +1196,7 @@ class CycleCareViewModel(
                     SoundFeedbackManager.playArtifactAcquired(528f)
                     _uiState.value = _uiState.value.copy(
                         economyProfile = pollResult.profile,
+                        walletStatus = WalletStatus.READY,
                         isPaymentProcessing = false,
                         isPaymentSuccess = true,
                         paymentStatusMessage = pollResult.message
@@ -1212,6 +1227,7 @@ class CycleCareViewModel(
                     SoundFeedbackManager.playArtifactAcquired(528f)
                     _uiState.value = _uiState.value.copy(
                         economyProfile = pollResult.profile,
+                        walletStatus = WalletStatus.READY,
                         isMpesaProcessing = false,
                         isMpesaSuccess = true,
                         mpesaStatusMessage = "Payment confirmed! Coins added to your vault."
@@ -1250,6 +1266,17 @@ class CycleCareViewModel(
     fun triggerManualSync() {
         if (_uiState.value.isSyncing) return
         viewModelScope.launch {
+            // Same preservation gate as cold start: never upload with pending
+            // conflicts or an unreadable local state.
+            val conflictsPending = runCatching { repository.pendingSyncConflicts().isNotEmpty() }.getOrDefault(true)
+            if (conflictsPending) {
+                _uiState.value = _uiState.value.copy(
+                    syncGatedForConflicts = true,
+                    lastSyncSuccess = false,
+                    lastSyncMessage = "Review the pending sync choices in Settings first. Nothing was uploaded."
+                )
+                return@launch
+            }
             _uiState.value = _uiState.value.copy(isSyncing = true)
             val result = syncUseCase.executeSync()
             _uiState.value = _uiState.value.copy(
@@ -1268,6 +1295,7 @@ class CycleCareViewModel(
     private var walletRefreshJob: kotlinx.coroutines.Job? = null
     private var lastWalletRefreshAtMs: Long = 0L
     private var lastWalletRefreshOwner: String? = null
+    private var lastReadyWalletOwner: String? = null
     private var lastWalletRefreshSession: Long = 0L
     private val walletRefreshMinIntervalMs: Long = 30_000L
 
@@ -1280,13 +1308,25 @@ class CycleCareViewModel(
      * the previous account's dedupe.
      */
     fun refreshWalletNow(force: Boolean = false) {
-        if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) return
+        // Only truly credential-less modes have no wallet to show. A guest with
+        // a live anonymous Supabase session has a real cloud wallet and fetches
+        // like any signed-in account.
+        if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) {
+            _uiState.value = _uiState.value.copy(walletStatus = WalletStatus.NO_SESSION)
+            return
+        }
         if (walletRefreshJob?.isActive == true) return
         val owner = authPreferences.effectiveUserId
         val session = authPreferences.sessionGeneration
         if (!force && owner == lastWalletRefreshOwner && session == lastWalletRefreshSession &&
             System.currentTimeMillis() - lastWalletRefreshAtMs < walletRefreshMinIntervalMs
         ) return
+        // Show LOADING only when there is nothing trustworthy on screen; a
+        // ready or stale balance keeps showing while the refresh runs quietly.
+        val currentWalletStatus = _uiState.value.walletStatus
+        if (currentWalletStatus == WalletStatus.NO_SESSION || currentWalletStatus == WalletStatus.UNAVAILABLE) {
+            _uiState.value = _uiState.value.copy(walletStatus = WalletStatus.LOADING)
+        }
         walletRefreshJob = viewModelScope.launch {
             val result = economyService.fetchVerifiedProfile(owner)
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
@@ -1296,9 +1336,18 @@ class CycleCareViewModel(
                 lastWalletRefreshAtMs = System.currentTimeMillis()
                 lastWalletRefreshOwner = owner
                 lastWalletRefreshSession = session
+                lastReadyWalletOwner = owner
                 val econ = result.data
-                _uiState.value = _uiState.value.copy(economyProfile=econ, isBanned=econ.isBanned,
+                _uiState.value = _uiState.value.copy(economyProfile=econ, walletStatus = WalletStatus.READY,
+                    isBanned=econ.isBanned,
                     isSuspended=econ.isSuspended, accountNoticeMessage=econ.suspensionReason)
+            } else {
+                // A failure must never look like a real zero balance. Show the
+                // last-known value only when it belongs to THIS owner.
+                _uiState.value = _uiState.value.copy(
+                    walletStatus = if (lastReadyWalletOwner == owner) WalletStatus.STALE
+                    else WalletStatus.UNAVAILABLE
+                )
             }
         }
     }
@@ -1320,7 +1369,7 @@ class CycleCareViewModel(
         val reconciled = runCatching { miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile) }.getOrNull()
         if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return true
         if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
-            _uiState.value = _uiState.value.copy(economyProfile = reconciled.data)
+            _uiState.value = _uiState.value.copy(economyProfile = reconciled.data, walletStatus = WalletStatus.READY)
         }
         val verified = runCatching { economyService.fetchVerifiedProfile(owner) }.getOrNull()
         if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return true
@@ -1328,6 +1377,7 @@ class CycleCareViewModel(
             val econ = verified.data
             _uiState.value = _uiState.value.copy(
                 economyProfile = econ,
+                walletStatus = WalletStatus.READY,
                 isBanned = econ.isBanned,
                 isSuspended = econ.isSuspended,
                 accountNoticeMessage = econ.suspensionReason
@@ -1411,11 +1461,15 @@ class CycleCareViewModel(
             if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=false,
                 cloudProfileCheckFailed=destination==com.cyclecare.app.domain.sync.AccountStartDestination.RETRY,
                 showOnboarding=destination==com.cyclecare.app.domain.sync.AccountStartDestination.ONBOARDING,
+                syncGatedForConflicts=localState==com.cyclecare.app.domain.sync.LocalDataState.CONFLICTED,
                 settings=localSettings,onboardingProfile=localProfile)
             // Preservation gate: never run sync while the start decision is not
-            // HOME. With conflicts, an unknown local state, or an incomplete
-            // profile, uploading could strand or overwrite owner data.
+            // HOME, and never while sync conflicts are unresolved - uploading
+            // could strand or overwrite owner data. Conflicted users still
+            // reach HOME (and the Settings conflict review) when their local
+            // data is valid; only the upload is gated.
             if (destination != com.cyclecare.app.domain.sync.AccountStartDestination.HOME) return@launch
+            if (localState == com.cyclecare.app.domain.sync.LocalDataState.CONFLICTED) return@launch
             val result = syncUseCase.executeSync()
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
             val restoredSettings = repository.getSettings()
@@ -1774,6 +1828,7 @@ class CycleCareViewModel(
                 _uiState.value = _uiState.value.copy(
                     notifications = list,
                     economyProfile = econ,
+                    walletStatus = WalletStatus.READY,
                     isBanned = econ.isBanned,
                     isSuspended = econ.isSuspended,
                     accountNoticeMessage = econ.suspensionReason,

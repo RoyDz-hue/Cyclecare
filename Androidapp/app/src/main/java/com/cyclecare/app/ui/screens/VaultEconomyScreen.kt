@@ -79,6 +79,8 @@ import com.cyclecare.app.ui.components.InteractiveArtifact3D
 @Composable
 fun VaultEconomyScreen(
     profile: EconomyProfile,
+    walletStatus: com.cyclecare.app.ui.viewmodel.WalletStatus = com.cyclecare.app.ui.viewmodel.WalletStatus.READY,
+    onRetryWallet: (() -> Unit)? = null,
     onMineCoins: () -> Unit,
     onTransferCoins: (recipientEmail: String, amount: java.math.BigDecimal) -> Unit,
     onUnlockItem: (EconomyItem) -> Unit,
@@ -241,16 +243,48 @@ fun VaultEconomyScreen(
                                     )
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = CoinFormatter.format(profile.coinBalance),
+                                            text = when (walletStatus) {
+                                                com.cyclecare.app.ui.viewmodel.WalletStatus.READY,
+                                                com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
+                                                    CoinFormatter.format(profile.coinBalance)
+                                                com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING -> "…"
+                                                else -> "—"
+                                            },
                                             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        InteractiveArtifact3D(
-                                            drawableRes = R.drawable.cycle_coin,
-                                            size = 34.dp,
-                                            isInteractive = false
-                                        )
+                                        if (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.READY ||
+                                            walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            InteractiveArtifact3D(
+                                                drawableRes = R.drawable.cycle_coin,
+                                                size = 34.dp,
+                                                isInteractive = false
+                                            )
+                                        }
+                                    }
+                                    // Status note: a wallet is always identity-bound. A failed
+                                    // refresh never looks like a real zero balance.
+                                    when (walletStatus) {
+                                        com.cyclecare.app.ui.viewmodel.WalletStatus.LOADING ->
+                                            Text("Checking your coins…", style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        com.cyclecare.app.ui.viewmodel.WalletStatus.NO_SESSION ->
+                                            Text("Sign in to see your coins.", style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ->
+                                            Text("Last known balance - couldn't refresh just now.",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE ->
+                                            Text("Balance unavailable right now.", style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        else -> Unit
+                                    }
+                                    if (onRetryWallet != null &&
+                                        (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE ||
+                                            walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.UNAVAILABLE)) {
+                                        TextButton(onClick = onRetryWallet) { Text("Try again") }
                                     }
                                 }
                             }
@@ -274,6 +308,8 @@ fun VaultEconomyScreen(
                                     Spacer(modifier = Modifier.width(4.dp))
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
+                                if (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.READY ||
+                                    walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE) {
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(14.dp))
@@ -298,6 +334,7 @@ fun VaultEconomyScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                }
                                 }
                                 }
                             }
@@ -325,7 +362,9 @@ fun VaultEconomyScreen(
                                 }
                             }
 
-                            if (!compactHub || showBalanceDetails) {
+                            if ((!compactHub || showBalanceDetails) &&
+                                (walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.READY ||
+                                    walletStatus == com.cyclecare.app.ui.viewmodel.WalletStatus.STALE)) {
                             Spacer(modifier = Modifier.height(10.dp))
 
                             // Gentle Progress Info Banner
