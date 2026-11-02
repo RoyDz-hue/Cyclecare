@@ -55,6 +55,27 @@ fn blank_and_absent_identities_map_to_the_legacy_guest_database() {
 }
 
 #[test]
+fn kotlin_blank_differing_codepoints_route_to_legacy_not_namespaces() {
+    // The exact codepoints where Kotlin Char.isWhitespace and Rust
+    // char::is_whitespace DISAGREE (central kotlin_trim corpus): a Rust
+    // trim-based check would namespace these identities into per-owner
+    // files; Kotlin isBlank maps them to the legacy guest database.
+    let d = tmpdir("blankparity");
+    let mut p = OwnerScopedStores::new(&d);
+    for cp in ["\u{2007}", "\u{202F}", "\u{001C}", "\u{001D}", "\u{001E}", "\u{001F}"] {
+        p.for_identity(Some(cp)).unwrap();
+    }
+    let files: Vec<_> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(files, vec![LEGACY_DATABASE_NAME.to_string()],
+        "Kotlin-blank identities must NOT become owner files (Rust trim would have)");
+    // And the reverse edge: U+0085 (NEL) is whitespace to Rust but NOT to
+    // Kotlin - it is a real identity and MUST get its own namespace.
+    p.for_identity(Some("\u{0085}")).unwrap();
+    assert!(d.join(namespace_for("\u{0085}")).exists(), "NEL is not Kotlin-blank: namespaced");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn two_owners_are_fully_isolated_across_files() {
     let d = tmpdir("iso");
     let mut p = OwnerScopedStores::new(&d);

@@ -10,6 +10,15 @@
 //! to the deliberately unassigned legacy guest database, and instances are
 //! cached per resolved name so a switch never reuses a prior owner's handle.
 //! This is the host-store port of exactly that contract.
+//!
+//! SCOPE - file mapping only. Not yet ported: SQLCipher key management and
+//! encryption (separate open integration), Room migrations 4..9, the Room
+//! master-table identity hash / user version check, OwnerDataGate wipe
+//! handling, and instance cache close/eviction. The owner/session gate is
+//! still the caller-injected `current` closure (Kotlin parity: current()
+//! reads AuthPreferences live); the ported flows evaluate it INSIDE the
+//! transaction, but no owner-protection claim stands until the real gate is
+//! integrated at this layer.
 #![cfg(feature = "sqlite")]
 
 use std::collections::HashMap;
@@ -45,11 +54,14 @@ impl OwnerScopedStores {
     }
 
     /// CycleCareDatabase.kt:104-106 — non-blank identity namespaces, null or
-    /// blank (whitespace-only, Kotlin isBlank parity) maps to the legacy
-    /// guest database name.
+    /// blank maps to the legacy guest database name. Blankness is Kotlin
+    /// Char.isBlank parity via the central, JVM-corpus-locked helper -
+    /// Char.isWhitespace includes U+00A0/U+2007/U+202F and U+001C-001F and
+    /// excludes U+0085, which does NOT match Rust's char::is_whitespace, so
+    /// str::trim here would misroute those identities.
     fn name_for(identity: Option<&str>) -> String {
         match identity {
-            Some(id) if !id.trim().is_empty() => namespace_for(id),
+            Some(id) if !crate::kotlin_text::kotlin_is_blank(id) => namespace_for(id),
             _ => LEGACY_DATABASE_NAME.to_string(),
         }
     }
