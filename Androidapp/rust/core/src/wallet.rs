@@ -29,7 +29,9 @@ pub enum WalletStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifiedProfile {
     pub owner: String,
-    pub balance_coins: f64,
+    /// Exact decimal coins (EconomyProfile.coinBalance is java BigDecimal,
+    /// up to 3 decimals; never a float — no silent precision loss).
+    pub balance_coins: bigdecimal::BigDecimal,
     pub is_banned: bool,
     pub is_suspended: bool,
     pub suspension_reason: Option<String>,

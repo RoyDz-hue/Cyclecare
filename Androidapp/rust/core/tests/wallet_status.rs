@@ -5,6 +5,7 @@
 //! - a delayed response from an old owner never populates the new owner's card
 //! plus exhaustive transition coverage over the apply matrix.
 
+use bigdecimal::BigDecimal;
 use cyclecare_core::wallet::{
     ApplyVerdict, FetchOutcome, IdentitySnapshot, RefreshPlan, VerifiedProfile, WalletMachine,
     WalletStatus,
@@ -14,10 +15,10 @@ fn owner(name: &str, gen: u64) -> IdentitySnapshot {
     IdentitySnapshot { owner: name.to_string(), session_generation: gen }
 }
 
-fn profile(name: &str, coins: f64) -> VerifiedProfile {
+fn profile(name: &str, coins: i64) -> VerifiedProfile {
     VerifiedProfile {
         owner: name.to_string(),
-        balance_coins: coins,
+        balance_coins: BigDecimal::from(coins),
         is_banned: false,
         is_suspended: false,
         suspension_reason: None,
@@ -60,14 +61,14 @@ fn same_owner_failure_after_ready_shows_stale_last_known() {
     let mut m = WalletMachine::new();
     let snap = owner("roy", 1);
     m.begin_refresh(false, Some(snap.clone()), true, false, None, 0);
-    m.apply_result(&snap, Some(&snap), FetchOutcome::Success(profile("roy", 363.0)));
+    m.apply_result(&snap, Some(&snap), FetchOutcome::Success(profile("roy", 363)));
     assert_eq!(m.status(), WalletStatus::Ready);
     // Foreground refresh: status stays Ready while fetching (no LOADING flicker).
     m.begin_refresh(false, Some(snap.clone()), true, false, None, 31_000);
     assert_eq!(m.status(), WalletStatus::Ready);
     m.apply_result(&snap, Some(&snap), FetchOutcome::Failure);
     assert_eq!(m.status(), WalletStatus::Stale);
-    assert_eq!(m.last_profile().unwrap().balance_coins, 363.0, "last-known 363 must survive");
+    assert_eq!(m.last_profile().unwrap().balance_coins, BigDecimal::from(363), "last-known 363 must survive");
 }
 
 #[test]
@@ -78,7 +79,7 @@ fn delayed_response_from_old_owner_never_populates_new_owner_card() {
     // Identity switches mid-flight.
     m.on_identity_change();
     let new = owner("someone-else", 2);
-    let (verdict, freshness) = m.apply_result(&old, Some(&new), FetchOutcome::Success(profile("roy", 363.0)));
+    let (verdict, freshness) = m.apply_result(&old, Some(&new), FetchOutcome::Success(profile("roy", 363)));
     assert_eq!(verdict, ApplyVerdict::IgnoredStaleIdentity);
     assert!(!freshness, "stale responses never mark the freshness cache");
     assert_ne!(m.status(), WalletStatus::Ready, "new owner's card must not reach READY from the old owner's response");
@@ -91,7 +92,7 @@ fn session_regeneration_same_owner_still_invalidates_inflight() {
     let gen1 = owner("roy", 1);
     m.begin_refresh(false, Some(gen1.clone()), true, false, None, 0);
     let gen2 = owner("roy", 2); // same human, new session generation
-    let (verdict, _) = m.apply_result(&gen1, Some(&gen2), FetchOutcome::Success(profile("roy", 363.0)));
+    let (verdict, _) = m.apply_result(&gen1, Some(&gen2), FetchOutcome::Success(profile("roy", 363)));
     assert_eq!(verdict, ApplyVerdict::IgnoredStaleIdentity);
 }
 
@@ -114,9 +115,9 @@ fn real_zero_from_server_is_shown_but_fetch_failure_is_not_zero() {
     let mut m = WalletMachine::new();
     let snap = owner("roy", 1);
     m.begin_refresh(false, Some(snap.clone()), true, false, None, 0);
-    m.apply_result(&snap, Some(&snap), FetchOutcome::Success(profile("roy", 0.0)));
+    m.apply_result(&snap, Some(&snap), FetchOutcome::Success(profile("roy", 0)));
     assert_eq!(m.status(), WalletStatus::Ready);
-    assert_eq!(m.last_profile().unwrap().balance_coins, 0.0, "a verified real zero is displayable");
+    assert_eq!(m.last_profile().unwrap().balance_coins, BigDecimal::from(0), "a verified real zero is displayable");
 
     let mut m2 = WalletMachine::new();
     m2.begin_refresh(false, Some(snap.clone()), true, false, None, 0);

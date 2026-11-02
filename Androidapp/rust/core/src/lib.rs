@@ -35,6 +35,7 @@ pub mod payment_validation;
 pub mod coin_format;
 pub mod payment_safety;
 pub mod economy_rules;
+#[cfg(feature = "sqlite")]
 pub mod storage_schema;
 pub mod earn_coins;
 pub mod sync_codec;
@@ -53,6 +54,7 @@ pub mod care_ai;
 pub mod care_privacy;
 pub mod layered_chat;
 pub mod payment_poll;
+#[cfg(feature = "sqlite")]
 pub mod storage_db;
 pub mod auth_errors;
 pub mod auth_uri;

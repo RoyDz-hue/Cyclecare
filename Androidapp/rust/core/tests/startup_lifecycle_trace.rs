@@ -9,6 +9,7 @@
 //! 2026-11-02); this test locks their composition.
 
 use cyclecare_core::lifecycle::{effective_user_id, startup_gate, SessionStore};
+use bigdecimal::BigDecimal;
 use cyclecare_core::session_token::{resolve_access_token, AccessTokenResolution, RefreshResponse};
 use cyclecare_core::verified_profile::parse_verified_profile;
 use cyclecare_core::wallet::{FetchOutcome, IdentitySnapshot, RefreshPlan, WalletMachine, WalletStatus};
@@ -170,7 +171,7 @@ fn trace_d_failure_after_prior_success_keeps_stale_balance() {
     let snap = IdentitySnapshot { owner: "u1".into(), session_generation: 1 };
     let _ = w.begin_refresh(false, Some(snap.clone()), false, false, None, NOW_MS);
     let _ = w.apply_result(&snap, Some(&snap), FetchOutcome::Success(cyclecare_core::wallet::VerifiedProfile {
-        owner: "u1".into(), balance_coins: 363.0, is_banned: false, is_suspended: false, suspension_reason: None,
+        owner: "u1".into(), balance_coins: BigDecimal::from(363), is_banned: false, is_suspended: false, suspension_reason: None,
     }));
     assert_eq!(w.status(), WalletStatus::Ready);
     // Later refresh fails for the SAME owner: keep the real 363 as STALE.
@@ -178,7 +179,7 @@ fn trace_d_failure_after_prior_success_keeps_stale_balance() {
     let (_, applied) = w.apply_result(&snap, Some(&snap), FetchOutcome::Failure);
     assert!(!applied);
     assert_eq!(w.status(), WalletStatus::Stale);
-    assert_eq!(w.last_profile().unwrap().balance_coins, 363.0);
+    assert_eq!(w.last_profile().unwrap().balance_coins, BigDecimal::from(363));
 }
 
 #[test]
@@ -189,7 +190,7 @@ fn trace_e_owner_switch_mid_flight_drops_response() {
     let now_as = IdentitySnapshot { owner: "u2".into(), session_generation: 1 };
     let (verdict, _) = w.apply_result(&started, Some(&now_as), FetchOutcome::Success(
         cyclecare_core::wallet::VerifiedProfile {
-            owner: "u1".into(), balance_coins: 363.0, is_banned: false, is_suspended: false, suspension_reason: None,
+            owner: "u1".into(), balance_coins: BigDecimal::from(363), is_banned: false, is_suspended: false, suspension_reason: None,
         },
     ));
     // The dropped response leaves the in-flight card untouched (LOADING),
