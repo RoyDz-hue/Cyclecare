@@ -16,6 +16,9 @@ serde_json = "1"
 ryu = "1"
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 rusqlite = { version = "0.32", optional = true }
+# Optional secure browser entropy (crypto.getRandomValues) for wasm32 via
+# getrandom's js backend; only enabled by `web-secure-entropy`.
+getrandom = { version = "0.2", optional = true, default-features = false, features = ["js"] }
 
 [features]
 default = ["sqlite"]
@@ -31,6 +34,11 @@ sqlcipher-host = ["rusqlite", "rusqlite/bundled-sqlcipher"]
 # deterministic counter. Never for production; real targets use OS entropy
 # and unsupported targets fail to compile without this feature.
 host-fixture-entropy = []
+# SECURE wasm32 entropy: crypto.getRandomValues through getrandom/js. The
+# production-shape browser path; mutually exclusive with the fixture counter
+# (compile_error enforced in care_policy.rs). Requires a browser/window
+# context (not Node without crypto).
+web-secure-entropy = ["dep:getrandom"]
 # Integration-test-only hooks (failure injection). Not compiled into release
 # or FFI builds; enabled solely via the self dev-dependency below.
 test-support = []

@@ -132,15 +132,34 @@ fn fill_entropy(b: &mut [u8; 16]) {
         .expect("/dev/urandom readable");
 }
 
+#[cfg(all(feature = "host-fixture-entropy", feature = "web-secure-entropy"))]
+compile_error!(
+    "features `host-fixture-entropy` and `web-secure-entropy` are mutually exclusive: fixture determinism can never ship as secure entropy"
+);
+
 /// Unsupported targets stay explicitly unavailable: without a secure
 /// provider they fail at compile time rather than silently minting tokens.
 #[cfg(all(
     not(any(target_os = "linux", target_os = "android")),
-    not(feature = "host-fixture-entropy")
+    not(feature = "host-fixture-entropy"),
+    not(all(target_arch = "wasm32", feature = "web-secure-entropy"))
 ))]
 compile_error!(
-    "no OS entropy on this target: enable `host-fixture-entropy` for host-only fixtures, or add a secure provider before production use"
+    "no OS entropy on this target: enable `host-fixture-entropy` for host-only fixtures, `web-secure-entropy` for the secure wasm32 browser path, or add a secure provider before production use"
 );
+
+/// SECURE wasm32 browser entropy: crypto.getRandomValues via getrandom's js
+/// backend - the production-shape browser path (CSPRNG, no deterministic
+/// seed, no fixture counter). Matches Kotlin UUID.randomUUID (SecureRandom)
+/// semantics like the OS path.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "web-secure-entropy",
+    not(feature = "host-fixture-entropy")
+))]
+fn fill_entropy(b: &mut [u8; 16]) {
+    getrandom::getrandom(b).expect("crypto.getRandomValues available in a secure browser context");
+}
 
 /// HOST-FIXTURE-ONLY fallback (wasm32 browser demo, feature-gated): no OS
 /// entropy exists there. The proposal id is an ephemeral gate-matching
@@ -151,7 +170,8 @@ compile_error!(
 /// the OS-entropy path above.
 #[cfg(all(
     not(any(target_os = "linux", target_os = "android")),
-    feature = "host-fixture-entropy"
+    feature = "host-fixture-entropy",
+    not(feature = "web-secure-entropy")
 ))]
 fn fill_entropy(b: &mut [u8; 16]) {
     use std::sync::atomic::{AtomicU64, Ordering};
