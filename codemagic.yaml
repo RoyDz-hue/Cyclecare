@@ -260,3 +260,198 @@ workflows:
     artifacts:
       - device-verify/*.png
       - build-logs/*.log
+
+  cyclecare-rust-spike:
+    name: CycleCare Rust spike S3 data parity + toolchain proof
+    max_build_duration: 40
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.m2
+        - $HOME/.cargo
+        - $HOME/.rustup
+        - $CM_BUILD_DIR/spike/rust/target
+    environment:
+      vars:
+        SPIKE_BUDGET_SECONDS: "1380"
+    scripts:
+      - name: Spike setup, environment and budget clock
+        script: |
+          set -e
+          mkdir -p build-logs/spike spike/out
+          date +%s > build-logs/spike/start.ts
+          {
+          uname -a
+          sw_vers
+          java -version 2>&1
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "budget: $SPIKE_BUDGET_SECONDS seconds, single bounded run, no retries"
+          } 2>&1 | tee build-logs/spike/env.log
+      - name: Rust toolchain (pinned 1.99.1 + android target)
+        script: |
+          set -e
+          set -o pipefail
+          {
+          export RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl -fsSL --max-time 120 https://sh.rustup.rs -o /tmp/rustup-init.sh
+            sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install 1.99.1 --profile minimal --target aarch64-linux-android
+          rustup default 1.99.1
+          rustc --version
+          cargo --version
+          rustup target list --installed
+          } 2>&1 | tee build-logs/spike/rust-toolchain.log
+      - name: SQLCipher CLI (brew, version recorded)
+        script: |
+          set -e
+          set -o pipefail
+          {
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          if ! command -v sqlcipher >/dev/null 2>&1; then brew install sqlcipher; fi
+          sqlcipher -version
+          } 2>&1 | tee build-logs/spike/sqlcipher-cli.log
+      - name: Real Room schema dump + AES-GCM vectors phase A (Robolectric/JVM)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.app.SpikeRoomSchemaDumpTest" \
+            --tests "com.cyclecare.app.SpikeAesGcmVectorTest" \
+            2>&1 | tee ../build-logs/spike/room-dump-and-aes-a.log
+          ls -la app/build/spike/
+      - name: Fixture assembly from Room authority + transcription diff
+        script: |
+          set -e
+          set -o pipefail
+          {
+          python3 spike/fixture/assemble_fixture.py
+          } 2>&1 | tee build-logs/spike/fixture-assembly.log
+      - name: CLI creates fixture DB + cipher introspection
+        script: |
+          set -e
+          set -o pipefail
+          {
+          PASS=$(openssl rand -base64 32)
+          echo "$PASS" > spike/out/fixture-passphrase.txt
+          { echo "PRAGMA key = '$PASS';"; cat spike/out/fixture-authoritative.sql; } | sqlcipher spike/out/fixture-cli.db
+          echo "=== CLI introspection (CLI-created DB) ==="
+          sqlcipher spike/out/fixture-cli.db "PRAGMA key = '$PASS';
+          PRAGMA cipher_version;
+          PRAGMA kdf_iter;
+          PRAGMA cipher_page_size;
+          PRAGMA cipher_hmac_algorithm;
+          PRAGMA cipher_kdf_algorithm;
+          SELECT count(*) FROM cycle_day_logs;
+          SELECT identity_hash FROM room_master_table;"
+          } 2>&1 | tee build-logs/spike/cli-create.log
+      - name: Rust core tests (migration crate) + spike crate host build
+        script: |
+          set -e
+          set -o pipefail
+          {
+          export RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          cd Androidapp/rust/core && cargo test 2>&1 | tee "$CM_BUILD_DIR/build-logs/spike/core-tests.log"
+          cd "$CM_BUILD_DIR/spike/rust"
+          cargo build --release 2>&1 | tee "$CM_BUILD_DIR/build-logs/spike/rust-host-build.log"
+          grep -A3 '^name = "libsqlite3-sys"' Cargo.lock || true
+          grep -A3 '^name = "sqlcipher-src"' Cargo.lock || true
+          } 2>&1
+      - name: Rust reads CLI fixture + creates DB + AES + namespace checks
+        script: |
+          set -e
+          set -o pipefail
+          {
+          PASS=$(cat spike/out/fixture-passphrase.txt)
+          BIN=spike/rust/target/release/cyclecare-spike
+          $BIN verify spike/out/fixture-cli.db "$PASS"
+          cp spike/out/fixture-authoritative.sql spike/out/fixture-for-rust.sql
+          $BIN create spike/out/fixture-rust.db "$PASS" spike/out/fixture-for-rust.sql
+          $BIN introspect spike/out/fixture-rust.db "$PASS"
+          $BIN aes-verify Androidapp/app/build/spike/aesgcm-vectors-kotlin.txt Androidapp/app/build/spike/aesgcm-vectors-rust.txt
+          for U in "11111111-2222-3333-4444-555555555555" "7c2dbf1b-0000-4000-8000-000000000000" "deadbeef-0000-4000-8000-000000000000"; do
+            EXP="cycle_care_owner_$(printf %s "$U" | shasum -a 256 | cut -d' ' -f1)"
+            $BIN namespace "$U" "$EXP"
+          done
+          } 2>&1 | tee build-logs/spike/rust-evidence.log
+      - name: CLI reads Rust-created DB (reverse direction)
+        script: |
+          set -e
+          set -o pipefail
+          {
+          PASS=$(cat spike/out/fixture-passphrase.txt)
+          sqlcipher spike/out/fixture-rust.db "PRAGMA key = '$PASS';
+          SELECT count(*) FROM cycle_day_logs;
+          SELECT count(*) FROM health_sync_outbox;
+          SELECT identity_hash FROM room_master_table;"
+          } 2>&1 | tee build-logs/spike/cli-readback.log
+      - name: AES-GCM vectors phase B (Kotlin verifies Rust)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.app.SpikeAesGcmVectorTest" \
+            2>&1 | tee ../build-logs/spike/aes-phase-b.log
+      - name: Rust Android target build (aarch64 cdylib via NDK)
+        script: |
+          set -e
+          set -o pipefail
+          {
+          export RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          NDK=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$NDK" ]; then
+            echo "no side-by-side NDK; installing via sdkmanager"
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk-bundle" >/dev/null 2>&1 || true
+            NDK=$(ls -d "$ANDROID_HOME"/ndk* "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)
+          fi
+          echo "NDK=$NDK"; cat "$NDK/source.properties" | head -2
+          TC="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TC/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="$TC/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$TC/llvm-ar"
+          cd spike/rust
+          cargo build --release --target aarch64-linux-android 2>&1 | tee "$CM_BUILD_DIR/build-logs/spike/rust-android-build.log"
+          SO=target/aarch64-linux-android/release/libcyclecare_spike.so
+          file "$SO"
+          "$TC/llvm-nm" -D "$SO" | grep cyclecare_spike_probe
+          mkdir -p "$CM_BUILD_DIR/Androidapp/app/src/main/jniLibs/arm64-v8a"
+          cp "$SO" "$CM_BUILD_DIR/Androidapp/app/src/main/jniLibs/arm64-v8a/"
+          } 2>&1
+      - name: Budget check before optional APK packaging
+        script: |
+          set -e
+          SPENT=$(( $(date +%s) - $(cat build-logs/spike/start.ts) ))
+          echo "spent ${SPENT}s of ${SPIKE_BUDGET_SECONDS}s"
+          if [ "$SPENT" -gt "$SPIKE_BUDGET_SECONDS" ]; then
+            echo "BUDGET_EXCEEDED: skipping optional APK packaging; .so build evidence already collected" | tee build-logs/spike/budget-skip.log
+            exit 0
+          fi
+          echo "BUDGET_OK" | tee build-logs/spike/budget-ok.log
+      - name: Package .so into slim APK (budget-gated) and verify
+        script: |
+          set -e
+          set -o pipefail
+          if [ ! -f build-logs/spike/budget-ok.log ]; then echo "skipped (budget)"; exit 0; fi
+          cd Androidapp
+          ./gradlew assembleSlim -PslimApk 2>&1 | tee ../build-logs/spike/assemble-with-so.log
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          echo "APK=$APK"; ls -la "$APK"
+          unzip -l "$APK" | grep "libcyclecare_spike.so" | tee ../build-logs/spike/apk-so-check.log
+      - name: Spike summary
+        script: |
+          SPENT=$(( $(date +%s) - $(cat build-logs/spike/start.ts) ))
+          echo "total spent ${SPENT}s" | tee -a build-logs/spike/timing.log
+          ls -la spike/out build-logs/spike
+    artifacts:
+      - build-logs/spike/**/*
+      - spike/out/**/*
+      - Androidapp/app/build/outputs/apk/**/*.apk

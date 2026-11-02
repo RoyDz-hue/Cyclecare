@@ -1,0 +1,16 @@
+[package]
+name = "cyclecare-spike"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled-sqlcipher"] }
+aes-gcm = "=0.11.1"
+sha2 = "=0.11.1"
+base64 = "=0.23.1"
+
+[profile.release]
+opt-level = 2
