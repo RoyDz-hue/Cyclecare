@@ -160,3 +160,17 @@ inside withIdentitySnapshot; a stale snapshot silently uses the Kotlin path.
 Nothing in production flow references this file yet.
 Portable compile of CycleCareCoreBridge + RustLifecycleAdapters against
 minimal stubs: clean (kotlinc 2.1.0, JDK17). Full-app compile remains open.
+
+## Call-site wiring status (@af04874)
+
+CycleCareViewModel.init (ui/viewmodel/CycleCareViewModel.kt:334-341, 398-399)
+now invokes RustLifecycleAdapters.startupGate behind
+RustLifecycleConfig.STARTUP_GATE_ENABLED (compile-time const, currently
+FALSE). Disabled: gate is null, original expressions run unchanged. Enabled:
+native startup_gate decides hasCompletedInitialAuth / needsCloudProfileCheck /
+isLocked / showOnboarding / fetchWallet; native unavailable or stale identity
+snapshot -> Kotlin fallback with identical expressions. fetchWallet drives the
+init-time economyService.fetchVerifiedProfile(initOwner) call. MainActivity
+consumes the results via uiState (hasCompletedInitialAuth :179, isAppLocked
+:210, showOnboarding :251) - no MainActivity edit needed. Wallet parse and
+reconcile adapters remain ready-but-unwired pending this slice's proof.
