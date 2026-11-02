@@ -120,3 +120,25 @@ Dependency verification (executed, from the published artifacts):
 - webkit-1.12.1.pom compile deps: annotation 1.8.1, annotation-experimental
   1.4.1, core 1.1.0. All below the app's existing androidx versions; Gradle
   resolves upward, no downgrade.
+
+## Lifecycle contracts (core v14 / core-ffi v5, integrated at spike aee5348+)
+
+New FFI dispatcher contracts: startup_gate (9 booleans -> 5 gate flags),
+effective_user_id (userId, deviceId -> id string), ensure_setup_ok (body ->
+bool), has_remote_profile (httpOk, body, owner -> true/false/null),
+verified_profile_parse (owner, econBody, profBody, nowIso -> 16-field profile),
+reconcile_offline_claim (httpOk, body, balance, earned, rank, pendingDate ->
+outcome APPLIED/ALREADY_RECORDED/REFETCH/OFFLINE_KEPT + fields).
+resolve_access_token remains core-only (session_token.rs): needs a
+transport/session adapter, not exposed over FFI yet.
+
+Host wiring: CycleCareCoreBridge gains typed wrappers (StartupGateInputs/
+StartupGate, RemoteProfileAnswer tri-state, raw-JSONObject passthroughs for
+verified_profile_parse and reconcile_offline_claim). All wrappers return null
+on native unavailability so the Kotlin path stays authoritative. NOTHING in
+the production flow calls them; all are pure decisions over caller-supplied
+snapshots - no local/account/wallet writes.
+
+Integration note: core-ffi v5's Cargo.toml shipped path "../cyclecare-core"
+again (wrong even inside its own tarball layout, where the sibling crate is
+"core"); re-fixed to "../core" on the branch. Owner notified.

@@ -113,6 +113,7 @@ dependencies = [
 name = "cyclecare-core-ffi"
 version = "0.1.0"
 dependencies = [
+ "bigdecimal",
  "chrono",
  "cyclecare-core",
  "jni",

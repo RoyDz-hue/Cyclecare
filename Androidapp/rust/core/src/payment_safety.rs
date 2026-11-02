@@ -5,12 +5,14 @@
 //! concern): EncryptedCheckoutRequestStore (Android Keystore /
 //! EncryptedSharedPreferences) - the trait seam is the boundary.
 //!
-//! org.json scope note: capture_status mirrors org.json.JSONObject opt
-//! semantics (optString ""-default, optBoolean "true"-string parse).
-//! Executed parity runs the JVM org.json (Maven 20240303); the Android
-//! framework build is documented-identical for these two accessors.
+//! org.json scope note: capture_status parses with the AOSP-faithful
+//! sync_codec::JsonParser (lenient tokener) and mirrors optString/optBoolean
+//! semantics (numberToString for integral doubles). Executed parity runs the
+//! compiled AOSP android-14.0.0_r1 org.json classes (Maven superseded);
+//! corpus cs21-cs29 locks lenient/typing edges.
 
 use crate::kotlin_text::kotlin_trim;
+use crate::sync_codec::JsonValue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentProvider {
@@ -144,30 +146,37 @@ impl<S: CheckoutRequestStore> CheckoutRequestIdManager<S> {
 
 /// org.json.optString(key, ""): "" when absent or JSONObject.NULL; the
 /// string itself when String; String.valueOf(value) otherwise.
-fn opt_string(obj: &serde_json::Value, key: &str) -> String {
-    match obj.get(key) {
-        None | Some(serde_json::Value::Null) => String::new(),
-        Some(serde_json::Value::String(s)) => s.clone(),
-        Some(other) => json_tostring(other),
-    }
-}
-
-/// JSONObject's number/boolean toString. JSON 1.0 -> "1.0" in org.json
-/// (Double.toString); integers stay plain; booleans "true"/"false".
-fn json_tostring(v: &serde_json::Value) -> String {
+/// org.json JSONObject.optString(key, ""): absent/JSONObject.NULL -> "";
+/// String as-is; Boolean -> toString; Number -> numberToString
+/// (integral doubles strip ".0"); nested JSONObject/JSONArray -> toString.
+fn opt_string(obj: &JsonValue, key: &str) -> String {
+    let v = match obj {
+        JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    };
     match v {
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        other => other.to_string(),
+        None | Some(JsonValue::Null) => String::new(),
+        Some(JsonValue::Str(s)) => s.clone(),
+        Some(JsonValue::Bool(b)) => b.to_string(),
+        Some(JsonValue::Int(i)) => i.to_string(),
+        Some(JsonValue::Long(l)) => l.to_string(),
+        Some(JsonValue::Double(d)) => crate::sync_codec::java_double_to_string(*d),
+        Some(other) => crate::sync_codec::json_value_to_string(other),
     }
 }
 
 /// org.json.optBoolean(key, false): Boolean value as-is; string parsed with
 /// "true".equalsIgnoreCase; everything else false.
-fn opt_boolean(obj: &serde_json::Value, key: &str) -> bool {
-    match obj.get(key) {
-        Some(serde_json::Value::Bool(b)) => *b,
-        Some(serde_json::Value::String(s)) => s.eq_ignore_ascii_case("true"),
+/// org.json optBoolean(key, false): Boolean value as-is; String parsed
+/// with "true".equalsIgnoreCase; everything else (incl. Numbers) false.
+fn opt_boolean(obj: &JsonValue, key: &str) -> bool {
+    let v = match obj {
+        JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    };
+    match v {
+        Some(JsonValue::Bool(b)) => *b,
+        Some(JsonValue::Str(s)) => s.eq_ignore_ascii_case("true"),
         _ => false,
     }
 }
@@ -179,8 +188,11 @@ impl PaymentStatusVerifier {
         if !http_successful {
             return PaymentStatus::Ambiguous;
         }
-        let obj: serde_json::Value = match serde_json::from_str::<serde_json::Value>(body) {
-            Ok(v) if v.is_object() => v,
+        // org.json.JSONObject(body): AOSP lenient tokener (single quotes,
+        // unquoted literals, hex/octal, comments); trailing content after the
+        // object is tolerated; parse failure -> runCatching null -> AMBIGUOUS.
+        let obj = match crate::sync_codec::JsonParser::new(body).parse() {
+            Ok(v @ JsonValue::Object(_)) => v,
             _ => return PaymentStatus::Ambiguous,
         };
         let status = kotlin_trim(&opt_string(&obj, "status")).to_lowercase();

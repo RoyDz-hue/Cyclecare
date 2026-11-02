@@ -151,7 +151,7 @@ pub fn java_double_to_string(v: f64) -> String {
 }
 
 /// AOSP JSONObject.numberToString(Number).
-fn number_to_string(v: &JsonValue) -> String {
+pub fn number_to_string(v: &JsonValue) -> String {
     let double_value = v.to_f64();
     assert!(
         double_value.is_finite(),
@@ -170,6 +170,32 @@ fn number_to_string(v: &JsonValue) -> String {
         JsonValue::Long(l) => l.to_string(),
         _ => unreachable!(),
     }
+}
+
+/// org.json optString(key, default): absent/NULL -> default; String as-is;
+/// Boolean -> toString; Number -> numberToString; nested -> JSON text.
+pub fn aosp_opt_string(obj: &JsonValue, key: &str, default: &str) -> String {
+    let v = match obj {
+        JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        _ => None,
+    };
+    match v {
+        None | Some(JsonValue::Null) => default.to_string(),
+        Some(JsonValue::Str(s)) => s.clone(),
+        Some(JsonValue::Bool(b)) => b.to_string(),
+        Some(n @ (JsonValue::Int(_) | JsonValue::Long(_) | JsonValue::Double(_))) => {
+            number_to_string(n)
+        }
+        Some(other) => json_value_to_string(other),
+    }
+}
+
+/// Render a JsonValue to its JSON text (insertion-ordered, numberToString
+/// doubles). Equivalent to org.json JSONObject/JSONArray.toString().
+pub fn json_value_to_string(v: &JsonValue) -> String {
+    let mut out = String::new();
+    write_value(v, &mut out);
+    out
 }
 
 fn write_value(v: &JsonValue, out: &mut String) {
@@ -495,13 +521,21 @@ pub struct CycleDayLog {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CycleSettings {
+    pub id: i32,
+    pub is_onboarding_completed: bool,
     pub selected_goals_csv: String,
     pub last_period_start_date: String,
     pub average_cycle_length: i32,
     pub period_duration: i32,
     pub luteal_phase_days: i32,
+    pub is_app_lock_enabled: bool,
+    pub lock_timeout_minutes: i32,
+    pub is_discreet_notification_mode: bool,
     pub is_pregnancy_mode: bool,
     pub pregnancy_due_date: String,
+    pub remind_period: bool,
+    pub remind_fertile: bool,
+    pub remind_daily_log: bool,
 }
 
 /// Security-critical: restored profiles can never certify age, terms,
@@ -519,12 +553,21 @@ pub struct OnboardingProfile {
     pub typical_energy: String,
     pub typical_sleep_quality: String,
     pub has_completed_deep_baseline: bool,
+    pub id: i32,
     pub is_completed: bool,
     pub completed_at_timestamp: i64,
     pub is_age_verified: bool,
     pub is_terms_agreed: bool,
+    pub account_mode: String,
+    pub remind_fertile_window: bool,
 }
 
+/// Entity defaults, verbatim from OnboardingProfile.kt (Room entity):
+/// is_completed/is_age_verified/is_terms_agreed default TRUE; the parse
+/// null-local base explicitly overrides them to uncertified values.
+/// completed_at_timestamp defaults to the wall clock in Kotlin; a pure
+/// Default cannot replicate that, so 0 is used and documented - the parse
+/// path never relies on the entity default for it.
 impl Default for OnboardingProfile {
     fn default() -> Self {
         OnboardingProfile {
@@ -539,24 +582,36 @@ impl Default for OnboardingProfile {
             typical_energy: String::new(),
             typical_sleep_quality: String::new(),
             has_completed_deep_baseline: false,
-            is_completed: false,
+            id: 1,
+            is_completed: true,
             completed_at_timestamp: 0,
-            is_age_verified: false,
-            is_terms_agreed: false,
+            is_age_verified: true,
+            is_terms_agreed: true,
+            account_mode: "PRIVATE".to_string(),
+            remind_fertile_window: false,
         }
     }
 }
 
+/// Entity defaults, verbatim from cyclesettings.kt (Room entity).
 impl Default for CycleSettings {
     fn default() -> Self {
         CycleSettings {
+            id: 1,
+            is_onboarding_completed: false,
             selected_goals_csv: String::new(),
             last_period_start_date: String::new(),
             average_cycle_length: 28,
             period_duration: 5,
             luteal_phase_days: 14,
+            is_app_lock_enabled: false,
+            lock_timeout_minutes: 1,
+            is_discreet_notification_mode: true,
             is_pregnancy_mode: false,
             pregnancy_due_date: String::new(),
+            remind_period: false,
+            remind_fertile: false,
+            remind_daily_log: false,
         }
     }
 }
@@ -712,22 +767,56 @@ fn check_keys(o: &[(String, JsonValue)], allowed: &[&str]) -> Result<(), String>
     Ok(())
 }
 
-/// Strict ISO LocalDate.parse("yyyy-MM-dd") equivalent.
+/// java.time.LocalDate.parse(DateTimeFormatter.ISO_LOCAL_DATE) equivalent,
+/// executed against the JVM (probe p8): plain years are exactly 4 digits;
+/// years with 5-9 digits REQUIRE a '+' sign; negative years carry '-';
+/// "+2026-11-01" (signed 4-digit) and unsigned 5+ digit years are rejected;
+/// year 0 and proleptic negative-year leap rules apply; month 01-12;
+/// day within month.
 pub fn is_valid_local_date(s: &str) -> bool {
     let b = s.as_bytes();
-    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+    let (year_digits, rest) = if b.first() == Some(&b'-') || b.first() == Some(&b'+') {
+        let sign = b[0];
+        let digits = b[1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if sign == b'+' && !(5..=9).contains(&digits) {
+            return false; // '+' only for years beyond 4 digits
+        }
+        if sign == b'-' && !(4..=9).contains(&digits) {
+            return false;
+        }
+        (&s[1..1 + digits], &s[1 + digits..])
+    } else {
+        let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+        if digits != 4 {
+            return false; // unsigned years are exactly 4 digits
+        }
+        (&s[0..digits], &s[digits..])
+    };
+    if !year_digits.bytes().all(|c| c.is_ascii_digit()) {
         return false;
     }
-    if !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+    let signed: i64 = if b.first() == Some(&b'-') {
+        -year_digits.parse::<i64>().unwrap_or(i64::MAX)
+    } else {
+        year_digits.parse().unwrap_or(i64::MAX)
+    };
+    if signed.abs() > 999_999_999 {
         return false;
     }
-    let year: i32 = s[0..4].parse().unwrap();
-    let month: u32 = s[5..7].parse().unwrap();
-    let day: u32 = s[8..10].parse().unwrap();
+    let rb = rest.as_bytes();
+    if rb.len() != 6 || rb[0] != b'-' || rb[3] != b'-' {
+        return false;
+    }
+    if !rb[1..3].iter().chain(rb[4..6].iter()).all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let month: u32 = rest[1..3].parse().unwrap();
+    let day: u32 = rest[4..6].parse().unwrap();
     if !(1..=12).contains(&month) || day == 0 {
         return false;
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    // java.time.Year.isLeap: (y & 3) == 0 && (y % 100 != 0 || y % 400 == 0)
+    let leap = signed & 3 == 0 && (signed % 100 != 0 || signed % 400 == 0);
     let dim = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     day <= dim[(month - 1) as usize]
 }
@@ -783,10 +872,10 @@ pub fn parse_settings_payload(
     if !due.is_empty() && !is_valid_local_date(&due) {
         return Err("invalid_due_date".to_string());
     }
-    // `local` mirrors the Kotlin `(local ?: CycleSettings()).copy(...)` base;
-    // every field is overwritten by payload values, so only the defaults
-    // matter for documentation. Kotlin evaluates the same argument order.
-    let _ = local;
+    // Kotlin: (local ?: CycleSettings()).copy(7 wire fields) - a local base
+    // keeps every non-wire field (onboarding completion, app lock, discreet
+    // mode, reminders). Executed with completed local bases: ps11/ps12.
+    let base = local.cloned().unwrap_or_default();
     Ok(CycleSettings {
         selected_goals_csv: text(&o, "selected_goals")?,
         last_period_start_date: date,
@@ -795,6 +884,7 @@ pub fn parse_settings_payload(
         luteal_phase_days: integer(&o, "luteal_phase_days", (1, 30))?,
         is_pregnancy_mode: bool_field(&o, "pregnancy_mode")?,
         pregnancy_due_date: due,
+        ..base
     })
 }
 
@@ -823,10 +913,17 @@ pub fn parse_profile_payload(
     // Restored data cannot certify age, accept terms, complete onboarding,
     // or change account mode.
     // Kotlin: (local ?: OnboardingProfile(isCompleted=false, completedAtTimestamp=0,
-    // isAgeVerified=false, isTermsAgreed=false)).copy(...) - the safety flags
-    // are always reset regardless of the local base, and every payload field
-    // is overwritten, so the base contributes nothing to the result.
-    let _ = local;
+    // isAgeVerified=false, isTermsAgreed=false)).copy(11 wire fields). A null
+    // local cannot certify age/terms/completion; a PRESENT local base keeps
+    // its certification, account mode and other entity fields (executed:
+    // pp10 preserves isCompleted=true/SYNC_ACCOUNT/ts, pp11 null-local reset).
+    let base = local.cloned().unwrap_or_else(|| OnboardingProfile {
+        is_completed: false,
+        completed_at_timestamp: 0,
+        is_age_verified: false,
+        is_terms_agreed: false,
+        ..Default::default()
+    });
     Ok(OnboardingProfile {
         selected_goals_csv: text(&o, "selected_goals")?,
         last_period_date_string: date,
@@ -839,9 +936,6 @@ pub fn parse_profile_payload(
         typical_energy: text(&o, "typical_energy")?,
         typical_sleep_quality: text(&o, "typical_sleep_quality")?,
         has_completed_deep_baseline: bool_field(&o, "has_completed_deep_baseline")?,
-        is_completed: false,
-        completed_at_timestamp: 0,
-        is_age_verified: false,
-        is_terms_agreed: false,
+        ..base
     })
 }

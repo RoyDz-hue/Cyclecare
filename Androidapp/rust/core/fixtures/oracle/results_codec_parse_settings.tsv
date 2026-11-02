@@ -1,4 +1,4 @@
-ps01	OK:{"selected_goals":"a,b","last_period_start_date":"2026-10-01","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps01	OK:{"selected_goals":"a,b","last_period_start_date":"2026-10-01","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}|preserved:oc=false,al=false,to=1,dm=true,rp=false,rf=false,rd=false
 ps02	ERR:record_identity
 ps03	ERR:invalid_date
 ps04	ERR:invalid_due_date
@@ -8,3 +8,5 @@ ps07	ERR:unknown_surprise
 ps08	ERR:missing_pregnancy_due_date
 ps09	ERR:type_selected_goals
 ps10	ERR:invalid_date
+ps11	OK:{"selected_goals":"g","last_period_start_date":"2026-10-01","average_cycle_length":30,"period_duration":6,"luteal_phase_days":15,"pregnancy_mode":true,"pregnancy_due_date":"2027-01-01"}|preserved:oc=true,al=true,to=5,dm=false,rp=true,rf=true,rd=true
+ps12	OK:{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}|preserved:oc=false,al=false,to=1,dm=true,rp=false,rf=false,rd=false

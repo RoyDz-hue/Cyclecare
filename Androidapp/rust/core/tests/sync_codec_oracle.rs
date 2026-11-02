@@ -73,6 +73,7 @@ fn settings_payloads_and_hashes_match_aosp() {
             luteal_phase_days: c[5].parse().unwrap(),
             is_pregnancy_mode: c[6].parse().unwrap(),
             pregnancy_due_date: tok(c[7]),
+            ..Default::default()
         };
         let expected = results.iter().find(|r| r[0] == c[0]).unwrap();
         let payload = settings_payload(&s);
@@ -138,8 +139,30 @@ fn settings_parse_matches_aosp() {
             .find(|l| l.starts_with(&format!("{}\t", r[0])))
             .unwrap();
         let c: Vec<&str> = line.split('\t').collect();
-        let actual = match parse_settings_payload(c[2], c[1], None) {
-            Ok(s) => format!("OK:{}", settings_payload(&s)),
+        let local = match c.get(3).map(|s| *s).unwrap_or("-") {
+            "-" => None,
+            spec => {
+                let m: std::collections::HashMap<&str, &str> =
+                    spec.split(',').map(|kv| kv.split_once('=').unwrap()).collect();
+                Some(CycleSettings {
+                    is_onboarding_completed: m["isOnboardingCompleted"].parse().unwrap(),
+                    is_app_lock_enabled: m["isAppLockEnabled"].parse().unwrap(),
+                    lock_timeout_minutes: m["lockTimeoutMinutes"].parse().unwrap(),
+                    is_discreet_notification_mode: m["isDiscreetNotificationMode"].parse().unwrap(),
+                    remind_period: m["remindPeriod"].parse().unwrap(),
+                    remind_fertile: m["remindFertile"].parse().unwrap(),
+                    remind_daily_log: m["remindDailyLog"].parse().unwrap(),
+                    ..Default::default()
+                })
+            }
+        };
+        let actual = match parse_settings_payload(c[2], c[1], local.as_ref()) {
+            Ok(s) => format!(
+                "OK:{}|preserved:oc={},al={},to={},dm={},rp={},rf={},rd={}",
+                settings_payload(&s), s.is_onboarding_completed, s.is_app_lock_enabled,
+                s.lock_timeout_minutes, s.is_discreet_notification_mode,
+                s.remind_period, s.remind_fertile, s.remind_daily_log
+            ),
             Err(e) => format!("ERR:{}", e),
         };
         assert_eq!(actual, r[1], "settings parse mismatch for {}", r[0]);
@@ -156,8 +179,28 @@ fn profile_parse_matches_aosp() {
             .find(|l| l.starts_with(&format!("{}\t", r[0])))
             .unwrap();
         let c: Vec<&str> = line.split('\t').collect();
-        let actual = match parse_profile_payload(c[2], c[1], None) {
-            Ok(p) => format!("OK:{}", profile_payload(&p)),
+        let local = match c.get(3).map(|s| *s).unwrap_or("-") {
+            "-" => None,
+            spec => {
+                let m: std::collections::HashMap<&str, &str> =
+                    spec.split(',').map(|kv| kv.split_once('=').unwrap()).collect();
+                Some(OnboardingProfile {
+                    is_completed: m["isCompleted"].parse().unwrap(),
+                    completed_at_timestamp: m["completedAtTimestamp"].parse().unwrap(),
+                    is_age_verified: m["isAgeVerified"].parse().unwrap(),
+                    is_terms_agreed: m["isTermsAgreed"].parse().unwrap(),
+                    account_mode: m["accountMode"].to_string(),
+                    remind_fertile_window: m["remindFertileWindow"].parse().unwrap(),
+                    ..Default::default()
+                })
+            }
+        };
+        let actual = match parse_profile_payload(c[2], c[1], local.as_ref()) {
+            Ok(p) => format!(
+                "OK:{}|preserved:c={},ts={},av={},ta={},am={},rfw={}",
+                profile_payload(&p), p.is_completed, p.completed_at_timestamp,
+                p.is_age_verified, p.is_terms_agreed, p.account_mode, p.remind_fertile_window
+            ),
             Err(e) => format!("ERR:{}", e),
         };
         assert_eq!(actual, r[1], "profile parse mismatch for {}", r[0]);

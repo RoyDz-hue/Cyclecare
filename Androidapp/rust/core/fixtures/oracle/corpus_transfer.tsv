@@ -11,3 +11,7 @@ t10	100	friend@example.com	me@example.com	100
 t11	100	friend@example.com	me@example.com	100.001
 t12	100	friend@example.com	me@example.com	0.001
 t13	100	  me@example.com  	me@example.com	5
+t14	100	ME@EXAMPLE.COM	me@example.com	5
+t15	100	İST@X.COM	ist@x.com	5
+t16	100	İST@X.COM	i̇st@x.com	5
+t17	100	K@X.COM	k@x.com	5

@@ -1,0 +1,5 @@
+es01	{"success":true}
+es02	{}
+es03	malformed{
+es04	{"success":"TRUE"}
+es05	{"success":1}

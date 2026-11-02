@@ -103,3 +103,36 @@ pub fn kotlin_digit_to_int_10(c: char) -> Option<u32> {
     }
     None
 }
+
+/// Kotlin String.equals(other, ignoreCase = true): per-character
+/// Character.equalsIgnoreCase - c1 == c2 OR simpleUpper(c1) ==
+/// simpleUpper(c2) OR simpleLower(c1) == simpleLower(c2). Java uses SIMPLE
+/// (1:1) case mappings; Rust's char::to_uppercase/to_lowercase can be
+/// multi-char, so multi-char results fall back to the original char, except
+/// U+0130 whose Java simple lowercase is 'i' (executed: "İST" == "ist",
+/// "İST" != "i̇st" (i+U+0307), Kelvin U+212A == 'k').
+fn java_simple_upper(c: char) -> char {
+    let mut it = c.to_uppercase();
+    let first = it.next().unwrap();
+    if it.next().is_none() { first } else { c }
+}
+
+fn java_simple_lower(c: char) -> char {
+    if c == '\u{0130}' {
+        return 'i';
+    }
+    let mut it = c.to_lowercase();
+    let first = it.next().unwrap();
+    if it.next().is_none() { first } else { c }
+}
+
+pub fn kotlin_equals_ignore_case(a: &str, b: &str) -> bool {
+    let ca: Vec<char> = a.chars().collect();
+    let cb: Vec<char> = b.chars().collect();
+    ca.len() == cb.len()
+        && ca.iter().zip(cb.iter()).all(|(&x, &y)| {
+            x == y
+                || java_simple_upper(x) == java_simple_upper(y)
+                || java_simple_lower(x) == java_simple_lower(y)
+        })
+}

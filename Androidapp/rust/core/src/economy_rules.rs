@@ -97,7 +97,9 @@ pub fn validate_transfer(
         return Some("Insufficient Cycle Coins balance.");
     }
     if let Some(own) = own_email {
-        if kotlin_trim(recipient_email).eq_ignore_ascii_case(own) {
+        // Kotlin equals(ignoreCase = true) is Unicode-aware
+                // (Kelvin K == k, İ == i); ASCII-only folding diverges.
+                if crate::kotlin_text::kotlin_equals_ignore_case(&kotlin_trim(recipient_email), own) {
             return Some("Cannot transfer coins to your own account.");
         }
     }
