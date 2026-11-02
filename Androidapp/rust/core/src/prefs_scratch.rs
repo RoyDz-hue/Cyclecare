@@ -1,11 +1,22 @@
-//! HOST-ONLY scratch model of the SharedPreferences contract that
-//! AuthPreferences is written against: batched Editor mutations applied
-//! atomically by commit() (all-or-nothing), durable across re-open, and
-//! commit() failure applies NOTHING. This is NOT Android
-//! EncryptedSharedPreferences: the secure-store surface (readSecureString /
-//! writeSecureString) stays a separate seam. Synthetic scratch data only;
-//! used to prove the durable-write obligations of the health-sync consent
-//! paths against a source-faithful implementation instead of in-memory fakes.
+//! HOST-ONLY scratch model of the SharedPreferences surface AuthPreferences
+//! is written against. This is NOT Android SharedPreferences or
+//! EncryptedSharedPreferences. What IS source-grounded (AOSP 14.0.0_r1
+//! SharedPreferencesImpl.java, verified): EditorImpl.commit() runs
+//! commitToMemory() FIRST (the batch lands in the in-memory map), then
+//! enqueueDiskWrite(); the returned bool reports only the DISK write. So a
+//! failed commit leaves memory CHANGED with the new values and the disk file
+//! stale - and this model reproduces exactly that. Explicit remaining model
+//! limitations, none of which the ported source paths depend on:
+//! 1) apply() is modeled synchronously; Android persists it asynchronously
+//!    (enqueueDiskWrite without a latch).
+//! 2) Single-threaded: Android's mLock / Kotlin's synchronized(prefs) cross-
+//!    thread exclusion is not modeled; &mut self is the exclusion here.
+//! 3) Value coverage is Bool/Long(String)/String only - the full set the
+//!    AuthPreferences health-sync slice uses; Int/Float/StringSet are absent.
+//! 4) Re-open recovery is proved for an ordinary process restart via
+//!    write-tmp-then-rename (rename atomicity). CRASH/POWER-LOSS durability
+//!    is NOT claimed: there is no fsync/dirsync and no crash-fault injection
+//!    at that scope.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -88,7 +99,9 @@ impl ScratchPrefs {
             out.push_str(&val);
             out.push('\n');
         }
-        let tmp = path.with_extension("tmp");
+        // Append (never replace-extension): same-stem files must not
+        // collide on a shared temp name.
+        let tmp = PathBuf::from(format!("{}.tmp", path.display()));
         if std::fs::write(&tmp, out).is_err() { return false; }
         std::fs::rename(&tmp, path).is_ok()
     }
@@ -106,23 +119,19 @@ impl Editor<'_> {
     pub fn remove(self, k: &str) -> Self { self.push(Op::Remove(k.into())) }
     fn push(mut self, op: Op) -> Self { self.ops.push(op); self }
 
-    /// SharedPreferences.Editor.commit(): applies the WHOLE batch atomically
-    /// and reports success; on failure nothing is applied or persisted.
+    /// SharedPreferences.Editor.commit(): AOSP 14 SharedPreferencesImpl
+    /// .java parity - commitToMemory() lands the batch in memory FIRST, then
+    /// the disk write runs and its result is the returned bool. A false
+    /// result leaves memory CHANGED and the disk file stale.
     pub fn commit(self) -> bool {
-        if self.prefs.inject_commit_failure { return false; }
-        let mut staged = self.prefs.map.clone();
-        for op in &self.ops {
+        for op in self.ops {
             match op {
-                Op::Put(k, v) => { staged.insert(k.clone(), v.clone()); }
-                Op::Remove(k) => { staged.remove(k); }
+                Op::Put(k, v) => { self.prefs.map.insert(k, v); }
+                Op::Remove(k) => { self.prefs.map.remove(&k); }
             }
         }
-        let prev = std::mem::replace(&mut self.prefs.map, staged);
-        if !self.prefs.persist() {
-            self.prefs.map = prev; // persist failed -> roll back in-memory too
-            return false;
-        }
-        true
+        if self.prefs.inject_commit_failure { return false; }
+        self.prefs.persist()
     }
 
     /// SharedPreferences.Editor.apply(): in-memory apply plus asynchronous
@@ -139,7 +148,8 @@ impl Editor<'_> {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n")
+    // \r MUST round-trip: str::lines() strips a trailing \r.
+    s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
 }
 fn unescape(s: &str) -> String {
     let mut out = String::new();
@@ -149,6 +159,7 @@ fn unescape(s: &str) -> String {
             match chars.next() {
                 Some('t') => out.push('\t'),
                 Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
                 Some('\\') => out.push('\\'),
                 Some(other) => { out.push('\\'); out.push(other); }
                 None => out.push('\\'),

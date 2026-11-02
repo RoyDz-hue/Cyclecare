@@ -32,6 +32,7 @@ pub mod v3_consent;
 pub mod prefs_scratch;
 pub mod auth_prefs_health;
 pub mod v3_sync_all;
+pub mod v3_dao_sqlite;
 pub mod secure_store;
 pub mod cycle_math;
 pub mod notifications;

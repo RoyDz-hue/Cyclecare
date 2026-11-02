@@ -1,7 +1,11 @@
-//! Durable-write and recovery proofs for the health-sync consent paths,
-//! run against the SOURCE-FAITHFUL HealthAuthPrefs over a file-backed
-//! scratch SharedPreferences model (not an in-memory fake). Synthetic only;
-//! Android secure store and OwnerDataGate remain injected seams.
+//! Guard, single-commit, and RESTART-recovery proofs for the health-sync
+//! consent paths, run against the source-faithful HealthAuthPrefs over a
+//! file-backed scratch prefs model (not an in-memory fake). Scope precision:
+//! "restart recovery" = ordinary process-restart recovery via atomic
+//! rename; power-loss durability is NOT claimed (no fsync/dirsync, no crash
+//! faults). commit()-failure all-or-nothing in-memory is the scratch model's
+//! assumption, not established Android contract. Synthetic only; Android
+//! secure store and OwnerDataGate remain injected seams.
 use cyclecare_core::auth_prefs_health::*;
 use cyclecare_core::prefs_scratch::ScratchPrefs;
 use cyclecare_core::v3_consent::*;
@@ -67,19 +71,36 @@ fn pause_persists_across_reopen() {
 }
 
 #[test]
-fn commit_failure_applies_nothing_and_persists_nothing() {
+fn commit_failure_changes_memory_but_not_disk_aosp_grounded() {
+    // AOSP 14 SharedPreferencesImpl.commit(): commitToMemory() lands the
+    // batch in memory, then the disk write fails -> false. So after the
+    // failed pause: THIS process sees the paused state, while a restart
+    // (disk) sees the OLD state. Kotlin pause returns null either way.
     let h = Harness::new("commitfail");
     h.with(|p| {
         p.prefs.inject_commit_failure = true;
         assert_eq!(p.pause_health_sync_for(OWNER, 11).unwrap(), None, "commit() false -> Kotlin null");
+        assert!(!p.is_cloud_sync_allowed(), "commitToMemory landed: memory already changed");
+        assert!(p.has_pending_health_sync_revoke(), "pending flag set in memory");
+        assert_eq!(p.health_consent_generation(), 4);
     });
-    // Reopen: the failed batch left no trace.
+    // Reopen from disk: the failed write left the old file intact.
     h.with(|p| {
-        assert!(p.is_cloud_sync_allowed());
+        assert!(p.is_cloud_sync_allowed(), "disk kept the old state");
         assert_eq!(p.health_consent_generation(), 3);
         assert!(!p.has_pending_health_sync_revoke());
-        assert_eq!(p.server_health_consent_generation(), Some(7), "prior receipt untouched");
+        assert_eq!(p.server_health_consent_generation(), Some(7), "prior receipt untouched on disk");
     });
+}
+
+#[test]
+fn carriage_returns_and_tabs_round_trip() {
+    // escape() must cover \r (str::lines strips a trailing \r) and \t.
+    let h = Harness::new("crlf");
+    h.with(|p| {
+        p.set_last_sync_message("line one\r\nline two\ttrail\r");
+    });
+    h.with(|p| assert_eq!(p.last_sync_message(), "line one\r\nline two\ttrail\r"));
 }
 
 struct FailTransport;
