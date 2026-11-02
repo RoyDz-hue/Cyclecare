@@ -45,9 +45,25 @@ pub struct ConflictRow {
 /// the adapter owns atomicity of each commit group.
 pub trait V3SyncDao {
     fn pending(&mut self, owner: &str) -> Vec<OutboxEntry>;
-    fn put_revision_server(&mut self, owner: &str, record_id: &str, server_revision: i64);
-    fn acknowledge_matched(&mut self, owner: &str, operation_id: &str, record_id: &str, revision: i64);
-    fn rebase_pending(&mut self, owner: &str, record_id: &str, base_revision: i64, new_base: i64);
+    fn revision(&mut self, owner: &str, record_id: &str) -> Option<crate::v3_pull::RevisionRow>;
+    /// The withTransaction commit group for an applied/duplicate ACK,
+    /// FALLIBLE and ATOMIC: false/Err rolls back everything (no partial
+    /// writes visible). Contract: update the existing revision row's
+    /// server_revision to `target_server_revision` ONLY when a row exists
+    /// and never lower it; then acknowledgeMatched + rebasePending.
+    /// `gate_holds` mirrors the in-transaction current() check; when false
+    /// the implementation must roll back and return false.
+    fn commit_applied(
+        &mut self,
+        owner: &str,
+        operation_id: &str,
+        record_id: &str,
+        entry_revision: i64,
+        base_revision: i64,
+        new_revision: i64,
+        target_server_revision: i64,
+        gate_holds: bool,
+    ) -> bool;
     fn put_conflict(&mut self, conflict: ConflictRow);
     fn retry(&mut self, owner: &str, operation_id: &str, next_attempt_at: i64, message: &str);
 }
@@ -168,14 +184,17 @@ pub fn run_v3_outbox(
                     dao.retry(owner, &e.operation_id, next, "Backup needs another try");
                     continue;
                 }
-                if !current() {
-                    continue; // withTransaction guard: commit skipped
-                }
                 let new_revision = e.base_revision + 1;
-                dao.put_revision_server(owner, &e.record_id, new_revision);
-                dao.acknowledge_matched(owner, &e.operation_id, &e.record_id, e.revision);
-                dao.rebase_pending(owner, &e.record_id, e.base_revision, new_revision);
-                applied += 1;
+                // maxOf(existing.serverRevision, revision); never insert,
+                // never lower (computed here, enforced again by the seam).
+                let target = dao
+                    .revision(owner, &e.record_id)
+                    .map(|r| r.server_revision.max(new_revision))
+                    .unwrap_or(new_revision);
+                let gate = current();
+                if dao.commit_applied(owner, &e.operation_id, &e.record_id, e.revision, e.base_revision, new_revision, target, gate) {
+                    applied += 1;
+                }
             }
             "conflict" => {
                 blocked_records.insert(e.record_id.clone());

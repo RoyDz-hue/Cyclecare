@@ -526,7 +526,14 @@ pub fn hardened_ensure_membership(
     if !hardened_session_intact(store, &ctx) { return UnconfirmedAfterSend; }
     match outcome {
         HttpOutcome::Response { status, .. } => {
-            if t::membership_success(status) { ConfirmedApplied } else { ConfirmedRejected }
+            if t::membership_success(status) {
+                ConfirmedApplied
+            } else if (400..500).contains(&status) {
+                ConfirmedRejected
+            } else {
+                // 5xx / gateway / unexpected: the join may have landed.
+                UnconfirmedAfterSend
+            }
         }
         // Transport failure AFTER dispatch: the join may have landed.
         _ => UnconfirmedAfterSend,
@@ -658,10 +665,18 @@ pub fn hardened_flag_message(
     let outcome = http.execute(store, &url, &req, ctx.token.trim());
     if !hardened_session_intact(store, &ctx) { return UnconfirmedAfterSend; }
     match outcome {
-        HttpOutcome::Response { status, body } => match body_to_string(body) {
-            Some(b) => if t::flag_success(status, &b) { ConfirmedApplied } else { ConfirmedRejected },
-            None => ConfirmedRejected,
-        },
+        HttpOutcome::Response { status, body } => {
+            if !(200..300).contains(&status) {
+                if (400..500).contains(&status) { ConfirmedRejected } else { UnconfirmedAfterSend }
+            } else {
+                match body_to_string(body) {
+                    Some(b) => if t::flag_success(status, &b) { ConfirmedApplied } else { ConfirmedRejected },
+                    // Unreadable/oversize body on 2xx: the flag may have
+                    // landed; the answer is unknowable.
+                    None => UnconfirmedAfterSend,
+                }
+            }
+        }
         _ => UnconfirmedAfterSend,
     }
 }

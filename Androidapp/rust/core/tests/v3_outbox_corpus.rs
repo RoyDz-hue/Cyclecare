@@ -25,9 +25,9 @@ fn entry(op: &str, record: &str, base: i64, rev: i64, attempts: i64, next_at: i6
 #[derive(Default)]
 struct MemDao {
     pend: Vec<OutboxEntry>,
-    server_revisions: Vec<(String, i64)>,
-    acked: Vec<(String, String, i64)>,
-    rebased: Vec<(String, i64, i64)>,
+    revision_rows: std::collections::HashMap<String, cyclecare_core::v3_pull::RevisionRow>,
+    commits: Vec<(String, String, i64, i64, bool)>, // (op, record, new_rev, target_srv, gate)
+    fail_commits: bool,
     conflicts: Vec<ConflictRow>,
     retries: Vec<(String, i64)>,
 }
@@ -35,16 +35,24 @@ impl V3SyncDao for MemDao {
     fn pending(&mut self, owner: &str) -> Vec<OutboxEntry> {
         self.pend.iter().filter(|e| e.owner == owner).cloned().collect()
     }
-    fn put_revision_server(&mut self, _o: &str, id: &str, rev: i64) { self.server_revisions.push((id.into(), rev)); }
-    fn acknowledge_matched(&mut self, _o: &str, op: &str, id: &str, rev: i64) {
-        self.acked.push((op.into(), id.into(), rev));
-        self.pend.retain(|e| e.operation_id != op);
+    fn revision(&mut self, _o: &str, id: &str) -> Option<cyclecare_core::v3_pull::RevisionRow> {
+        self.revision_rows.get(id).cloned()
     }
-    fn rebase_pending(&mut self, _o: &str, id: &str, base: i64, new_base: i64) {
-        self.rebased.push((id.into(), base, new_base));
-        for e in self.pend.iter_mut().filter(|e| e.record_id == id && e.base_revision == base) {
-            e.base_revision = new_base;
+    fn commit_applied(&mut self, _o: &str, op: &str, id: &str, entry_rev: i64, base: i64, new_rev: i64, target_srv: i64, gate: bool) -> bool {
+        self.commits.push((op.into(), id.into(), new_rev, target_srv, gate));
+        if self.fail_commits || !gate {
+            return false; // rollback: nothing visible
         }
+        // update-if-exists, never insert, never lower
+        if let Some(row) = self.revision_rows.get_mut(id) {
+            row.server_revision = row.server_revision.max(target_srv);
+        }
+        self.pend.retain(|e| e.operation_id != op);
+        for e in self.pend.iter_mut().filter(|e| e.record_id == id && e.base_revision == base) {
+            e.base_revision = new_rev;
+        }
+        let _ = entry_rev;
+        true
     }
     fn put_conflict(&mut self, c: ConflictRow) { self.conflicts.push(c); }
     fn retry(&mut self, _o: &str, op: &str, next_at: i64, _m: &str) {
@@ -101,9 +109,8 @@ fn applied_ack_commits_and_rebases() {
     assert_eq!(wire, &wire_record_id(OWNER, "2026-11-03"));
     assert_eq!(*rev, 5);
     assert_eq!(payload.as_deref(), Some(r#"{"kind":"UPSERT","logicalRecordId":"2026-11-03","value":{"flow":"LIGHT"}}"#));
-    assert_eq!(dao.server_revisions, vec![("2026-11-03".to_string(), 5)]);
-    assert_eq!(dao.acked, vec![("op1".to_string(), "2026-11-03".to_string(), 5)]);
-    assert_eq!(dao.rebased, vec![("2026-11-03".to_string(), 4, 5)]);
+    assert_eq!(dao.commits, vec![("op1".to_string(), "2026-11-03".to_string(), 5, 5, true)]);
+    assert!(dao.pend.is_empty(), "ACK removed the entry");
 }
 
 #[test]
@@ -164,8 +171,9 @@ fn gate_drift_breaks_before_dispatch_and_skips_commit() {
     let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
     let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut gate, &mut always_now());
     assert_eq!(n, 0, "commit skipped on drift");
-    assert!(dao.acked.is_empty() && dao.rebased.is_empty() && dao.server_revisions.is_empty());
-    assert_eq!(tx.applied_ops.len(), 1, "the request did leave");
+    assert_eq!(dao.commits.len(), 1, "commit attempted");
+    assert!(!dao.commits[0].4, "gate false inside the transaction");
+    assert_eq!(dao.pend.len(), 1, "rolled back: entry still pending");
 }
 
 #[test]
@@ -204,4 +212,40 @@ fn transport_error_blocks_and_retries() {
     let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut live(), &mut always_now());
     assert_eq!(n, 0);
     assert_eq!(dao.retries.len(), 1);
+}
+
+#[test]
+fn server_revision_max_only_never_lower_never_insert() {
+    // Stored server_revision HIGHER than the ACK: commit keeps the max.
+    let e = entry("op1", "2026-11-03", 4, 5, 0, 0);
+    let mut dao = MemDao { pend: vec![e.clone()], ..Default::default() };
+    dao.revision_rows.insert("2026-11-03".into(), cyclecare_core::v3_pull::RevisionRow { revision: 5, server_revision: 9 });
+    let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
+    let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut live(), &mut always_now());
+    assert_eq!(n, 1);
+    assert_eq!(dao.commits[0].3, 9, "target is max(stored 9, ack 5)");
+    assert_eq!(dao.revision_rows["2026-11-03"].server_revision, 9, "never lowered");
+
+    // Missing row: commit acks/rebases but NEVER inserts a revision row.
+    let e = entry("op1", "2026-11-04", 4, 5, 0, 0);
+    let mut dao = MemDao { pend: vec![e.clone()], ..Default::default() };
+    let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
+    let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut live(), &mut always_now());
+    assert_eq!(n, 1);
+    assert!(dao.revision_rows.get("2026-11-04").is_none(), "no insert on missing row");
+    assert!(dao.pend.is_empty(), "ack/rebase still happened inside the commit");
+}
+
+#[test]
+fn fault_injected_commit_rolls_back_atomically() {
+    // Seam contract proof: a failing commit exposes NO partial writes.
+    let e = entry("op1", "2026-11-03", 4, 5, 0, 0);
+    let mut dao = MemDao { pend: vec![e.clone()], fail_commits: true, ..Default::default() };
+    dao.revision_rows.insert("2026-11-03".into(), cyclecare_core::v3_pull::RevisionRow { revision: 5, server_revision: 4 });
+    let mut tx = ScriptTx { script: vec![Ok(ack(&e, 5))].into(), applied_ops: vec![] };
+    let n = run_v3_outbox(&mut tx, "tok", &mut dao, OWNER, 7, 3, 11, &mut live(), &mut always_now());
+    assert_eq!(n, 0, "rolled-back commit is not counted");
+    assert_eq!(dao.pend.len(), 1, "entry still pending");
+    assert_eq!(dao.pend[0].base_revision, 4, "no rebase leaked");
+    assert_eq!(dao.revision_rows["2026-11-03"].server_revision, 4, "no server revision leaked");
 }

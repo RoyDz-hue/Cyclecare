@@ -507,9 +507,30 @@ fn transport_error_after_dispatch_is_unconfirmed_never_failed() {
     let res = hardened_post_message(&mut store, NOW, NOW*1000, &no_refresh(), &settings, &mut f, "t1", "hi there");
     assert!(matches!(res.outcome, cyclecare_core::community_transport::PostOutcome::SoftEchoUnconfirmed));
     assert!(res.message.is_none());
-    // Definitive server rejection stays ConfirmedRejected (membership 500).
+    // 5xx after send: may have landed -> UnconfirmedAfterSend (main 01:57).
     let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 500, body: vec![] }]);
     let mut store = session_store_view(&prefs);
     assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
+    // 4xx is a definitive rejection.
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 404, body: vec![] }]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_ensure_membership(&mut store, NOW, &no_refresh(), &settings, &mut f, "t1"),
         cyclecare_core::community_service::HardenedWriteOutcome::ConfirmedRejected);
+    // Flag: 2xx with UNREADABLE body -> UnconfirmedAfterSend; readable
+    // non-"true" body -> ConfirmedRejected; 5xx -> UnconfirmedAfterSend.
+    // Oversize (>96KiB) body on 2xx: boundedBody -> null, answer unknowable.
+    // (Invalid UTF-8 decodes to replacement chars per source - NOT None.)
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: vec![b't'; 97 * 1024] }]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 200, body: b"false".to_vec() }]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::ConfirmedRejected);
+    let mut f = HardenedFake::new(vec![HttpOutcome::Response { status: 502, body: b"true".to_vec() }]);
+    let mut store = session_store_view(&prefs);
+    assert_eq!(hardened_flag_message(&mut store, NOW, &no_refresh(), &settings, &mut f, "m1"),
+        cyclecare_core::community_service::HardenedWriteOutcome::UnconfirmedAfterSend);
 }
