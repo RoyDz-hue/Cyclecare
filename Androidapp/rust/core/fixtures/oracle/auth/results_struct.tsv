@@ -1,0 +1,14 @@
+q01	struct	scheme=cyclecare	host=auth:xx	port=-1	path=/callback	userInfo=null	result=null
+q02	struct	scheme=CYCLECARE	host=auth	port=-1	path=/callback	userInfo=null	result=null
+q03	struct	scheme=cyclecare	host=AUTH	port=-1	path=/callback	userInfo=null	result=null
+q04	struct	scheme=cyclecare	host=auth	port=-1	path=/callback/	userInfo=null	result=null
+q05	struct	scheme=cyclecare	host=auth	port=-1	path=//callback	userInfo=null	result=null
+q06	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	userInfo=a@b	result=null
+q07	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	userInfo=null	result=access_token:A?code=C
+q08	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	userInfo=null	result=null
+q09	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	userInfo=null	result=type:RECOVERY
+q10	struct	scheme=cyclecare	host=auth	port=65536	path=/callback	userInfo=null	result=null
+q11	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	result=access_token:A
+q12	struct	scheme=cyclecare	host=auth	port=-1	path=/callback	result=code:C#access_token=A
+q13	struct	scheme=cyclecare	host=auth	port=-1	path=	result=null
+q14	struct	scheme=cyclecare	host=	port=-1	path=/callback	result=null
