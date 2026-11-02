@@ -28,6 +28,7 @@ pub mod supabase_config;
 pub mod v3_sync;
 pub mod v3_outbox;
 pub mod v3_pull;
+pub mod v3_consent;
 pub mod secure_store;
 pub mod cycle_math;
 pub mod notifications;

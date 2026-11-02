@@ -255,3 +255,59 @@ fn settings_tombstone_resets_to_defaults_over_local() {
     assert_eq!(run(&mut tx, &mut store), Ok(1));
     assert_eq!(store.st.settings.as_ref().unwrap().average_cycle_length, CycleSettings::default().average_cycle_length);
 }
+
+#[test]
+fn revision_overflow_is_typed_error_and_page_rolls_back() {
+    // Math.addExact(prior.revision, 1) with prior.revision == i64::MAX throws
+    // ArithmeticException in Kotlin; withTransaction rolls the page back.
+    // Rust parity: typed RevisionOverflow (never wraparound, never panic),
+    // and the domain write from the SAME page (applied just before the
+    // addExact) must roll back too.
+    let mut store = MemStore::default();
+    store.st.revisions.insert("2026-11-03".into(), RevisionRow { revision: i64::MAX, server_revision: 0 });
+    let mut tx = pages(vec![vec![change("2026-11-03", 5, 42, false, Some(&log_value("2026-11-03", "LIGHT")))]]);
+    assert_eq!(run(&mut tx, &mut store), Err(V3PullError::RevisionOverflow));
+    assert!(store.st.logs.is_empty(), "domain apply before the overflow rolled back");
+    assert_eq!(store.st.cursor, None, "cursor put rolled back");
+    assert_eq!(store.st.revisions["2026-11-03"], RevisionRow { revision: i64::MAX, server_revision: 0 }, "prior row untouched");
+}
+
+#[test]
+fn revision_overflow_aborts_whole_multi_change_page() {
+    // First change applies cleanly; second overflows. ONE withTransaction per
+    // page -> the clean first change rolls back as well.
+    let mut store = MemStore::default();
+    store.st.revisions.insert("2026-11-04".into(), RevisionRow { revision: i64::MAX, server_revision: 0 });
+    let mut tx = pages(vec![vec![
+        change("2026-11-03", 5, 1, false, Some(&log_value("2026-11-03", "LIGHT"))),
+        change("2026-11-04", 5, 2, false, Some(&log_value("2026-11-04", "MEDIUM"))),
+    ]]);
+    assert_eq!(run(&mut tx, &mut store), Err(V3PullError::RevisionOverflow));
+    assert!(store.st.logs.is_empty(), "whole page rolled back, incl. the clean first change");
+    assert_eq!(store.st.cursor, None);
+    assert!(store.st.revisions.get("2026-11-03").is_none());
+}
+
+#[test]
+fn malformed_shapes_yield_invalid_payload_never_internal_invariant() {
+    // InternalInvariant (Kotlin `value!!` NPE parity) is unreachable by
+    // construction: the invalid_remote_payload check precedes it and rejects
+    // every non-tombstone change lacking a value. This pins that ordering:
+    // shape violations surface InvalidRemotePayload, never InternalInvariant,
+    // and never a panic.
+    for bad in [
+        change("2026-11-03", 5, 1, false, None), // no payload at all
+        {
+            let mut c = change("2026-11-03", 5, 1, false, Some(&log_value("2026-11-03", "LIGHT")));
+            // strip the "value" key from the envelope
+            c.payload = cyclecare_core::sync_codec::JsonParser::new(
+                r#"{"kind":"UPSERT","logicalRecordId":"2026-11-03"}"#,
+            ).parse().ok();
+            c
+        },
+    ] {
+        let mut tx = pages(vec![vec![bad]]);
+        let mut store = MemStore::default();
+        assert_eq!(run(&mut tx, &mut store), Err(V3PullError::InvalidRemotePayload));
+    }
+}

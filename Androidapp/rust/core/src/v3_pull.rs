@@ -28,6 +28,17 @@ pub enum V3PullError {
     Transport,
     /// Database failure inside the page transaction (whole page rolled back).
     Db,
+    /// Math.addExact(prior.revision, 1) overflowed -> ArithmeticException parity.
+    /// Kotlin: the exception aborts withTransaction and the whole page rolls
+    /// back. Here the typed error propagates through `?` the same way; it must
+    /// never wrap around and never unwind across an FFI boundary.
+    RevisionOverflow,
+    /// Kotlin `value!!` NPE parity. Unreachable by construction: the
+    /// invalid_remote_payload check above already guarantees value != null for
+    /// non-tombstone changes. Kept as a typed defense so a future refactor
+    /// that reorders those checks surfaces an error, never a panic, across
+    /// the FFI boundary.
+    InternalInvariant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,13 +177,13 @@ pub fn run_v3_pull(
                         if change.tombstone {
                             apply_tombstone_payload(tx, &id).map_err(|_| V3PullError::ApplyFailed)?;
                         } else {
-                            let v = value_json.clone().expect("shape_ok guarantees value for non-tombstone");
+                            let v = value_json.clone().ok_or(V3PullError::InternalInvariant)?;
                             apply_remote_payload(tx, &id, &v).map_err(|_| V3PullError::ApplyFailed)?;
                         }
-                        let new_local = prior
-                            .as_ref()
-                            .map(|p| p.revision.checked_add(1).expect("addExact"))
-                            .unwrap_or(1);
+                        let new_local = match prior.as_ref() {
+                            Some(p) => p.revision.checked_add(1).ok_or(V3PullError::RevisionOverflow)?,
+                            None => 1,
+                        };
                         tx.put_revision(
                             owner,
                             &id,
