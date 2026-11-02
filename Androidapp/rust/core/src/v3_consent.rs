@@ -214,3 +214,17 @@ pub fn journal_explicit_snapshot(
         Ok(())
     })
 }
+
+pub mod testing {
+    //! Test support: the withdrawal path never touches the snapshot store
+    //! (journalExplicitSnapshot runs only for enabled && includeExistingData),
+    //! so a no-op store satisfies the parameter for withdrawal-only callers.
+    use super::*;
+
+    pub struct NoopSnapshotStore;
+    impl V3SnapshotStore for NoopSnapshotStore {
+        fn transaction(&mut self, _body: &mut dyn FnMut(&mut dyn V3SnapshotTx) -> Result<(), V3ConsentError>) -> Result<(), V3ConsentError> {
+            unreachable!("withdrawal never journals a snapshot")
+        }
+    }
+}
