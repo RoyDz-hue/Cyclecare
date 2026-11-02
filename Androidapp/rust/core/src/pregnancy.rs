@@ -2,6 +2,17 @@
 //! milestone table (repo main@31b88f5). All values are calendar arithmetic on
 //! a user-entered due date - general weekly information only, never a
 //! clinical assessment (the screen's own notice says the same).
+//!
+//! Recorded parity quirks / safety-review concerns (source preserved 1:1,
+//! flagged for review, NOT silently redesigned):
+//! 1. Activation with no stored due date auto-assigns today + 6 months. That
+//!    is source parity, not a clinically established due date and not an
+//!    approved activation behavior - flagged for safety review.
+//! 2. The milestone table and kick-counter guidance ("aim for 10 kicks within
+//!    2 hours") are unvalidated clinical content carried verbatim from source.
+//! 3. Source/visual mismatch: week 12 milestone uses the lemon emoji 🍋 but
+//!    labels the fruit "Lime" (verbatim from source; recorded, not corrected).
+//! 4. The screen has no caller at main@31b88f5 (unwired surface).
 
 use chrono::{Months, NaiveDate};
 

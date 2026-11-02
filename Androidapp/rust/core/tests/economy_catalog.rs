@@ -39,3 +39,15 @@ fn unlock_normalization_falls_back_to_raw() {
     assert_eq!(normalize_unlocked_item("Golden Blossom"), "artifact_bloom");
     assert_eq!(normalize_unlocked_item("server_new_item"), "server_new_item");
 }
+
+#[test]
+fn display_strings_are_verbatim() {
+    let bloom = find_item("artifact_bloom").unwrap();
+    assert_eq!(bloom.description, "Velvet satin petals cradling a diamond-gold stamen core.");
+    assert_eq!(bloom.lore, "Unfolds when vitality crests during ovulation. Symbolizes abundant creative power.");
+    assert_eq!(bloom.aura_color_hex, 0xFFF8BBD0);
+    let amara = find_item("avatar_amara_3d").unwrap();
+    assert_eq!(amara.description, "A warm cafe portrait with a defined twist-out, included with Premium.");
+    assert_eq!(amara.aura_color_hex, 0xFFC97B8A);
+    assert_eq!(find_item("cycle_coin").unwrap().aura_color_hex, 0xFFF5B82E);
+}

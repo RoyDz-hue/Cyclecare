@@ -295,6 +295,44 @@ pub struct CoinPurchasePackage {
     pub description: String,
 }
 
+/// DefaultCoinPackages.PACKAGES (EconomyModels.kt, main@31b88f5), verbatim:
+/// the bundled fallback the store shows when no fresh server catalog exists.
+pub fn default_coin_packages() -> Vec<CoinPurchasePackage> {
+    vec![
+        CoinPurchasePackage {
+            id: "pkg_seed".into(),
+            title: "Bloom Seed".into(),
+            coins: 250,
+            bonus_coins: 0,
+            price_usd: "$2.99".into(),
+            price_kes: 389,
+            tag: None,
+            description: "Essential stepping stone for profile adornments.".into(),
+        },
+        CoinPurchasePackage {
+            id: "pkg_sanctuary".into(),
+            title: "Sanctuary Vault".into(),
+            coins: 750,
+            bonus_coins: 100,
+            price_usd: "$6.99".into(),
+            price_kes: 909,
+            tag: Some("Most Cherished".into()),
+            description: "Includes 100 bonus coins + unlocks immediate Lumen status.".into(),
+        },
+        CoinPurchasePackage {
+            id: "pkg_celestial".into(),
+            title: "Celestial Treasury".into(),
+            coins: 2000,
+            bonus_coins: 400,
+            price_usd: "$14.99".into(),
+            price_kes: 1949,
+            tag: Some("Grand Value".into()),
+            description: "Sovereign reserve. Unlocks prestigious 3D artifacts and custom frames.".into(),
+        },
+    ]
+}
+
+
 /// The server accepts only these fixed package IDs and charges the matching
 /// KES or USD amount; other countries use USD/PayPal until a local provider
 /// is implemented.

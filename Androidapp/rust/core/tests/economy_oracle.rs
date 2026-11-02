@@ -157,3 +157,33 @@ fn verified_coin_amount_matches_aosp_executed() {
     }
     assert_eq!(checked, 18);
 }
+
+#[test]
+fn missing_coins_coerces_to_minimum() {
+    use bigdecimal::BigDecimal;
+    use std::str::FromStr;
+    use cyclecare_core::economy_rules::missing_coins_for_unlock;
+    // (price - balance) when balance < price
+    assert_eq!(missing_coins_for_unlock(250, &BigDecimal::from(100)), BigDecimal::from(150));
+    // balance above price still floors to 0.001 (dialog never shows 0)
+    assert_eq!(missing_coins_for_unlock(250, &BigDecimal::from(300)), BigDecimal::from_str("0.001").unwrap());
+    assert_eq!(missing_coins_for_unlock(250, &BigDecimal::from(250)), BigDecimal::from_str("0.001").unwrap());
+    // fractional balance: 250 - 249.5 = 0.5
+    assert_eq!(missing_coins_for_unlock(250, &BigDecimal::from_str("249.5").unwrap()), BigDecimal::from_str("0.5").unwrap());
+}
+
+#[test]
+fn default_packages_localize_screen_path() {
+    // The VaultEconomyScreen store path: localizePackages(DefaultCoinPackages, KE, no cache).
+    use cyclecare_core::currency_locale::{default_coin_packages, localize_packages};
+    let ke = localize_packages(&default_coin_packages(), "KE", None);
+    assert_eq!(ke.len(), 3);
+    assert_eq!(ke[0].price_display, "KES 389");
+    assert_eq!(ke[2].price_display, "KES 1,949");
+    assert!(!ke[0].is_hero_package); // hero = tag != null on the screen path
+    assert!(ke[1].is_hero_package && ke[1].badge.as_deref() == Some("Most Cherished"));
+    assert!(ke[2].is_hero_package && ke[2].badge.as_deref() == Some("Grand Value"));
+    let us = localize_packages(&default_coin_packages(), "US", None);
+    assert_eq!(us[0].price_display, "$2.99");
+    assert_eq!(us[2].price_display, "$14.99");
+}

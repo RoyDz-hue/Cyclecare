@@ -174,3 +174,11 @@ pub fn offline_claim(
         message,
     }
 }
+
+/// InsufficientCoinsDialog missing-coins line (verbatim semantics):
+/// (price - balance).coerceAtLeast(0.001) — never shows "Need 0 More Coins".
+pub fn missing_coins_for_unlock(price: i64, balance: &BigDecimal) -> BigDecimal {
+    let raw = BigDecimal::from(price) - balance;
+    let floor = BigDecimal::from_str("0.001").unwrap();
+    if raw > floor { raw } else { floor }
+}
