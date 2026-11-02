@@ -10,13 +10,10 @@
 //! whose halves are not digits, so the source REJECTS it; a naive Rust scalar
 //! iteration would wrongly accept, so BMP-only is enforced explicitly here.
 
-use unicode_general_category::{get_general_category, GeneralCategory};
+use crate::kotlin_text::kotlin_is_digit;
 
 pub fn is_complete_pin(pin: &str) -> bool {
-    pin.chars().count() == 4 && pin.chars().all(is_kotlin_is_digit)
+    pin.chars().count() == 4 && pin.chars().all(kotlin_is_digit)
 }
 
-/// Kotlin Char.isDigit on a UTF-16 code unit = Nd category + BMP only.
-fn is_kotlin_is_digit(c: char) -> bool {
-    (c as u32) <= 0xFFFF && get_general_category(c) == GeneralCategory::DecimalNumber
-}
+

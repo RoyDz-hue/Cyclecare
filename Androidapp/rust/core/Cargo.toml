@@ -9,4 +9,11 @@ license = "UNLICENSED"
 sha2 = "0.10"
 regex = "1"
 unicode-general-category = "1"
+bigdecimal = "0.4"
+num-bigint = "0.4"
+serde_json = "1"
+ryu = "1"
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }

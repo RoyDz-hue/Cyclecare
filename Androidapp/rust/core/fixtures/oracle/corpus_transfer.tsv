@@ -1,0 +1,13 @@
+t01	100.55	friend@example.com	me@example.com	25.5
+t02	100	0	me@example.com	5
+t03	100	me@example.com	me@example.com	5
+t04	100	ME@EXAMPLE.COM	me@example.com	5
+t05	100	friend@example.com	<NULL>	5
+t06	100	friend@example.com	me@example.com	0
+t07	100	friend@example.com	me@example.com	-5
+t08	100	friend@example.com	me@example.com	1.0001
+t09	100	friend@example.com	me@example.com	1.5000
+t10	100	friend@example.com	me@example.com	100
+t11	100	friend@example.com	me@example.com	100.001
+t12	100	friend@example.com	me@example.com	0.001
+t13	100	  me@example.com  	me@example.com	5

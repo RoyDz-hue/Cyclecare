@@ -256,3 +256,47 @@ mod probe_locked_date_tests {
         assert_eq!(parse_local_date_iso("2026-01-05 "), None);
     }
 }
+
+/// Port of domain/health/PeriodEpisodeEntry.kt (main@31b88f5): what
+/// onboarding may store for a start/end pair. Raw episode record stays
+/// separate from the typical-duration estimate; unusual durations preserve
+/// the raw end date but never drag the estimate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageDecision {
+    pub raw_end_date: Option<NaiveDate>,
+    pub typical_duration_days: i64,
+    pub requires_confirmation: bool,
+    pub warning_message: Option<String>,
+    pub error_message: Option<&'static str>,
+}
+
+pub fn decide_episode_storage(
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+    is_ongoing: bool,
+    current_typical_duration_days: i64,
+    today: NaiveDate,
+) -> StorageDecision {
+    let check = validate_pair(start, end, today, is_ongoing);
+    if !check.is_valid {
+        return StorageDecision {
+            raw_end_date: None,
+            typical_duration_days: current_typical_duration_days,
+            requires_confirmation: false,
+            warning_message: None,
+            error_message: check.error_message,
+        };
+    }
+    let unusual = check.warning_message.is_some();
+    StorageDecision {
+        raw_end_date: end,
+        typical_duration_days: if unusual {
+            current_typical_duration_days
+        } else {
+            check.duration_days
+        },
+        requires_confirmation: unusual,
+        warning_message: check.warning_message,
+        error_message: None,
+    }
+}

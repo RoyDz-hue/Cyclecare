@@ -1,0 +1,20 @@
+cs01	true	{"status":"success","success":true}
+cs02	true	{"status":"SUCCESS","success":true}
+cs03	true	{"status":"refunded"}
+cs04	true	{"status":"reversed"}
+cs05	true	{"status":"failed"}
+cs06	true	{"status":"cancelled"}
+cs07	true	{"status":"canceled"}
+cs08	true	{"status":"expired"}
+cs09	true	{"status":"pending"}
+cs10	true	{}
+cs11	true	not json
+cs12	true	{"success":true,"settled":true}
+cs13	true	{"status":"settled","success":true}
+cs14	true	{"success":"true","status":"success"}
+cs15	true	{"success":false,"status":"success"}
+cs16	true	{"status":" success ","success":true}
+cs17	true	<EMPTY>
+cs18	false	{"status":"success","success":true}
+cs19	true	{"status":"success"}
+cs20	true	{"status":"FAILED"}

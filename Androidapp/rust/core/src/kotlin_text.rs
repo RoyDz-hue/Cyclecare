@@ -55,3 +55,51 @@ mod tests {
         assert_eq!(kotlin_trim_start("\u{A0}x\u{A0}"), "x\u{A0}");
     }
 }
+
+use unicode_general_category::{get_general_category, GeneralCategory};
+
+/// Kotlin Char.isDigit on a UTF-16 code unit = Unicode category Nd AND
+/// basic-multilingual-plane only. Supplementary-plane Nd digits (e.g. Osmanya
+/// U+104A0) reach Kotlin as surrogate pairs whose halves are not digits.
+pub fn kotlin_is_digit(c: char) -> bool {
+    (c as u32) <= 0xFFFF && get_general_category(c) == GeneralCategory::DecimalNumber
+}
+
+/// Kotlin regex `\s` (ASCII-only unless UNICODE_CHARACTER_CLASS is set):
+/// matches [ \t\n\x0B\f\r] exactly.
+pub fn kotlin_regex_ascii_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
+}
+
+/// Kotlin String.toIntOrNull: optional ASCII sign, ASCII digits only,
+/// no whitespace, i32 range.
+pub fn kotlin_to_int_or_null(s: &str) -> Option<i32> {
+    s.parse::<i32>().ok().filter(|_| {
+        let t = s.strip_prefix(['+', '-']).unwrap_or(s);
+        !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
+/// Zero codepoints of every basic-multilingual-plane Nd block (Unicode 15),
+/// matching java.lang.Character.digit(c, 10) for BMP digits.
+const BMP_ND_ZEROS: &[u32] = &[
+    0x0030, 0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66,
+    0x0BE6, 0x0C66, 0x0CE6, 0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040,
+    0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90, 0x1B50, 0x1BB0,
+    0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0,
+    0xFF10,
+];
+
+/// Kotlin Char.digitToInt() at radix 10 = Character.digit(c, 10): numeric
+/// value for any BMP Nd digit (e.g. fullwidth U+FF10-U+FF19), None otherwise.
+pub fn kotlin_digit_to_int_10(c: char) -> Option<u32> {
+    let cp = c as u32;
+    if cp <= 0xFFFF {
+        for &z in BMP_ND_ZEROS {
+            if cp >= z && cp < z + 10 {
+                return Some(cp - z);
+            }
+        }
+    }
+    None
+}

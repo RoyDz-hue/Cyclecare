@@ -1,0 +1,17 @@
+hs01	SUCCESS
+hs02	  completed  
+hs03	paid
+hs04	settled
+hs05	PENDING
+hs06	processing
+hs07	initiated
+hs08	failed
+hs09	CANCELLED
+hs10	canceled
+hs11	expired
+hs12	refunded
+hs13	reversed
+hs14	AMBIGUOUS
+hs15	weird
+hs16	<EMPTY>
+hs17	<SPACES>

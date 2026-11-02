@@ -9,6 +9,7 @@
 //! port takes `now` from the caller (parse failures treat the suspension as
 //! NOT expired, verbatim).
 use crate::kotlin_text::{kotlin_trim};
+use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 
@@ -74,10 +75,9 @@ pub enum WalletNumber {
 /// server's value - no binary float reparse of user-visible text); negative
 /// is rejected. Returns the exact decimal string on success.
 ///
-/// KNOWN DIVERGENCE (documented, edge-only): for extreme magnitudes Java
-/// Double.toString uses scientific notation ("1.0E22") while Rust Display
-/// prints full digits. Balances up to 3 decimal places never reach that
-/// range; tracked, not silently claimed exact.
+/// Text form executed verbatim against AOSP android-14.0.0_r1 org.json
+/// (18-case corpus incl. scientific magnitudes, trailing zeros, -0.0):
+/// fixtures/oracle/results_verified_amount.tsv. No known divergence.
 
 /// Java Double.toString semantics for wallet amounts (Android org.json types
 /// decimal JSON numbers as Double; verified against Android org.json docs -
@@ -88,24 +88,44 @@ pub enum WalletNumber {
 /// scientific "1.0E22"/"1.0E-4" outside that band. Shortest round-trip
 /// digits from Rust's formatter, which matches Java's Schubfach output for
 /// these magnitudes (documented residual risk for exotic bit patterns).
-pub fn java_double_to_string(f: f64) -> String {
-    if f == 0.0 {
-        return if f.is_sign_negative() { "-0.0".to_string() } else { "0.0".to_string() };
-    }
-    let a = f.abs();
-    if (1e-3..1e7).contains(&a) {
-        let plain = format!("{f}");
-        if plain.contains('.') {
-            plain
-        } else {
-            format!("{plain}.0")
+/// Java BigDecimal.toPlainString: plain decimal expansion, no exponent,
+/// trailing zeros preserved by scale (bigdecimal 0.4's Display uses
+/// scientific for negative scale, so this is rendered manually).
+pub fn bigdecimal_to_plain_string(bd: &bigdecimal::BigDecimal) -> String {
+    let (int, scale) = bd.clone().into_bigint_and_exponent();
+    let neg = int.sign() == num_bigint::Sign::Minus;
+    let digits = int.magnitude().to_string();
+    let body = if scale <= 0 {
+        let mut s = digits;
+        for _ in 0..(-scale) {
+            s.push('0');
         }
+        s
     } else {
-        let sci = format!("{f:e}"); // e.g. "1e22", "1.2345e7", "1e-4"
-        let (mant, exp) = sci.split_once('e').unwrap();
-        let mant = if mant.contains('.') { mant.to_string() } else { format!("{mant}.0") };
-        format!("{mant}E{exp}")
+        let scale = scale as usize;
+        if digits.len() > scale {
+            let (a, b) = digits.split_at(digits.len() - scale);
+            format!("{a}.{b}")
+        } else {
+            let mut s = String::from("0.");
+            for _ in 0..(scale - digits.len()) {
+                s.push('0');
+            }
+            s.push_str(&digits);
+            s
+        }
+    };
+    if neg {
+        format!("-{body}")
+    } else {
+        body
     }
+}
+
+pub fn java_double_to_string(f: f64) -> String {
+    // Delegates to the ryu-based JDK 17 Double.toString port in sync_codec
+    // (shortest round-trip digits + Java rendering rules).
+    crate::sync_codec::java_double_to_string(f)
 }
 
 pub fn verified_coin_amount(field: &str, value: WalletNumber) -> Result<String, String> {
@@ -119,16 +139,25 @@ pub fn verified_coin_amount(field: &str, value: WalletNumber) -> Result<String, 
             }
         }
         WalletNumber::Decimal(f) => {
-            if f.is_sign_negative() && !f.is_nan() {
-                Err(format!("Cloud wallet {field} was negative"))
-            } else if f.is_nan() || f.is_infinite() {
+            if f.is_nan() || f.is_infinite() {
                 // org.json rejects NaN/Infinity at parse time; they cannot
                 // arrive as Double here, so reject defensively.
                 Err(format!("Cloud wallet {field} was not a number"))
+            } else if f < 0.0 {
+                // BigDecimal(x).signum() >= 0 accepts -0.0 (BigDecimal has no
+                // negative zero; executed: -0.0 -> "0.0"), rejects true
+                // negatives. `f < 0.0` is exactly that predicate.
+                Err(format!("Cloud wallet {field} was negative"))
             } else {
-                // Kotlin: BigDecimal(value.toString()) with Android Double
-                // typing = BigDecimal(Double.toString(v)); toPlainString.
-                Ok(java_double_to_string(f))
+                // Production: BigDecimal(value.toString()).toPlainString(),
+                // value typed Double by AOSP org.json. Executed against AOSP
+                // android-14.0.0_r1 org.json: fixtures/oracle/
+                // results_verified_amount.tsv (363.0->"363.0",
+                // 1e22->"10000000000000000000000", 0.0001->"0.00010",
+                // 10000000.0->"10000000", -0.0->"0.0").
+                let bd = bigdecimal::BigDecimal::from_str(&java_double_to_string(f))
+                    .expect("Double.toString output always parses as BigDecimal");
+                Ok(bigdecimal_to_plain_string(&bd))
             }
         }
     }

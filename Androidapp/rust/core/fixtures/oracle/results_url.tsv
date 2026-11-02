@@ -1,0 +1,6 @@
+ur01	https://x.supabase.co/rest/v1/transactions?external_reference=eq.ORD+123&select=status
+ur02	https://x.supabase.co/rest/v1/transactions?external_reference=eq.a%2Fb%3Fc%3Dd%26e&select=status
+ur03	https://x.supabase.co/rest/v1/transactions?external_reference=eq.caf%C3%A9&select=status
+ur04	https://x.supabase.co/rest/v1/transactions?external_reference=eq.a*b-c.d_e&select=status
+ur05	https://x.supabase.co/rest/v1/transactions?external_reference=eq.%7Etilde&select=status
+ur06	https://x.supabase.co/rest/v1/transactions?external_reference=eq.&select=status

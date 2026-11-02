@@ -1,0 +1,20 @@
+ph01	Valid	254712345678
+ph02	Valid	254112345678
+ph03	Valid	254712345678
+ph04	Valid	254712345678
+ph05	Valid	254712345678
+ph06	Valid	254112345678
+ph07	Valid	254712345678
+ph08	Invalid:Phone number must contain digits only.	254712345678
+ph09	Invalid:Phone number is required.	
+ph10	Invalid:Phone number is required.	
+ph11	Invalid:Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).	254
+ph12	Invalid:Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).	07123456789
+ph13	Invalid:Kenyan mobile numbers must start with 07XX or 01XX.	254512345678
+ph14	Invalid:Kenyan mobile numbers must start with 07XX or 01XX.	254512345678
+ph15	Invalid:Phone number must contain digits only.	0712678
+ph16	Valid	254712345678
+ph17	Invalid:Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).	071234567
+ph18	Invalid:Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).	٠٧١٢٣٤٥٦٧٨
+ph19	Valid	254712345678
+ph20	Valid	254712345678
