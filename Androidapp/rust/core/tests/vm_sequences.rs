@@ -448,6 +448,8 @@ struct RefFx {
     verified: Option<VerifiedEconomyView>,
     notifications: Vec<NotificationEntry>,
     flip_owner_at_fetch: bool,
+    notifications_fail: bool,
+    verified_fails: bool,
     calls: Vec<String>,
     applied_gift: Option<GiftDialogResolution>,
 }
@@ -462,6 +464,8 @@ impl RefFx {
             verified,
             notifications,
             flip_owner_at_fetch: false,
+            notifications_fail: false,
+            verified_fails: false,
             calls: vec![],
             applied_gift: None,
         }
@@ -495,16 +499,22 @@ impl RefreshNotificationsEffects for RefFx {
     fn session_generation(&self) -> i64 {
         self.session
     }
-    fn fetch_notifications(&mut self, _user: &str) -> Vec<NotificationEntry> {
+    fn fetch_notifications(&mut self, _user: &str) -> Result<Vec<NotificationEntry>, ()> {
         self.calls.push("fetch_notifications".to_string());
-        std::mem::take(&mut self.notifications)
+        if self.notifications_fail {
+            return Err(());
+        }
+        Ok(std::mem::take(&mut self.notifications))
     }
-    fn fetch_verified_profile(&mut self, _user: &str) -> Option<VerifiedEconomyView> {
+    fn fetch_verified_profile(&mut self, _user: &str) -> Result<Option<VerifiedEconomyView>, ()> {
         self.calls.push("fetch_verified".to_string());
+        if self.verified_fails {
+            return Err(());
+        }
         if self.flip_owner_at_fetch {
             self.owner = "other".to_string();
         }
-        self.verified.take()
+        Ok(self.verified.take())
     }
     fn apply_refresh_success(
         &mut self,
@@ -527,14 +537,14 @@ impl RefreshNotificationsEffects for RefFx {
 fn refresh_local_only_never_fetches() {
     let mut fx = RefFx::new(None, vec![]);
     fx.local_only = true;
-    assert!(refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(true));
     assert!(fx.calls.is_empty());
 }
 
 #[test]
 fn refresh_fetch_order_notifications_then_verified() {
     let mut fx = RefFx::new(None, vec![]);
-    assert!(refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(true));
     assert_eq!(fx.calls, vec!["fetch_notifications", "fetch_verified", "apply_notifications_only"]);
 }
 
@@ -543,14 +553,14 @@ fn refresh_stale_owner_discards_everything() {
     // :1819 recheck: owner changed during the verified fetch -> return@launch.
     let mut fx = RefFx::new(Some(econ(vec![])), vec![]);
     fx.flip_owner_at_fetch = true;
-    assert!(!refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(false));
     assert_eq!(fx.calls, vec!["fetch_notifications", "fetch_verified"]);
 }
 
 #[test]
 fn refresh_gift_from_last_gifted_artifact_name() {
     let mut fx = RefFx::new(Some(econ(vec!["Golden Blossom"])), vec![]);
-    assert!(refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(true));
     assert_eq!(fx.applied_gift, Some(GiftDialogResolution::Resolved("artifact_bloom".to_string())));
 }
 
@@ -560,13 +570,31 @@ fn refresh_gift_from_unread_gift_notification_body() {
         Some(econ(vec![])),
         vec![notif(false, "GIFT", "A gift", "You received the Luminescent Moon")],
     );
-    assert!(refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(true));
     assert_eq!(fx.applied_gift, Some(GiftDialogResolution::Resolved("artifact_moon".to_string())));
 }
 
 #[test]
 fn refresh_no_gift_signal_keeps_existing_dialog_item() {
     let mut fx = RefFx::new(Some(econ(vec![])), vec![notif(true, "SYSTEM", "hi", "plain")]);
-    assert!(refresh_notifications(&mut fx));
+    assert_eq!(refresh_notifications(&mut fx), Ok(true));
     assert_eq!(fx.applied_gift, Some(GiftDialogResolution::KeepExisting));
+}
+
+#[test]
+fn refresh_notifications_fetch_throw_propagates() {
+    // :1816 unguarded: the throw LEAVES the driver; verified fetch never runs.
+    let mut fx = RefFx::new(Some(econ(vec![])), vec![]);
+    fx.notifications_fail = true;
+    assert_eq!(refresh_notifications(&mut fx), Err(cyclecare_core::vm_sync::RefreshFault::FetchFailed));
+    assert_eq!(fx.calls, vec!["fetch_notifications"]);
+}
+
+#[test]
+fn refresh_verified_throw_is_distinct_from_non_success() {
+    // :1818 unguarded throw propagates (NOT the :1847 notifications-only path).
+    let mut fx = RefFx::new(Some(econ(vec![])), vec![]);
+    fx.verified_fails = true;
+    assert_eq!(refresh_notifications(&mut fx), Err(cyclecare_core::vm_sync::RefreshFault::FetchFailed));
+    assert_eq!(fx.calls, vec!["fetch_notifications", "fetch_verified"]);
 }

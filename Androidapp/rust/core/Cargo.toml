@@ -6,6 +6,8 @@ description = "Framework-neutral CycleCare domain/state contracts (identity, sta
 license = "UNLICENSED"
 
 [dependencies]
+aes-gcm = "0.11"
+base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
 pbkdf2 = "0.12"

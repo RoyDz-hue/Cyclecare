@@ -535,10 +535,13 @@ pub trait RefreshNotificationsEffects {
     fn effective_user_id(&self) -> &str;
     fn session_generation(&self) -> i64;
     /// :1816 notificationService.fetchNotifications(userIdentifier).
-    fn fetch_notifications(&mut self, user: &str) -> Vec<NotificationEntry>;
+    /// UNGUARDED in source: Err = the coroutine-cancelling throw.
+    fn fetch_notifications(&mut self, user: &str) -> Result<Vec<NotificationEntry>, ()>;
     /// :1818 economyService.fetchVerifiedProfile(userIdentifier);
-    /// Some(view) iff EconomyResult.Success.
-    fn fetch_verified_profile(&mut self, user: &str) -> Option<VerifiedEconomyView>;
+    /// Ok(Some(view)) iff EconomyResult.Success; Ok(None) = any non-Success
+    /// EconomyResult (the :1847 notifications-only path). Err = an
+    /// UNGUARDED throw (distinct from a non-Success result).
+    fn fetch_verified_profile(&mut self, user: &str) -> Result<Option<VerifiedEconomyView>, ()>;
     /// :1839-1846 success assembly: notifications + economyProfile +
     /// walletStatus READY + ban/suspension flags + notice + gift resolution.
     fn apply_refresh_success(
@@ -554,18 +557,26 @@ pub trait RefreshNotificationsEffects {
     fn apply_refresh_notifications_only(&mut self, list: Vec<NotificationEntry>);
 }
 
-/// :1810-1851 composed. Returns false when the owner/session recheck at
-/// :1819 discarded the run (source return@launch, nothing applied).
-pub fn refresh_notifications<E: RefreshNotificationsEffects>(fx: &mut E) -> bool {
+/// Faults propagating out of refreshNotifications. Both service fetches are
+/// UNGUARDED in source: a throw cancels the coroutine. Err models that the
+/// failure LEAVES the driver; host uncaught-handler semantics stay unproven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshFault {
+    FetchFailed,
+}
+
+/// :1810-1851 composed. Ok(false) when the owner/session recheck at :1819
+/// discarded the run (source return@launch, nothing applied).
+pub fn refresh_notifications<E: RefreshNotificationsEffects>(fx: &mut E) -> Result<bool, RefreshFault> {
     if fx.is_local_only() || !fx.user_id_present() {
-        return true; // :1811 plain return, no launch
+        return Ok(true); // :1811 plain return, no launch
     }
     let user = fx.effective_user_id().to_string(); // :1814
     let session = fx.session_generation(); // :1815
-    let list = fx.fetch_notifications(&user); // :1816
-    let verified = fx.fetch_verified_profile(&user); // :1818
+    let list = fx.fetch_notifications(&user).map_err(|()| RefreshFault::FetchFailed)?; // :1816
+    let verified = fx.fetch_verified_profile(&user).map_err(|()| RefreshFault::FetchFailed)?; // :1818
     if user != fx.effective_user_id() || session != fx.session_generation() {
-        return false; // :1819
+        return Ok(false); // :1819
     }
     match verified {
         Some(econ) => {
@@ -601,5 +612,5 @@ pub fn refresh_notifications<E: RefreshNotificationsEffects>(fx: &mut E) -> bool
         }
         None => fx.apply_refresh_notifications_only(list), // :1847-1849
     }
-    true
+    Ok(true)
 }

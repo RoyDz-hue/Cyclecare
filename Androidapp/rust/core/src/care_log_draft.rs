@@ -80,7 +80,7 @@ mod null_proposal_tests {
 // confirmCareLog (:866-882) + CareConversationPolicy.merge (:58-66).
 // ---------------------------------------------------------------------------
 
-use crate::kotlin_text::kotlin_is_blank;
+use crate::kotlin_text::{kotlin_is_blank, kotlin_trim};
 
 /// The five fields merge() touches (CycleDayLog subset).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,13 +99,6 @@ pub struct ParsedInterpretation {
     pub mood_result: Option<String>,
     pub symptoms_result: Vec<String>,
     pub pain_intensity_result: i32,
-}
-
-/// Kotlin trim() on this toolchain strips NBSP too (empirically probed,
-/// jdk-17.0.21+9 + kotlinc 2.1.0): char-wise whitespace per Kotlin's
-/// isWhitespace, matching kotlin_text's established helper semantics.
-fn kotlin_trim(s: &str) -> &str {
-    s.trim_matches(|c: char| c.is_whitespace() || c == '\u{00A0}')
 }
 
 /// CareConversationPolicy.merge (:58-66) verbatim: null results fall back to
@@ -138,13 +131,25 @@ pub fn merge_log(existing: &MergedLogFields, parsed: &ParsedInterpretation) -> M
     }
 }
 
+/// Faults propagating out of the confirmCareLog launch body. The repository
+/// read (:873) and save (:875) are UNGUARDED Kotlin calls: a throw cancels
+/// the coroutine. Err models that the failure LEAVES the driver; the host's
+/// uncaught-coroutine-handler semantics stay unproven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmFault {
+    ReadFailed,
+    SaveFailed,
+}
+
 /// Host effects for the confirmCareLog launch body (:871-881).
 pub trait ConfirmEffects {
     fn effective_user_id(&self) -> &str;
-    /// :873 repository.getLogForDate(date); None -> CycleDayLog(date) default.
-    fn get_log_for_date(&mut self, date: &str) -> Option<MergedLogFields>;
-    /// :875 repository.saveLog(merge(existing, interpretation)).
-    fn save_log(&mut self, merged: &MergedLogFields);
+    /// :873 repository.getLogForDate(date); Ok(None) -> CycleDayLog(date)
+    /// default. Err = the source's unguarded throw.
+    fn get_log_for_date(&mut self, date: &str) -> Result<Option<MergedLogFields>, ()>;
+    /// :875 repository.saveLog(merge(existing, interpretation)); Err = the
+    /// source's unguarded throw (message/calculations/autosync never run).
+    fn save_log(&mut self, merged: &MergedLogFields) -> Result<(), ()>;
     /// :876 careSavedReviewMessage = CARE_LOG_SAVED_MESSAGE.
     fn show_saved_message(&mut self);
     /// :877
@@ -161,12 +166,13 @@ pub fn confirm_care_log_body<E: ConfirmEffects>(
     confirmed_owner: &str,
     date: &str,
     interpretation: &ParsedInterpretation,
-) -> bool {
+) -> Result<bool, ConfirmFault> {
     if confirmed_owner != fx.effective_user_id() {
-        return false; // :872
+        return Ok(false); // :872
     }
     let existing = fx
         .get_log_for_date(date)
+        .map_err(|()| ConfirmFault::ReadFailed)?
         .unwrap_or(MergedLogFields {
             flow_level: String::new(),
             energy_level: String::new(),
@@ -177,12 +183,12 @@ pub fn confirm_care_log_body<E: ConfirmEffects>(
             // ovulationTest="NONE" etc. - only the five merged fields are
             // modeled here; the host writes the full row.
     if confirmed_owner != fx.effective_user_id() {
-        return false; // :874
+        return Ok(false); // :874
     }
     let merged = merge_log(&existing, interpretation);
-    fx.save_log(&merged); // :875
+    fx.save_log(&merged).map_err(|()| ConfirmFault::SaveFailed)?; // :875
     fx.show_saved_message(); // :876
     fx.update_calculations(); // :877
     fx.auto_sync_silently(); // :878
-    true
+    Ok(true)
 }

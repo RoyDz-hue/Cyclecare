@@ -22,6 +22,7 @@ pub mod sync_use_case;
 pub mod care_image_gen;
 pub mod debug_bridge;
 pub mod data_export_json;
+pub mod db_key_manager;
 pub mod data_export_pdf;
 pub mod sound_feedback;
 pub mod network_helper;
