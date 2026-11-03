@@ -671,7 +671,11 @@ workflows:
           test "$(grep 'certificate SHA-256 digest' build-logs/lab-signing.txt | sort -u | wc -l)" -eq 1
           # App package identity, fail-closed.
           "$BT/aapt2" dump badging lab-artifacts/app-arm64-v8a-lab.apk | grep -E "package: name='com.cyclecare.app.lab'" | tee build-logs/lab-package.txt
-          "$BT/aapt2" dump badging lab-artifacts/app-arm64-v8a-lab.apk | grep -o "sdkVersion:'24'"
+          # minSdk from the binary manifest (xmltree format is stable across
+          # build-tools; badging renamed sdkVersion -> minSdkVersion in 36.x).
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml lab-artifacts/app-arm64-v8a-lab.apk \
+            | tee build-logs/lab-app-manifest.xmltree.txt > /dev/null
+          grep -qE 'android:minSdkVersion\(0x[0-9a-f]+\)=24' build-logs/lab-app-manifest.xmltree.txt
           # Test APK: package + instrumentation target/runner from the actual
           # binary manifest (aapt2 xmltree), fail-closed. Attribute format
           # verified against aapt2 34.0.0 xmltree output.
