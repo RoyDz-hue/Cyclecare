@@ -146,6 +146,9 @@ object CycleScreenStateAdapter {
             if (reqStr(ok, "month") != month.toString()) return null
             val map = parseMonth(ok)
             val entries = ok.getJSONArray("predictions")
+            // Production Rust returns zero entries when the VM-equivalent
+            // anchor gate is false. It must not send hidden predictions.
+            if (!expectedHasCycleAnchor) return if (entries.length() == 0) emptyMap() else null
             if (entries.length() != month.lengthOfMonth()) return null
             val seen = HashSet<String>()
             for (i in 0 until entries.length()) {
