@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use cyclecare_core::db_key_manager::{DbKeyEffects, DbKeyError};
+use cyclecare_core::db_key_manager::{passphrase_from_secret, DbKeyEffects, DbKeyError};
 use cyclecare_core::owner_data_gate::{database_name_for, namespace_for, LEGACY_DATABASE_NAME};
 use cyclecare_core::owner_switch::*;
 
@@ -103,11 +103,19 @@ impl EncryptionFs for AssemblyFx {
     fn dir_exists(&self) -> bool { true }
     fn mkdirs(&mut self) -> bool { true }
     fn exists(&self, f: DbFile) -> bool { self.fs.exists(f) }
-    fn readable_with_key(&self, f: DbFile) -> bool { self.fs.readable_key(f) }
+    fn readable_with_key(&self, f: DbFile, key: &[u8]) -> bool {
+        assert_eq!(key, passphrase_from_secret(&[9u8; 32]).as_bytes(),
+            "probe key must be the SAME passphrase the key manager produced");
+        self.fs.readable_key(f)
+    }
     fn readable_plaintext(&self, f: DbFile) -> bool { self.fs.readable_plain(f) }
     fn remove(&mut self, f: DbFile) -> bool { self.fs.remove(f) }
     fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.fs.rename(from, to) }
-    fn export(&mut self) -> Result<(), ()> { self.fs.export() }
+    fn export(&mut self, passphrase: &str) -> Result<(), ()> {
+        assert_eq!(passphrase, passphrase_from_secret(&[9u8; 32]),
+            "export passphrase must be the SAME value from the key manager");
+        self.fs.export(passphrase)
+    }
 }
 
 impl BuildEffects for AssemblyFx {
@@ -142,6 +150,28 @@ fn build_assembly_order_fresh_install() {
         fx.calls.borrow().as_slice(),
         vec!["load_sqlcipher", "get_wrapped", "random", "iv", "commit", "room_build:cycle_care_database"]
     );
+}
+
+#[test]
+fn build_assembly_conversion_path_threads_the_same_passphrase() {
+    // Legacy plaintext db present: the full chain runs - key probes, export,
+    // factory - and the inline assertions in AssemblyFx prove the SAME
+    // key-manager-produced passphrase reaches every consumer.
+    let mut fx = assembly_fs_new_device();
+    fx.fs.put("db", false, true); // legacy plaintext -> conversion path
+    fx.fs.export_ok = true;
+    let h = build_database(&mut fx, LEGACY_DATABASE_NAME).unwrap();
+    assert_eq!(h, 42);
+    assert_eq!(
+        fx.calls.borrow().as_slice(),
+        vec!["load_sqlcipher", "get_wrapped", "random", "iv", "commit", "room_build:cycle_care_database"]
+    );
+    assert_eq!(
+        fx.fs.log,
+        vec!["export", "mv:db->bak", "mv:tmp->db", "rm:bak"],
+        "conversion ran through the composed driver"
+    );
+    assert!(fx.fs.readable_key(DbFile::Database));
 }
 
 #[test]
@@ -231,7 +261,7 @@ impl VirtFs {
         }
         true
     }
-    fn export(&mut self) -> Result<(), ()> {
+    fn export(&mut self, _passphrase: &str) -> Result<(), ()> {
         self.log.push("export".to_string());
         if self.export_ok {
             // export produces a key-readable temp file
@@ -255,11 +285,11 @@ impl EncryptionFs for VirtFs {
         self.mkdirs_ok
     }
     fn exists(&self, f: DbFile) -> bool { VirtFs::exists(self, f) }
-    fn readable_with_key(&self, f: DbFile) -> bool { self.readable_key(f) }
+    fn readable_with_key(&self, f: DbFile, _key: &[u8]) -> bool { self.readable_key(f) }
     fn readable_plaintext(&self, f: DbFile) -> bool { self.readable_plain(f) }
     fn remove(&mut self, f: DbFile) -> bool { VirtFs::remove(self, f) }
     fn rename(&mut self, from: DbFile, to: DbFile) -> bool { VirtFs::rename(self, from, to) }
-    fn export(&mut self) -> Result<(), ()> { VirtFs::export(self) }
+    fn export(&mut self, passphrase: &str) -> Result<(), ()> { VirtFs::export(self, passphrase) }
 }
 
 #[test]
@@ -378,11 +408,11 @@ fn export_cleanup_failure_masks_the_export_message() {
         fn dir_exists(&self) -> bool { true }
         fn mkdirs(&mut self) -> bool { true }
         fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
-        fn readable_with_key(&self, f: DbFile) -> bool { self.0.readable_key(f) }
+        fn readable_with_key(&self, f: DbFile, _key: &[u8]) -> bool { self.0.readable_key(f) }
         fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
         fn remove(&mut self, f: DbFile) -> bool { self.0.remove(f) }
         fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
-        fn export(&mut self) -> Result<(), ()> {
+        fn export(&mut self, _passphrase: &str) -> Result<(), ()> {
             self.0.log.push("export".into());
             self.0.put("tmp", false, false); // partial output left behind
             Err(())
@@ -410,7 +440,7 @@ fn export_pre_remove_failure_is_not_wrapped() {
         fn dir_exists(&self) -> bool { true }
         fn mkdirs(&mut self) -> bool { true }
         fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
-        fn readable_with_key(&self, f: DbFile) -> bool { self.0.readable_key(f) }
+        fn readable_with_key(&self, f: DbFile, _key: &[u8]) -> bool { self.0.readable_key(f) }
         fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
         fn remove(&mut self, f: DbFile) -> bool {
             let ok = self.0.remove(f);
@@ -421,7 +451,7 @@ fn export_pre_remove_failure_is_not_wrapped() {
             ok
         }
         fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
-        fn export(&mut self) -> Result<(), ()> {
+        fn export(&mut self, _passphrase: &str) -> Result<(), ()> {
             self.0.log.push("export".into());
             Ok(())
         }
@@ -451,11 +481,11 @@ fn temp_verification_failure_removes_temp_and_throws() {
         fn dir_exists(&self) -> bool { true }
         fn mkdirs(&mut self) -> bool { true }
         fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
-        fn readable_with_key(&self, f: DbFile) -> bool { self.0.readable_key(f) }
+        fn readable_with_key(&self, f: DbFile, _key: &[u8]) -> bool { self.0.readable_key(f) }
         fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
         fn remove(&mut self, f: DbFile) -> bool { self.0.remove(f) }
         fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
-        fn export(&mut self) -> Result<(), ()> {
+        fn export(&mut self, _passphrase: &str) -> Result<(), ()> {
             self.0.log.push("export".into());
             self.0.put("tmp", false, false); // produced but unreadable
             Ok(())
@@ -490,7 +520,7 @@ fn final_verification_failure_restores_backup_and_throws() {
         fn dir_exists(&self) -> bool { true }
         fn mkdirs(&mut self) -> bool { true }
         fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
-        fn readable_with_key(&self, f: DbFile) -> bool {
+        fn readable_with_key(&self, f: DbFile, _key: &[u8]) -> bool {
             // temp verifies; the PROMOTED db does not (corrupt in place)
             match f {
                 DbFile::Temp => self.0.readable_key(f),
@@ -505,7 +535,7 @@ fn final_verification_failure_restores_backup_and_throws() {
         fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
         fn remove(&mut self, f: DbFile) -> bool { self.0.remove(f) }
         fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
-        fn export(&mut self) -> Result<(), ()> {
+        fn export(&mut self, _passphrase: &str) -> Result<(), ()> {
             self.0.put("tmp", true, false);
             self.0.log.push("export".into());
             Ok(())

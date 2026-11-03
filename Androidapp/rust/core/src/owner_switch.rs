@@ -178,15 +178,20 @@ pub trait EncryptionFs {
     fn dir_exists(&self) -> bool;
     fn mkdirs(&mut self) -> bool;
     fn exists(&self, f: DbFile) -> bool;
-    fn readable_with_key(&self, f: DbFile) -> bool;
+    /// isReadable(file, key) :117-135: exists && length>0 && SQLCipher
+    /// openDatabase(file, key) + isDatabaseIntegrityOk. The key bytes are
+    /// the passphrase UTF-8 bytes, ACTUALLY threaded from the driver.
+    fn readable_with_key(&self, f: DbFile, key: &[u8]) -> bool;
+    /// isReadablePlaintext :119 - empty key, OPEN_READWRITE.
     fn readable_plaintext(&self, f: DbFile) -> bool;
     /// File.delete(): false on failure -> removeOrThrow throws ERR_REMOVE.
     fn remove(&mut self, f: DbFile) -> bool;
     /// File.renameTo(): false on failure. renameOrThrow throws ERR_RENAME;
     /// the two BEST-EFFORT renames ignore the result.
     fn rename(&mut self, from: DbFile, to: DbFile) -> bool;
-    /// exportPlaintextToEncrypted's SQLCipher pipeline.
-    fn export(&mut self) -> Result<(), ()>;
+    /// exportPlaintextToEncrypted's SQLCipher pipeline (:61-92); the
+    /// passphrase is the ATTACH ... KEY ? parameter.
+    fn export(&mut self, passphrase: &str) -> Result<(), ()>;
 }
 
 /// removeOrThrow: only touches existing files; failed delete throws.
@@ -215,7 +220,7 @@ fn remove_sidecars<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static str> {
 }
 
 /// promoteEncryptedFile (:94-115).
-fn promote_encrypted_file<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static str> {
+fn promote_encrypted_file<F: EncryptionFs>(fs: &mut F, key: &[u8]) -> Result<(), &'static str> {
     if fs.exists(DbFile::Database) {
         remove_or_throw(fs, DbFile::Backup)?;
         rename_or_throw(fs, DbFile::Database, DbFile::Backup)?;
@@ -227,7 +232,7 @@ fn promote_encrypted_file<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static st
         }
         return Err(ERR_PROMOTE);
     }
-    if !fs.readable_with_key(DbFile::Database) {
+    if !fs.readable_with_key(DbFile::Database, key) {
         remove_or_throw(fs, DbFile::Database)?;
         if fs.exists(DbFile::Backup) {
             rename_or_throw(fs, DbFile::Backup, DbFile::Database)?;
@@ -239,25 +244,27 @@ fn promote_encrypted_file<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static st
 }
 
 /// ensureEncrypted (:11-58): the branch structure and messages, ported.
-/// The name lives in the host's probe state; `passphrase` is threaded
-/// through for the host's key probes and export (source passes it
-/// explicitly); the driver itself never inspects it.
-pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F, _passphrase: &str) -> Result<(), &'static str> {
+/// The name lives in the host's probe state. `passphrase` is threaded
+/// INTO THE PROBES AND EXPORT as the source threads it: key probes receive
+/// passphrase.toByteArray(UTF_8) (:19) and export receives the String
+/// (:50). The driver never inspects the value itself.
+pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F, passphrase: &str) -> Result<(), &'static str> {
+    let key = passphrase.as_bytes();
     if !fs.dir_available() {
         return Err(ERR_DIR_UNAVAILABLE);
     }
     if !fs.dir_exists() && !fs.mkdirs() {
         return Err(ERR_DIR_CREATE);
     }
-    if fs.readable_with_key(DbFile::Database) {
+    if fs.readable_with_key(DbFile::Database, key) {
         remove_or_throw(fs, DbFile::Temp)?;
         remove_or_throw(fs, DbFile::Backup)?;
         remove_sidecars(fs)?;
         return Ok(());
     }
     // Resume an interrupted conversion: a verified temp export is promoted.
-    if fs.readable_with_key(DbFile::Temp) {
-        return promote_encrypted_file(fs);
+    if fs.readable_with_key(DbFile::Temp, key) {
+        return promote_encrypted_file(fs, key);
     }
     remove_or_throw(fs, DbFile::Temp)?;
     // Recover the original if a prior run stopped after moving it aside.
@@ -279,15 +286,15 @@ pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F, _passphrase: &str) -> Resul
     // (destinationFile) BEFORE the try block - observable under races and
     // its failure is NOT wrapped by the export catch (it precedes it).
     remove_or_throw(fs, DbFile::Temp)?;
-    if fs.export().is_err() {
+    if fs.export(passphrase).is_err() {
         // Source: catch { removeOrThrow(temp); throw ISE(ERR_EXPORT, cause) }.
         // A removeOrThrow failure inside the catch MASKS ERR_EXPORT.
         remove_or_throw(fs, DbFile::Temp)?;
         return Err(ERR_EXPORT);
     }
-    if !fs.readable_with_key(DbFile::Temp) {
+    if !fs.readable_with_key(DbFile::Temp, key) {
         remove_or_throw(fs, DbFile::Temp)?;
         return Err(ERR_VERIFY_TEMP);
     }
-    promote_encrypted_file(fs)
+    promote_encrypted_file(fs, key)
 }
