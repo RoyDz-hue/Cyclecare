@@ -37,6 +37,65 @@ public class RustCalendarLabInstrumentedTest {
         }
         return null;
     }
+    // A Compose Icon may expose a description-only virtual child. Actions live
+    // on its merged IconButton ancestor. Never replace a failed action with a
+    // coordinate tap or pretend a missing action is a successful navigation.
+    private boolean offersClick(AccessibilityNodeInfo node) {
+        if (node == null || !node.isEnabled() || !node.isVisibleToUser() || !node.isClickable()) return false;
+        for (AccessibilityNodeInfo.AccessibilityAction a: node.getActionList())
+            if (a.getId() == AccessibilityNodeInfo.ACTION_CLICK) return true;
+        return false;
+    }
+    private AccessibilityNodeInfo clickTarget(AccessibilityNodeInfo root, String description) {
+        AccessibilityNodeInfo node = find(root, description);
+        if (node == null) return null;
+        android.graphics.Rect labelBounds = new android.graphics.Rect(); node.getBoundsInScreen(labelBounds);
+        final int labelWindow = node.getWindowId();
+        for (int depth = 0; node != null && depth < 4; depth++, node = node.getParent()) {
+            if (node.getWindowId() != labelWindow || node.isScrollable()) return null;
+            android.graphics.Rect bounds = new android.graphics.Rect(); node.getBoundsInScreen(bounds);
+            if (!bounds.contains(labelBounds)) return null;
+            if (!"com.cyclecare.app.lab".contentEquals(node.getPackageName() == null ? "" : node.getPackageName())) return null;
+            if (offersClick(node)) return node;
+        }
+        return null;
+    }
+    private boolean textVisible(AccessibilityNodeInfo node, String text) {
+        if (node == null) return false;
+        if (node.isVisibleToUser() && text.contentEquals(node.getText() == null ? "" : node.getText())) return true;
+        for (int i=0; i<node.getChildCount(); i++) if (textVisible(node.getChild(i), text)) return true;
+        return false;
+    }
+    private int treeBudget;
+    private void dumpTree(AccessibilityNodeInfo root) {
+        treeBudget = 250;
+        tree(root, 0);
+    }
+    private void tree(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 20 || treeBudget-- <= 0) return;
+        android.graphics.Rect bounds = new android.graphics.Rect(); node.getBoundsInScreen(bounds);
+        android.util.Log.i("RustLabA11y", "depth=" + depth + " class=" + node.getClassName() +
+            " package=" + node.getPackageName() + " text=" + node.getText() + " desc=" + node.getContentDescription() +
+            " enabled=" + node.isEnabled() + " visible=" + node.isVisibleToUser() + " clickable=" + node.isClickable() +
+            " actions=" + node.getActionList() + " bounds=" + bounds);
+        for (int i=0; i<node.getChildCount(); i++) tree(node.getChild(i), depth+1);
+    }
+    private void clickDescription(android.app.Instrumentation inst, String description) throws Exception {
+        inst.waitForIdleSync();
+        await(new Condition() { public boolean ready() {
+            return clickTarget(inst.getUiAutomation().getRootInActiveWindow(), description) != null;
+        } });
+        AccessibilityNodeInfo root = inst.getUiAutomation().getRootInActiveWindow();
+        dumpTree(root);
+        AccessibilityNodeInfo label = find(root, description);
+        AccessibilityNodeInfo target = clickTarget(root, description);
+        assertNotNull("Missing accessible label: " + description, label);
+        assertNotNull("Label has no enabled visible ACTION_CLICK ancestor: " + description, target);
+        android.util.Log.i("RustLabA11y", "click=" + description + " labelClickable=" + label.isClickable() +
+            " labelActions=" + label.getActionList() + " target=" + target);
+        assertTrue("Accessibility ACTION_CLICK returned false: " + description,
+            target.performAction(AccessibilityNodeInfo.ACTION_CLICK));
+    }
     @SuppressWarnings("deprecation")
     private void assertIsolatedProcess() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -64,16 +123,18 @@ public class RustCalendarLabInstrumentedTest {
         try {
             await(new Condition() { public boolean ready() { return activity.nativeReady(); } });
             assertEquals("", activity.checkInitialMonth());
-            await(new Condition() { public boolean ready() { return find(inst.getUiAutomation().getRootInActiveWindow(), "Next month") != null; } });
+            inst.waitForIdleSync();
+            await(new Condition() { public boolean ready() { return textVisible(inst.getUiAutomation().getRootInActiveWindow(), "Calculation: native"); } });
+            dumpTree(inst.getUiAutomation().getRootInActiveWindow());
             Bitmap screenshot = inst.getUiAutomation().takeScreenshot();
             assertNotNull(screenshot);
             FileOutputStream stream = new FileOutputStream(new File(context.getExternalFilesDir(null), "synthetic-calendar-native.png"));
             try { assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream)); } finally { stream.close(); }
-            assertTrue(find(inst.getUiAutomation().getRootInActiveWindow(), "Next month").performAction(AccessibilityNodeInfo.ACTION_CLICK));
+            clickDescription(inst, "Next month");
             await(new Condition() { public boolean ready() { return activity.nativeReady() && activity.monthValue() == 3; } });
             AccessibilityNodeInfo first = find(inst.getUiAutomation().getRootInActiveWindow(), "March 1");
             assertNotNull("Calendar needs a non-color accessibility cue", first);
-            assertTrue(first.performAction(AccessibilityNodeInfo.ACTION_CLICK));
+            clickDescription(inst, "March 1");
             await(new Condition() { public boolean ready() { return activity.selectedMarchFirst(); } });
             final boolean[] captured = new boolean[1];
             inst.runOnMainSync(new Runnable() { public void run() { captured[0] = activity.captureMarchAndSupersede(); } });
@@ -81,6 +142,12 @@ public class RustCalendarLabInstrumentedTest {
             await(new Condition() { public boolean ready() { return activity.nativeReady() && activity.epochValue() == 2L; } });
             assertEquals("", activity.checkEpochOnlyRejection());
             assertIsolatedProcess();
-        } finally { inst.runOnMainSync(new Runnable() { public void run() { activity.finish(); } }); }
+        } finally {
+            try { dumpTree(inst.getUiAutomation().getRootInActiveWindow()); }
+            catch (Exception diagnosticFailure) {
+                android.util.Log.w("RustLabA11y", "Final diagnostic failed; preserving test outcome", diagnosticFailure);
+            }
+            inst.runOnMainSync(new Runnable() { public void run() { activity.finish(); } });
+        }
     }
 }

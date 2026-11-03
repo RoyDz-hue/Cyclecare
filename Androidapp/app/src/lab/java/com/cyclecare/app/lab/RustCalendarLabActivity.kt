@@ -5,6 +5,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.*
 import com.cyclecare.app.data.local.CycleSettings
 import com.cyclecare.app.ui.theme.CycleCareTheme
@@ -91,6 +95,8 @@ class RustCalendarLabActivity : ComponentActivity() {
             var status by remember { mutableStateOf("loading") }
             val producer = remember { Any() }
             CycleCareTheme(darkTheme = false) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background,
+                    contentColor = MaterialTheme.colorScheme.onBackground) {
                 Column {
                     Text("Synthetic calendar lab - estimates, not medical advice")
                     Text("Calculation: $status")
@@ -104,6 +110,7 @@ class RustCalendarLabActivity : ComponentActivity() {
                         onNativeState = { status = it; nativeStatus = it },
                         onAcceptedResult = { acceptedResult = it }
                     )
+                }
                 }
             }
         }
