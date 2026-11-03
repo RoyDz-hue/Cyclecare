@@ -13,7 +13,7 @@ impl ImageHttp for Scripted {
     }
 }
 fn ok_resp(bytes: Vec<u8>) -> ImageResponse {
-    ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: bytes.len() as i64, chunks: vec![bytes] }
+    ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: bytes.len() as i64, chunks: vec![StreamChunk::Data(bytes)] }
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn status_message_matrix_verbatim() {
         (302, "Image creation is temporarily unavailable. Please try again later."),
     ];
     for (code, msg) in cases {
-        let e = handle_response(ImageResponse { status: code, has_body: true, content_type: Some("image/png".into()), content_length: 3, chunks: vec![vec![1, 2, 3]] }).unwrap_err();
+        let e = handle_response(ImageResponse { status: code, has_body: true, content_type: Some("image/png".into()), content_length: 3, chunks: vec![StreamChunk::Data(vec![1, 2, 3])] }).unwrap_err();
         assert_eq!(e, ImageGenError::Message(msg.into()), ":74-81 code {code}");
     }
     for ok in [200u16, 201, 204, 299] {
@@ -97,24 +97,24 @@ fn status_message_matrix_verbatim() {
 fn body_and_content_type_guards() {
     let e = handle_response(ImageResponse { status: 200, has_body: false, content_type: None, content_length: 0, chunks: vec![] }).unwrap_err();
     assert_eq!(e, ImageGenError::Message("Image creation couldn't finish. Please try again later.".into()), ":83-85 null body");
-    let e = handle_response(ImageResponse { status: 200, has_body: true, content_type: None, content_length: 1, chunks: vec![vec![1]] }).unwrap_err();
+    let e = handle_response(ImageResponse { status: 200, has_body: true, content_type: None, content_length: 1, chunks: vec![StreamChunk::Data(vec![1])] }).unwrap_err();
     assert_eq!(e, ImageGenError::Message("Image creation couldn't finish. Please try again later.".into()), ":90 missing header -> orEmpty not in set");
-    let e = handle_response(ImageResponse { status: 200, has_body: true, content_type: Some("application/json".into()), content_length: 1, chunks: vec![vec![1]] }).unwrap_err();
+    let e = handle_response(ImageResponse { status: 200, has_body: true, content_type: Some("application/json".into()), content_length: 1, chunks: vec![StreamChunk::Data(vec![1])] }).unwrap_err();
     assert_eq!(e, ImageGenError::Message("Image creation couldn't finish. Please try again later.".into()), ":91 not an image type");
     // Parameters stripped, case-insensitive (:86-89).
-    let ok = handle_response(ImageResponse { status: 200, has_body: true, content_type: Some("IMAGE/PNG ; charset=binary".into()), content_length: 1, chunks: vec![vec![7]] }).unwrap();
+    let ok = handle_response(ImageResponse { status: 200, has_body: true, content_type: Some("IMAGE/PNG ; charset=binary".into()), content_length: 1, chunks: vec![StreamChunk::Data(vec![7])] }).unwrap();
     assert_eq!(ok, vec![7]);
 }
 
 #[test]
 fn size_cap_declared_and_mid_stream() {
-    let big_declared = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: MAX_IMAGE_BYTES as i64 + 1, chunks: vec![vec![1]] };
+    let big_declared = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: MAX_IMAGE_BYTES as i64 + 1, chunks: vec![StreamChunk::Data(vec![1])] };
     assert_eq!(handle_response(big_declared).unwrap_err(), ImageGenError::Message("This image is too large to display. Please try again.".into()), ":94-95 declared over cap");
-    let unknown_len = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![vec![5; 100]] };
+    let unknown_len = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![StreamChunk::Data(vec![5; 100])] };
     assert_eq!(handle_response(unknown_len).unwrap().len(), 100, "contentLength -1 (unknown) falls through");
-    let mid = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![vec![0u8; MAX_IMAGE_BYTES], vec![1]] };
+    let mid = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![StreamChunk::Data(vec![0u8; MAX_IMAGE_BYTES]), StreamChunk::Data(vec![1])] };
     assert_eq!(handle_response(mid).unwrap_err(), ImageGenError::Message("This image is too large to display. Please try again.".into()), ":101-103 running total crosses cap mid-stream");
-    let exact = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![vec![0u8; MAX_IMAGE_BYTES]] };
+    let exact = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1, chunks: vec![StreamChunk::Data(vec![0u8; MAX_IMAGE_BYTES])] };
     assert_eq!(handle_response(exact).unwrap().len(), MAX_IMAGE_BYTES, "exactly at cap is allowed (> not >=)");
     let empty = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: 0, chunks: vec![] };
     assert_eq!(handle_response(empty).unwrap_err(), ImageGenError::Message("Image creation couldn't finish. Please try again later.".into()), ":109 empty image");
@@ -132,4 +132,52 @@ fn transport_error_mapping() {
     let seen = s.seen.unwrap();
     assert_eq!(seen.bearer_token, "tok");
     assert_eq!(seen.payload_json, r#"{"style":"sunrise","image_consent":true,"custom_prompt":"hi"}"#);
+}
+
+#[test]
+fn builder_url_validation_is_a_raw_iae_outside_the_catch() {
+    // Non-http(s) scheme -> toHttpUrl throws IAE (Request.kt:172-187); the
+    // exception type and its position OUTSIDE the :70 try/catch are
+    // source-verified; the message text is modeled (labeled on the enum).
+    let e = build_request(CareImageStyle::Ocean, "t", "ftp://x.co", ANON, "").unwrap_err();
+    assert!(matches!(e, ImageGenError::RawIllegalArgument(_)), "raw IAE, not user-safe copy");
+    // ws:/wss: are silently rewritten (Request.kt:176-186) and accepted.
+    assert!(build_request(CareImageStyle::Ocean, "t", "wss://x.co", ANON, "").is_ok(), "wss -> https rewrite");
+    assert!(build_request(CareImageStyle::Ocean, "t", "ws://x.co", ANON, "").is_ok(), "ws -> http rewrite");
+    // No host -> invalid.
+    let e = build_request(CareImageStyle::Ocean, "t", "https://", ANON, "").unwrap_err();
+    assert!(matches!(e, ImageGenError::RawIllegalArgument(_)));
+}
+
+#[test]
+fn builder_header_value_validation_verbatim_okhttp() {
+    // Newline in the token -> checkValue IAE at the 'Bearer \n...' index 7
+    // (Headers.kt:450-459). Authorization is sensitive -> value NOT echoed.
+    let e = build_request(CareImageStyle::Ocean, "tok\nen", BASE, ANON, "").unwrap_err();
+    assert_eq!(e, ImageGenError::RawIllegalArgument("Unexpected char 0x0a at 10 in Authorization value".into()));
+    // Non-sensitive header echoes the value (apikey).
+    let e = build_request(CareImageStyle::Ocean, "t", BASE, "bad\u{1}key", "").unwrap_err();
+    assert_eq!(e, ImageGenError::RawIllegalArgument("Unexpected char 0x01 at 3 in apikey value: bad\u{1}key".into()));
+    // Tab is explicitly allowed by checkValue.
+    assert!(build_request(CareImageStyle::Ocean, "to\tk", BASE, ANON, "").is_ok());
+    // DEL (0x7f) is outside the allowed range.
+    let e = build_request(CareImageStyle::Ocean, "to\u{7f}k", BASE, ANON, "").unwrap_err();
+    assert!(matches!(e, ImageGenError::RawIllegalArgument(_)), "0x7f rejected");
+    // Non-ASCII (>0x7e) is rejected too - the range tops at '~'.
+    let e = build_request(CareImageStyle::Ocean, "tök", BASE, ANON, "").unwrap_err();
+    assert_eq!(e, ImageGenError::RawIllegalArgument("Unexpected char 0xf6 at 8 in Authorization value".into()));
+}
+
+#[test]
+fn mid_stream_io_error_maps_to_generic_message() {
+    let resp = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1,
+        chunks: vec![StreamChunk::Data(vec![1, 2]), StreamChunk::IoError, StreamChunk::Data(vec![3])] };
+    assert_eq!(handle_response(resp).unwrap_err(),
+        ImageGenError::Message("Image creation is temporarily unavailable. Please try again later.".into()),
+        ":97 read fault caught by the blanket :115 handler");
+    // Cap checked BEFORE a later fault: oversize data wins over a following IoError.
+    let resp = ImageResponse { status: 200, has_body: true, content_type: Some("image/png".into()), content_length: -1,
+        chunks: vec![StreamChunk::Data(vec![0u8; MAX_IMAGE_BYTES]), StreamChunk::Data(vec![1]), StreamChunk::IoError] };
+    assert_eq!(handle_response(resp).unwrap_err(),
+        ImageGenError::Message("This image is too large to display. Please try again.".into()));
 }
