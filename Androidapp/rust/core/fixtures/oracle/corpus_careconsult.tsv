@@ -1,0 +1,46 @@
+e1	entry	false	hello world
+e2	entry	true	hello world
+e3	entry	false	<EMPTY>
+e4	entry	false	<SPACES>
+e5	entry	false	<NBSP>hi<NBSP>
+e6	entry	false	<A1200>
+e7	entry	false	<A1201>
+e8	entry	false	<A1198><EMOJI>
+e9	entry	false	<A1199><EMOJI>
+e10	entry	false	  padded question  
+e11	entry	false	<EMOJI>single emoji
+r1	remote	true	true	false	false	false
+r2	remote	false	true	false	false	false
+r3	remote	true	false	false	false	false
+r4	remote	true	true	true	false	false
+r5	remote	true	true	false	true	false
+r6	remote	true	true	false	false	true
+x1	ctx	true	true	false
+x2	ctx	true	true	true
+x3	ctx	true	false	false
+x4	ctx	false	true	false
+u1	current	true	true	true
+u2	current	false	true	true
+u3	current	true	false	true
+u4	current	true	true	false
+t1	token	true	true	tok
+t2	token	true	false	tok
+t3	token	false	true	tok
+t4	token	true	true	-
+f1	force	true	ctx
+f2	force	true	-
+f3	force	false	ctx
+a1	allow	true	true
+a2	allow	true	false
+a3	allow	false	true
+h1	hist	true	1	CycleCare Assistant · cohere	q1	s1	w1
+h2	hist	false	1	CycleCare Assistant	q1	s1	w1
+h3	hist	true	3	CycleCare	q0	s0	w0	CycleCare Assistant · cohere	q1	s1	w1	CycleCare Expert · x	q2	s2	w2
+h4	hist	true	4	CycleCare Assistant · a	q1	s1	w1	CycleCare Assistant · b	q2	s2	w2	CycleCare Assistant · c	q3	s3	w3	CycleCare Assistant · d	q4	s4	w4
+h5	hist	true	1	CycleCare AI · legacy	<A700>	<A700>	w
+h6	hist	true	2	LocalBrain	qL	sL	wL	CycleCare Assistant	q1	s1	w1
+h7	hist	true	0
+i1	items	cramps|fatigue|low mood
+i2	items	single
+i3	items	-
+z1	fail
