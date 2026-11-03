@@ -213,6 +213,22 @@ class CycleCareViewModel(
         activeUiOwner == snapshot.owner && authPreferences.effectiveUserId == snapshot.owner &&
             authPreferences.sessionGeneration == snapshot.session
 
+    /**
+     * Reads settings and profile from ONE repository database/owner capture and
+     * returns them only if the UI owner, session and repository context are all
+     * unchanged afterwards (so a switch away and back is also rejected). A
+     * rejected read is retried a bounded number of times, then null.
+     */
+    private suspend fun readStableLocalSnapshot(resetFirst: Boolean): com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot? {
+        repeat(3) {
+            val owner = if (resetFirst) captureConflictOwnerSnapshot()
+                else ConflictOwnerSnapshot(authPreferences.effectiveUserId, authPreferences.sessionGeneration)
+            val stored = repository.getStoredSnapshot()
+            if (isCurrentConflictSnapshot(owner) && repository.isCurrentContext(stored.context)) return stored
+        }
+        return null
+    }
+
     /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
     fun loadSyncConflicts() {
         val snapshot = captureConflictOwnerSnapshot()
@@ -308,9 +324,9 @@ class CycleCareViewModel(
         // load the NEW owner's own settings/profile so nothing downstream reads
         // factory defaults (which look like "never completed onboarding").
         viewModelScope.launch {
-            val reloaded = runCatching { repository.getSettings() to repository.getOnboardingProfile() }.getOrNull()
+            val reloaded = runCatching { readStableLocalSnapshot(resetFirst = false) }.getOrNull()
             if (reloaded != null && activeUiOwner == owner && activeUiSession == session) {
-                _uiState.value = _uiState.value.copy(settings = reloaded.first, onboardingProfile = reloaded.second)
+                _uiState.value = _uiState.value.copy(settings = reloaded.settings, onboardingProfile = reloaded.profile)
             }
         }
     }
@@ -329,8 +345,11 @@ class CycleCareViewModel(
         SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
 
         viewModelScope.launch {
-            val settings = repository.getSettings()
-            val profile = repository.getOnboardingProfile()
+            // One database/owner capture; a read that straddled an owner or
+            // session switch is retried, never published.
+            val stored = readStableLocalSnapshot(resetFirst = true) ?: return@launch
+            val settings = stored.settings
+            val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
             // when enabled, the Rust startup gate computes these flags with a
             // Kotlin fallback; when disabled, gate stays null and the original
@@ -1920,6 +1939,7 @@ class CycleCareViewModel(
         isCloudSyncAllowed: Boolean = false,
         dynamicAnswers: Map<String, Set<String>> = emptyMap()
     ) {
+        val onboardingOwner = captureConflictOwnerSnapshot()
         viewModelScope.launch {
             authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
             if (dynamicAnswers.isNotEmpty()) {
@@ -1957,13 +1977,18 @@ class CycleCareViewModel(
                 typicalSleepQuality = typicalSleep,
                 hasCompletedDeepBaseline = hasCompletedDeepBaseline
             )
-            repository.completeOnboardingWithProfile(
+            val completion = repository.completeOnboardingWithProfile(
                 profile = profile,
                 pin = pin,
                 enableLock = enableLock
             )
             SoundFeedbackManager.playGentleRewardChime()
-            val updated = repository.getSettings()
+            // The write above is bound to the database/owner captured at its start.
+            // Publish only if that owner, session and repository context are still
+            // current; otherwise the completed record stays with its own owner and
+            // the current owner's state is left to its own load.
+            if (!isCurrentConflictSnapshot(onboardingOwner) || !repository.isCurrentContext(completion.context)) return@launch
+            val updated = completion.settings
             _uiState.value = _uiState.value.copy(
                 showOnboarding = false,
                 isAppLocked = false,

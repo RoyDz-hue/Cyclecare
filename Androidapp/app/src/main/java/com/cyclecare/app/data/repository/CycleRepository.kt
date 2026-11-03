@@ -81,6 +81,20 @@ class CycleRepository(database: CycleCareDatabase) {
     private var lifecyclePreferences: AuthPreferences? = null
     private var lifecycleContext: Context? = null
     private var lifecycleIdentity: String? = null
+    /** Bumped on every owner/database switch, so a switch away and back is still detectable. */
+    private var contextEpoch = 0L
+
+    /** The database, owner and switch epoch captured together before any suspension. */
+    data class StoredContext(val database: CycleCareDatabase, val owner: String?, val epoch: Long)
+    data class StoredSnapshot(val context: StoredContext, val settings: CycleSettings, val profile: OnboardingProfile?)
+    data class OnboardingCompletion(val context: StoredContext, val settings: CycleSettings)
+
+    private fun captureContext() = StoredContext(activeDatabase.value, lifecycleIdentity, contextEpoch)
+    private fun ownerKey(owner: String?) = owner?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+
+    /** True only while the database, owner and switch epoch are exactly the captured ones. */
+    fun isCurrentContext(context: StoredContext): Boolean =
+        context.database === activeDatabase.value && context.owner == lifecycleIdentity && context.epoch == contextEpoch
 
     /** Preferred account-bound construction; signed-in users never fall back to legacy storage. */
     constructor(context: Context, authPreferences: AuthPreferences) : this(
@@ -100,12 +114,14 @@ class CycleRepository(database: CycleCareDatabase) {
         val owner = preferences.userId
         if (lifecycleIdentity == owner) return
         lifecycleIdentity = owner
+        contextEpoch++
         storedPeriodDateRange = null
         activeDatabase.value = CycleCareDatabase.getDatabase(context, owner)
     }
 
     internal fun activateDatabaseForTest(database: CycleCareDatabase, owner: String?) {
         lifecycleIdentity = owner
+        contextEpoch++
         storedPeriodDateRange = null
         activeDatabase.value = database
     }
@@ -165,8 +181,18 @@ class CycleRepository(database: CycleCareDatabase) {
         }
     }
 
-    suspend fun getSettings(): CycleSettings {
-        val selectedDatabase = activeDatabase.value
+    suspend fun getSettings(): CycleSettings = settingsFor(captureContext())
+
+    /** Settings and profile read from ONE captured database/owner, never two independent lookups. */
+    suspend fun getStoredSnapshot(): StoredSnapshot {
+        val context = captureContext()
+        val settings = settingsFor(context)
+        val profile = context.database.onboardingDao().getProfile()
+        return StoredSnapshot(context, settings, profile)
+    }
+
+    private suspend fun settingsFor(context: StoredContext): CycleSettings {
+        val selectedDatabase = context.database
         val dao = selectedDatabase.cycleDao()
         val onboardingDao = selectedDatabase.onboardingDao()
         var settings = dao.getSettings()
@@ -181,7 +207,7 @@ class CycleRepository(database: CycleCareDatabase) {
                 lutealPhaseDays = 14,
                 remindFertile = profile?.remindFertileWindow ?: false
             )
-            journalMutation(selectedDatabase, "settings", HealthSyncPayloadCodec.settingsPayload(settings)) {
+            journalMutation(selectedDatabase, "settings", HealthSyncPayloadCodec.settingsPayload(settings), ownerKey = ownerKey(context.owner)) {
                 dao.saveSettings(settings)
             }
         }
@@ -192,8 +218,12 @@ class CycleRepository(database: CycleCareDatabase) {
         profile: OnboardingProfile,
         pin: String = "",
         enableLock: Boolean = false
-    ) {
-        val selectedDatabase = activeDatabase.value
+    ): OnboardingCompletion {
+        // Database, owner and switch epoch are captured together BEFORE the
+        // first suspension, so the transaction and its journal keys can never
+        // straddle an owner switch.
+        val capturedContext = captureContext()
+        val selectedDatabase = capturedContext.database
         val dao = selectedDatabase.cycleDao()
         val onboardingDao = selectedDatabase.onboardingDao()
         val current = dao.getSettings() ?: CycleSettings()
@@ -206,7 +236,7 @@ class CycleRepository(database: CycleCareDatabase) {
             remindFertile = profile.remindFertileWindow,
             isAppLockEnabled = enableLock
         )
-        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val owner = ownerKey(capturedContext.owner)
         val capturedConsentGeneration = consentGeneration
         selectedDatabase.withTransaction {
             val sync = selectedDatabase.healthSyncDao()
@@ -222,16 +252,21 @@ class CycleRepository(database: CycleCareDatabase) {
             sync.enqueue(HealthSyncOutboxEntry(owner, java.util.UUID.randomUUID().toString(), "settings", "UPSERT", settingsPrior?.serverRevision ?: 0L, (settingsPrior?.revision ?: 0L) + 1L, settingsPayload, HealthSyncPayloadCodec.hash(settingsPayload), capturedConsentGeneration))
         }
 
-        val periodStartDate = profile.lastPeriodDateString
-            .takeIf(String::isNotBlank)
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        if (periodStartDate == null) {
-            storedPeriodDateRange = null
-        } else {
-            val periodDuration = profile.periodDurationDays.coerceIn(2, 10)
-            val periodEndDate = periodStartDate.plusDays((periodDuration - 1).toLong())
-            storePeriodDates(periodStartDate, periodEndDate)
+        // The period-date cache is per active owner: a completion that finished
+        // after a switch must not seed the new owner's cache.
+        if (isCurrentContext(capturedContext)) {
+            val periodStartDate = profile.lastPeriodDateString
+                .takeIf(String::isNotBlank)
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            if (periodStartDate == null) {
+                storedPeriodDateRange = null
+            } else {
+                val periodDuration = profile.periodDurationDays.coerceIn(2, 10)
+                val periodEndDate = periodStartDate.plusDays((periodDuration - 1).toLong())
+                storePeriodDates(periodStartDate, periodEndDate)
+            }
         }
+        return OnboardingCompletion(capturedContext, updated)
     }
 
     suspend fun saveSettings(settings: CycleSettings) {
@@ -247,9 +282,10 @@ class CycleRepository(database: CycleCareDatabase) {
         recordId: String,
         payload: String,
         kind: String = "UPSERT",
+        ownerKey: String = ownerKey(lifecycleIdentity),
         write: suspend () -> Unit
     ) {
-        val owner = lifecycleIdentity?.takeIf { it.isNotBlank() } ?: "legacy_guest"
+        val owner = ownerKey
         val capturedConsentGeneration = consentGeneration
         db.withTransaction {
             val sync = db.healthSyncDao()
