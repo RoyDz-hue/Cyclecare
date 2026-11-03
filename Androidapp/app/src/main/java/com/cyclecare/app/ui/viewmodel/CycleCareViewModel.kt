@@ -286,8 +286,10 @@ class CycleCareViewModel(
      * newest call may publish (superseded: null, silently). On exhaustion localReadFailed is
      * set only if the call is still newest. A success clears it. Unexecuted.
      */
-    private suspend fun readStartScope(): StartScope? {
-        val startEpoch = ++localReadEpoch
+    private suspend fun readStartScope(supersede: Boolean = true): StartScope? {
+        // supersede = false joins the current start generation without invalidating it; a later
+        // superseding start still invalidates the result.
+        val startEpoch = if (supersede) ++localReadEpoch else localReadEpoch
         repeat(40) {
             if (startEpoch != localReadEpoch) return null
             // capture, resetEpoch and the read of both happen with no suspension between them
@@ -499,7 +501,7 @@ class CycleCareViewModel(
             if (!isStartScopeCurrent(scope)) return@launch
             updateCalculations(settings, LocalDate.now(), LocalDate.now())
 
-            if (hasCompletedInitialAuth) autoSyncSilently()
+            if (hasCompletedInitialAuth) runAutoSync(false, scope)
             val initOwner = authPreferences.effectiveUserId
             val initSession = authPreferences.sessionGeneration
             val fetchWallet = gate?.fetchWallet ?: (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
@@ -1565,20 +1567,44 @@ class CycleCareViewModel(
 
     fun onBackground() { walletRealtime.stop() }
 
-    fun autoSyncSilently(forceWalletRefresh: Boolean = false) {
+    fun autoSyncSilently(forceWalletRefresh: Boolean = false) = runAutoSync(forceWalletRefresh, null)
+
+    /**
+     * With a [scope] (startup) the owner, session, repository context and local snapshot come from
+     * that scope, and nothing runs unless it is still current. Without one (every other caller)
+     * owner and session are read live at call time and the local settings/profile are two separate
+     * reads, guarded by the owner/session checks and the repository context captured at call time.
+     */
+    private fun runAutoSync(forceWalletRefresh: Boolean, scope: StartScope?) {
+        if (scope != null && !isStartScopeCurrent(scope)) return
         if (authPreferences.isLocalOnlyMode || authPreferences.userId == null) {
-            _uiState.value = _uiState.value.copy(isCheckingCloudProfile = false,
-                showOnboarding = !_uiState.value.settings.isOnboardingCompleted)
+            // Only resolves a pending "checking" state, and only from a stable stored snapshot.
+            // It never derives routing from in-memory settings, which are unread defaults
+            // (isOnboardingCompleted = false) before a successful read or after a failed one.
+            if (!_uiState.value.isCheckingCloudProfile) return
+            if (scope != null) {
+                _uiState.value = _uiState.value.copy(isCheckingCloudProfile = false,
+                    showOnboarding = !scope.snapshot.settings.isOnboardingCompleted)
+                return
+            }
+            viewModelScope.launch {
+                val stable = readStartScope(supersede = false) ?: return@launch
+                if (!isStartScopeCurrent(stable)) return@launch
+                _uiState.value = _uiState.value.copy(isCheckingCloudProfile = false,
+                    showOnboarding = !stable.snapshot.settings.isOnboardingCompleted)
+            }
             return
         }
         refreshWalletNow(forceWalletRefresh)
         if (accountRefreshJob?.isActive == true) return
-        val owner = authPreferences.effectiveUserId
-        val session = authPreferences.sessionGeneration
+        val owner = scope?.owner?.owner ?: authPreferences.effectiveUserId
+        val session = scope?.owner?.session ?: authPreferences.sessionGeneration
+        val syncContext = scope?.snapshot?.context ?: repository.currentContext()
         accountRefreshJob = viewModelScope.launch {
             val checking = _uiState.value.isCheckingCloudProfile || _uiState.value.cloudProfileCheckFailed
             if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=true, cloudProfileCheckFailed=false,showOnboarding=false)
-            val localRead = runCatching { repository.getSettings() to repository.getOnboardingProfile() }
+            val localRead = if (scope != null) Result.success(scope.snapshot.settings to scope.snapshot.profile)
+                else runCatching { repository.getSettings() to repository.getOnboardingProfile() }
             val localSettings = localRead.getOrNull()?.first ?: CycleSettings()
             val localProfile = localRead.getOrNull()?.second
             val conflictsCheck = runCatching { repository.pendingSyncConflicts().isNotEmpty() }
@@ -1596,6 +1622,7 @@ class CycleCareViewModel(
             val remote = if (checking && (localProfile == null || !localSettings.isOnboardingCompleted))
                 kotlinx.coroutines.withTimeoutOrNull(20_000) { economyService.hasRemoteProfile() } else true
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
+            if (!repository.isCurrentContext(syncContext) || (scope != null && !isStartScopeCurrent(scope))) return@launch
             val destination = com.cyclecare.app.domain.sync.AccountStartPolicy.decide(localValid,localState,remote)
             if (checking) _uiState.value = _uiState.value.copy(isCheckingCloudProfile=false,
                 cloudProfileCheckFailed=destination==com.cyclecare.app.domain.sync.AccountStartDestination.RETRY,
@@ -1615,6 +1642,7 @@ class CycleCareViewModel(
             val restoredProfile = repository.getOnboardingProfile()
             val isAdmin = runCatching { authService.isCycleCareAdmin() }.getOrDefault(false)
             if (owner != authPreferences.effectiveUserId || session != authPreferences.sessionGeneration) return@launch
+            if (!repository.isCurrentContext(syncContext) || (scope != null && !isStartScopeCurrent(scope))) return@launch
             _uiState.value = _uiState.value.copy(lastSyncTimestamp=result.timestamp,lastSyncMessage=result.message,
                 lastSyncSuccess=result.isSuccess,settings=restoredSettings,onboardingProfile=restoredProfile,isAdmin=isAdmin,
                 sessionNeedsReauthentication=if(result.isSuccess) false else result.requiresAuthentication || _uiState.value.sessionNeedsReauthentication)
@@ -1774,6 +1802,13 @@ class CycleCareViewModel(
                     )
                     walletRealtime.start()
                     autoSyncSilently()
+                    // The sign-in start owns its own first notification and manifest fill (a
+                    // superseded startup no longer does). Both carry their own owner guards.
+                    // Offline-claim reconcile is NOT added here: it stays with reconnect/startup.
+                    if (isStartScopeCurrent(scope)) {
+                        refreshNotifications()
+                        refreshAiProcessorManifest()
+                    }
                 }
                 is com.cyclecare.app.data.supabase.AuthResult.VerificationRequired -> _uiState.value = _uiState.value.copy(
                     lastSyncMessage = result.message,
