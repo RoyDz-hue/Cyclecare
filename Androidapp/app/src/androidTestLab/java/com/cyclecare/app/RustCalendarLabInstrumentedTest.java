@@ -132,6 +132,17 @@ public class RustCalendarLabInstrumentedTest {
             try { assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream)); } finally { stream.close(); }
             clickDescription(inst, "Next month");
             await(new Condition() { public boolean ready() { return activity.nativeReady() && activity.monthValue() == 3; } });
+            // A matching native result is reported by Compose SideEffect before
+            // Android necessarily publishes the new accessibility tree. Require
+            // the drawn month and its non-color cue, not the old cached root.
+            inst.waitForIdleSync();
+            await(new Condition() { public boolean ready() {
+                AccessibilityNodeInfo root = inst.getUiAutomation().getRootInActiveWindow();
+                AccessibilityNodeInfo first = find(root, "March 1");
+                return textVisible(root, "March 2024") && textVisible(root, "Calculation: native") &&
+                    first != null && first.isVisibleToUser();
+            } });
+            dumpTree(inst.getUiAutomation().getRootInActiveWindow());
             AccessibilityNodeInfo first = find(inst.getUiAutomation().getRootInActiveWindow(), "March 1");
             assertNotNull("Calendar needs a non-color accessibility cue", first);
             clickDescription(inst, "March 1");
