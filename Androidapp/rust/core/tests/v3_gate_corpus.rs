@@ -2,7 +2,7 @@
 //! every term verified live, nullability of serverHealthConsentGeneration
 //! (:182-187) exact, and the gate slotted into an actual transaction body.
 //! Synthetic scratch data only.
-use cyclecare_core::auth_prefs_health::{current_gate, HealthAuthPrefs};
+use cyclecare_core::auth_prefs_health::{current_gate, current_gate_snapshot, HealthAuthPrefs};
 use std::cell::RefCell;
 use std::rc::Rc;
 use cyclecare_core::prefs_scratch::ScratchPrefs;
@@ -248,4 +248,72 @@ fn live_provider_flip_during_outbox_blocks_commit_inside_the_transaction() {
     assert_eq!(rev, 0, "no revision written for the drifted op");
     let _ = wire_record_id;
     cleanup(&file("intx"));
+}
+
+/// Adversarial provider transitions: a scripted identity queue that flips
+/// MID-evaluation. The ported gate (Kotlin-faithful) reads identity per
+/// term and can MIX identities across terms; the hardened snapshot variant
+/// reads identity once and never mixes.
+#[test]
+fn mid_evaluation_identity_flip_mixes_the_parity_gate_but_not_the_snapshot() {
+    use std::collections::VecDeque;
+    let path = file("mixed");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("tmp"));
+    let mut p = ScratchPrefs::open_file(&path).unwrap();
+    // Shared (unkeyed) session.
+    p.edit().put_long("session_generation_v3", SESSION).commit();
+    // owner-uid: fully matching generations/receipt but cloud OFF.
+    p.edit()
+        .put_long("health_consent_generation_owner-uid", LOCAL)
+        .put_long("health_sync_receipt_local_owner-uid", LOCAL)
+        .put_long("health_sync_receipt_session_owner-uid", SESSION)
+        .put_long("health_sync_receipt_server_owner-uid", SERVER)
+        .put_bool("cloud_sync_allowed_v2_owner-uid", false)
+        .commit();
+    // intruder: every term matching, cloud ON.
+    p.edit()
+        .put_long("health_consent_generation_intruder", LOCAL)
+        .put_long("health_sync_receipt_local_intruder", LOCAL)
+        .put_long("health_sync_receipt_session_intruder", SESSION)
+        .put_long("health_sync_receipt_server_intruder", SERVER)
+        .put_bool("cloud_sync_allowed_v2_intruder", true)
+        .commit();
+    // Scripted identity: owner-uid on the FIRST read, intruder afterwards.
+    let script = || {
+        let q = Rc::new(RefCell::new(VecDeque::from(vec![
+            Some("owner-uid".to_string()),
+            Some("intruder".to_string()),
+            Some("intruder".to_string()),
+            Some("intruder".to_string()),
+        ])));
+        Box::new(move || q.borrow_mut().pop_front().unwrap_or(Some("intruder".to_string())))
+            as Box<dyn Fn() -> Option<String>>
+    };
+    // Single-identity baselines: NEITHER identity alone yields `true`.
+    let mut h = HealthAuthPrefs {
+        prefs: &mut p, secure_available: true, secure_user_id: Some(OWNER.into()),
+        device_fallback_owner: "dev-fallback".into(), owner_wiped: false,
+        live_user_id: None, live_owner_wiped: None,
+    };
+    assert!(!current_gate(&h, OWNER, SESSION, LOCAL, SERVER), "owner-uid alone: cloud off -> false");
+    h.secure_user_id = Some("intruder".into());
+    assert!(!current_gate(&h, OWNER, SESSION, LOCAL, SERVER), "intruder alone: identity mismatch -> false");
+    // PARITY GATE (Kotlin 1:1): mixed verdict - identity term sees
+    // owner-uid, keyed terms see intruder, and the mixed evaluation returns
+    // a result NO single-identity evaluation produces.
+    h.live_user_id = Some(script());
+    assert!(current_gate(&h, OWNER, SESSION, LOCAL, SERVER),
+        "parity gate mixed identities mid-evaluation (documented Kotlin behavior, not a safety fix)");
+    // HARDENED SNAPSHOT (proposed, unwired): one identity read; the whole
+    // evaluation is owner-uid's -> cloud off -> false.
+    h.live_user_id = Some(script());
+    assert!(!current_gate_snapshot(&h, OWNER, SESSION, LOCAL, SERVER),
+        "snapshot gate evaluates ONE coherent identity: owner-uid with cloud off");
+    // Snapshot coherence both ways: scripted first-read intruder -> the
+    // whole evaluation is intruder's -> identity mismatch.
+    let q = Rc::new(RefCell::new(VecDeque::from(vec![Some("intruder".to_string())])));
+    h.live_user_id = Some(Box::new(move || q.borrow_mut().pop_front().unwrap_or(Some("intruder".to_string()))));
+    assert!(!current_gate_snapshot(&h, OWNER, SESSION, LOCAL, SERVER));
+    let _ = std::fs::remove_file(&path);
 }

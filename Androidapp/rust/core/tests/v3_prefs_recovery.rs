@@ -228,3 +228,24 @@ fn effective_user_id_scopes_keys_and_falls_back_to_device() {
         assert_eq!(p.health_consent_generation(), 0);
     });
 }
+
+#[test]
+fn live_handles_share_one_in_memory_instance_while_alive() {
+    // AOSP SharedPreferencesImpl parity: same file, one live in-memory
+    // instance. Two handles see each other's commits immediately; once ALL
+    // handles drop, the next open reloads from disk (restart recovery).
+    let f = scratch_file("shared");
+    let _ = std::fs::remove_file(&f);
+    let mut a = ScratchPrefs::open_file(&f).unwrap();
+    a.edit().put_long("k", 41).commit();
+    let b = ScratchPrefs::open_file(&f).unwrap(); // opened while a is alive
+    assert_eq!(b.get_long("k", 0), 41, "second handle shares the live instance, not a stale copy");
+    a.edit().put_bool("flag", true).commit();
+    assert!(b.get_bool("flag", false), "commits after BOTH opens are visible to both");
+    drop(a);
+    drop(b);
+    let c = ScratchPrefs::open_file(&f).unwrap(); // all handles dropped -> reload from disk
+    assert_eq!(c.get_long("k", 0), 41);
+    assert!(c.get_bool("flag", false));
+    let _ = std::fs::remove_file(&f);
+}

@@ -18,8 +18,22 @@
 //!    is NOT claimed: there is no fsync/dirsync and no crash-fault injection
 //!    at that scope.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::{Rc, Weak};
+
+thread_local! {
+    /// AOSP SharedPreferencesImpl parity: while any opener of a file is
+    /// alive, every other opener of that file shares its ONE in-memory
+    /// instance (Android keeps a per-file singleton). Scoped to the current
+    /// THREAD - narrower than Android's per-process cache, matching this
+    /// model's single-threaded limitation. Entries are Weak so that once
+    /// every handle drops, the next open reloads from disk (ordinary
+    /// restart recovery stays meaningful).
+    static LIVE_FILES: RefCell<HashMap<PathBuf, Weak<RefCell<HashMap<String, PrefValue>>>>> =
+        RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PrefValue {
@@ -28,13 +42,20 @@ pub enum PrefValue {
     Str(String),
 }
 
-#[derive(Default)]
 pub struct ScratchPrefs {
-    map: HashMap<String, PrefValue>,
+    map: Rc<RefCell<HashMap<String, PrefValue>>>,
     file: Option<PathBuf>,
     /// TEST HOOK: models SharedPreferences commit() returning false
     /// (e.g. disk error). The staged batch is discarded; nothing persists.
+    /// Per-handle (a device-wide fault would hit every handle; this hook is
+    /// per-instance by design for targeted tests).
     pub inject_commit_failure: bool,
+}
+
+impl Default for ScratchPrefs {
+    fn default() -> Self {
+        ScratchPrefs { map: Rc::new(RefCell::new(HashMap::new())), file: None, inject_commit_failure: false }
+    }
 }
 
 enum Op {
@@ -46,9 +67,16 @@ impl ScratchPrefs {
     pub fn open_in_memory() -> Self { ScratchPrefs::default() }
 
     /// Open (or create) a file-backed store. Durability is via atomic
-    /// write-tmp-then-rename on every successful commit/apply.
+    /// write-tmp-then-rename on every successful commit/apply. While
+    /// another live handle holds this path, the shared in-memory instance
+    /// is returned (the file is NOT re-read - Android serves its cached
+    /// instance); once all handles dropped, the next open reloads from disk.
     pub fn open_file(path: &Path) -> std::io::Result<Self> {
-        let mut p = ScratchPrefs { map: HashMap::new(), file: Some(path.to_path_buf()), inject_commit_failure: false };
+        let key = path.to_path_buf();
+        if let Some(shared) = LIVE_FILES.with(|l| l.borrow().get(&key).and_then(|w| w.upgrade())) {
+            return Ok(ScratchPrefs { map: shared, file: Some(key), inject_commit_failure: false });
+        }
+        let mut fresh: HashMap<String, PrefValue> = HashMap::new();
         if path.exists() {
             let data = std::fs::read_to_string(path)?;
             for line in data.lines() {
@@ -62,20 +90,22 @@ impl ScratchPrefs {
                     "S" => PrefValue::Str(unescape(val)),
                     _ => continue,
                 };
-                p.map.insert(key, v);
+                fresh.insert(key, v);
             }
         }
-        Ok(p)
+        let map = Rc::new(RefCell::new(fresh));
+        LIVE_FILES.with(|l| l.borrow_mut().insert(path.to_path_buf(), Rc::downgrade(&map)));
+        Ok(ScratchPrefs { map, file: Some(path.to_path_buf()), inject_commit_failure: false })
     }
 
     pub fn get_bool(&self, key: &str, def: bool) -> bool {
-        match self.map.get(key) { Some(PrefValue::Bool(b)) => *b, _ => def }
+        match self.map.borrow().get(key) { Some(PrefValue::Bool(b)) => *b, _ => def }
     }
     pub fn get_long(&self, key: &str, def: i64) -> i64 {
-        match self.map.get(key) { Some(PrefValue::Long(l)) => *l, _ => def }
+        match self.map.borrow().get(key) { Some(PrefValue::Long(l)) => *l, _ => def }
     }
     pub fn get_string(&self, key: &str) -> Option<String> {
-        match self.map.get(key) { Some(PrefValue::Str(s)) => Some(s.clone()), _ => None }
+        match self.map.borrow().get(key) { Some(PrefValue::Str(s)) => Some(s.clone()), _ => None }
     }
 
     pub fn edit(&mut self) -> Editor<'_> { Editor { prefs: self, ops: Vec::new() } }
@@ -84,7 +114,8 @@ impl ScratchPrefs {
         let Some(path) = &self.file else { return true };
         let mut out = String::new();
         // Sorted for deterministic scratch files.
-        let mut entries: Vec<_> = self.map.iter().collect();
+        let map = self.map.borrow();
+        let mut entries: Vec<_> = map.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
         for (k, v) in entries {
             let (tag, val) = match v {
@@ -124,10 +155,13 @@ impl Editor<'_> {
     /// the disk write runs and its result is the returned bool. A false
     /// result leaves memory CHANGED and the disk file stale.
     pub fn commit(self) -> bool {
-        for op in self.ops {
-            match op {
-                Op::Put(k, v) => { self.prefs.map.insert(k, v); }
-                Op::Remove(k) => { self.prefs.map.remove(&k); }
+        {
+            let mut map = self.prefs.map.borrow_mut();
+            for op in self.ops {
+                match op {
+                    Op::Put(k, v) => { map.insert(k, v); }
+                    Op::Remove(k) => { map.remove(&k); }
+                }
             }
         }
         if self.prefs.inject_commit_failure { return false; }
@@ -137,10 +171,13 @@ impl Editor<'_> {
     /// SharedPreferences.Editor.apply(): in-memory apply plus asynchronous
     /// disk persist; callers observe no result. Modeled synchronously.
     pub fn apply(self) {
-        for op in self.ops {
-            match op {
-                Op::Put(k, v) => { self.prefs.map.insert(k, v); }
-                Op::Remove(k) => { self.prefs.map.remove(&k); }
+        {
+            let mut map = self.prefs.map.borrow_mut();
+            for op in self.ops {
+                match op {
+                    Op::Put(k, v) => { map.insert(k, v); }
+                    Op::Remove(k) => { map.remove(&k); }
+                }
             }
         }
         let _ = self.prefs.persist();

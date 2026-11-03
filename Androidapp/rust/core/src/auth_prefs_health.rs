@@ -246,3 +246,68 @@ pub fn current_gate(
         && prefs.is_cloud_sync_allowed()
         && !prefs.is_owner_wiped()
 }
+
+/// PROPOSED HARDENING - separate, unwired, NOT production parity.
+///
+/// The ported current() (:27) reads the live identity MULTIPLE times per
+/// evaluation: once directly (userId == owner) and again inside every
+/// effectiveUserId-keyed getter (cloud-consent key, receipt keys, revoke
+/// flag). A provider flipping mid-evaluation can therefore MIX identities
+/// across terms - and that is the faithful Kotlin behavior, kept 1:1 in
+/// current_gate above, not a production safety fix.
+///
+/// This variant evaluates all terms against ONE coherent snapshot: the
+/// identity is read exactly once, the effective owner is derived from that
+/// single read, and every keyed value comes straight from the prefs map
+/// under that one identity. Wipe is read exactly once. If any caller ever
+/// wants a gate immune to mid-evaluation identity drift, it must opt into
+/// this variant deliberately; the ported default stays as-is.
+pub fn current_gate_snapshot(
+    prefs: &HealthAuthPrefs,
+    owner: &str,
+    session: i64,
+    local: i64,
+    server: i64,
+) -> bool {
+    // ONE identity read (:356-361 + :522-531 derivation from that read).
+    let uid = prefs.user_id();
+    if uid.as_deref() != Some(owner) {
+        return false;
+    }
+    let eff = match &uid {
+        Some(u) if !u.is_empty() => u.clone(),
+        _ => prefs.device_fallback_owner.clone(),
+    };
+    let get_bool = |k: String| prefs.prefs.get_bool(&k, false);
+    let get_long = |k: String, d: i64| prefs.prefs.get_long(&k, d);
+    // :264 (not owner-keyed in the source).
+    if get_long("session_generation_v3".into(), 0) != session {
+        return false;
+    }
+    let local_gen = get_long(format!("{KEY_HEALTH_CONSENT_GENERATION}_{eff}"), 0);
+    if local_gen != local {
+        return false;
+    }
+    // :182-187 replayed against the single identity.
+    let server_gen: Option<i64> = {
+        if !prefs.secure_available
+            || !get_bool(format!("{KEY_CLOUD_SYNC_ALLOWED}_v2_{eff}"))
+            || get_bool(format!("health_sync_pending_revoke_{eff}"))
+            || get_long(format!("health_sync_receipt_local_{eff}"), -1) != local_gen
+            || get_long(format!("health_sync_receipt_session_{eff}"), -1) != session
+        {
+            None
+        } else {
+            let v = get_long(format!("health_sync_receipt_server_{eff}"), 0);
+            if v > 0 { Some(v) } else { None }
+        }
+    };
+    if server_gen != Some(server) {
+        return false;
+    }
+    if !get_bool(format!("{KEY_CLOUD_SYNC_ALLOWED}_v2_{eff}")) {
+        return false;
+    }
+    // ONE wipe read.
+    !prefs.is_owner_wiped()
+}
