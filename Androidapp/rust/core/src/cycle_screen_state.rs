@@ -10,7 +10,7 @@
 use crate::cycle_math::{calculate_day_prediction, DayPrediction};
 use crate::cycle_screen::{days_left_chip, selected_day_title};
 use crate::home_anchor::{compute_anchor_state, compute_countdowns};
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 /// Verbatim disclaimer chain, CycleScreen.kt :426-431.
 pub const DISCLAIMER_NO_ANCHOR: &str = "No cycle start date is saved, so calendar predictions are unavailable. Settings below are not measured history.";
@@ -128,4 +128,76 @@ pub fn build_cycle_screen_state(input: &CycleScreenInput) -> CycleScreenState {
         selected_day_title,
         disclaimer: disclaimer_text(anchor.has_cycle_anchor, anchor.cycle_start_is_approximate),
     }
+}
+
+/// Batch grid contract: CycleCareViewModel.getPredictionForDate (:2153-2156)
+/// applied to every date the month grid can query - [first-1 ..= last+1]
+/// (grid cells plus the immediate span-merge neighbor lookups, :238-253).
+/// Semantics mirror the source exactly: predictions exist iff
+/// hasCycleAnchor; each per-date value is the corpus-locked
+/// calculate_day_prediction primitive, so batch == per-date by
+/// construction.
+pub struct MonthPredictionsInput {
+    pub last_period_start_date: String,
+    pub average_cycle_length: i32,
+    pub period_duration: i32,
+    pub luteal_phase_days: i32,
+    pub date_choice: Option<String>,
+    pub cycle_length_choice: Option<String>,
+    /// Parity anchor date for compute_anchor_state (has_cycle_anchor does
+    /// not depend on it, but the shared code path does).
+    pub today: NaiveDate,
+    /// First day of the displayed month (ffi validates day == 1).
+    pub month_first_day: NaiveDate,
+}
+
+pub struct MonthPredictions {
+    pub has_cycle_anchor: bool,
+    /// One entry per date in [month_first_day-1 ..= month_last_day+1],
+    /// ascending; empty when !has_cycle_anchor (source: getPredictionForDate
+    /// returns null for every date).
+    pub predictions: Vec<(NaiveDate, Option<DayPrediction>)>,
+}
+
+/// Last day of the month containing `first` (first must be day 1).
+fn month_last_day(first: NaiveDate) -> NaiveDate {
+    let (y, m) = (first.year(), first.month());
+    let next_first = if m == 12 {
+        NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(y, m + 1, 1)
+    };
+    // chrono range guarantees these exist for any valid first-of-month.
+    next_first.unwrap().pred_opt().unwrap()
+}
+
+pub fn build_month_predictions(input: &MonthPredictionsInput) -> MonthPredictions {
+    let anchor = compute_anchor_state(
+        &input.last_period_start_date,
+        input.date_choice.as_deref(),
+        input.cycle_length_choice.as_deref(),
+        input.average_cycle_length,
+        input.today,
+    );
+    if !anchor.has_cycle_anchor {
+        return MonthPredictions { has_cycle_anchor: false, predictions: Vec::new() };
+    }
+    let first = input.month_first_day;
+    let last = month_last_day(first);
+    let start = first.pred_opt().unwrap();
+    let end = last.succ_opt().unwrap();
+    let mut predictions = Vec::new();
+    let mut d = start;
+    while d <= end {
+        let p = calculate_day_prediction(
+            d,
+            &input.last_period_start_date,
+            input.average_cycle_length,
+            input.period_duration,
+            input.luteal_phase_days,
+        );
+        predictions.push((d, p));
+        d = d.succ_opt().unwrap();
+    }
+    MonthPredictions { has_cycle_anchor: true, predictions }
 }

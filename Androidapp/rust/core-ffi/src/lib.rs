@@ -57,6 +57,24 @@ fn out(env: &mut JNIEnv, s: &str) -> jstring {
     }
 }
 
+fn prediction_json(p: &corelib::cycle_math::DayPrediction) -> serde_json::Value {
+    serde_json::json!({
+        "date": p.date.to_string(),
+        "dayOfCycle": p.day_of_cycle,
+        "phase": p.phase.kotlin_name(), // Kotlin enum entry name (not Debug)
+        "phaseTitle": p.phase.kotlin_title(),
+        "phaseSubtitle": p.phase.kotlin_subtitle(),
+        "phaseDescription": p.phase.kotlin_description(),
+        "phaseAdvice": p.phase.kotlin_advice(),
+        "phaseColorHex": p.phase.kotlin_color_hex(),
+        "isPeriod": p.is_period,
+        "isFertile": p.is_fertile,
+        "isOvulation": p.is_ovulation,
+        "fertilityConfidence": p.fertility_confidence,
+        "pregnancyChance": p.pregnancy_chance,
+    })
+}
+
 fn err(msg: &str) -> String {
     serde_json::json!({"error": msg}).to_string()
 }
@@ -327,6 +345,77 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 "daysUntilPeriodFromSelected": s.days_until_period_from_selected,
                 "selectedDayTitle": s.selected_day_title,
                 "disclaimer": s.disclaimer,
+            }})
+            .to_string()
+        }
+        "cycle_month_predictions" => {
+            use corelib::cycle_math::parse_local_date_iso;
+            use corelib::cycle_screen_state::{build_month_predictions, MonthPredictionsInput};
+            let st = &v["settings"];
+            if !st.is_object() {
+                return err("settings must be an object".into());
+            }
+            // Same strict settings contract as cycle_screen_state: no
+            // silent defaults, no silent i64->i32 truncation.
+            let req_i32 = |k: &str| -> Result<i32, String> {
+                match st[k].as_i64() {
+                    Some(n) => i32::try_from(n).map_err(|_| format!("settings.{k} out of i32 range")),
+                    None => Err(format!("settings.{k} missing or not an integer")),
+                }
+            };
+            let (average_cycle_length, period_duration, luteal_phase_days) =
+                match (req_i32("averageCycleLength"), req_i32("periodDuration"), req_i32("lutealPhaseDays")) {
+                    (Ok(a), Ok(p), Ok(l)) => (a, p, l),
+                    (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return err(&e),
+                };
+            let last_period_start_date = match st["lastPeriodStartDate"].as_str() {
+                Some(s) => s.to_string(),
+                None => return err("settings.lastPeriodStartDate missing or not a string"),
+            };
+            let today = match v["today"].as_str().and_then(parse_local_date_iso) {
+                Some(d) => d,
+                None => return err("today must be ISO yyyy-MM-dd"),
+            };
+            // Kotlin YearMonth.toString() is "yyyy-MM"; parse as the first
+            // of the month with the same strict ISO rules as full dates.
+            let month_first = match v["month"]
+                .as_str()
+                .and_then(|m| parse_local_date_iso(&format!("{m}-01")))
+            {
+                Some(d) => d,
+                None => return err("month must be yyyy-MM"),
+            };
+            if !(v["dateChoice"].is_string() || v["dateChoice"].is_null())
+                || !(v["cycleLengthChoice"].is_string() || v["cycleLengthChoice"].is_null())
+            {
+                return err("dateChoice/cycleLengthChoice must be string or null");
+            }
+            let input = MonthPredictionsInput {
+                last_period_start_date,
+                average_cycle_length,
+                period_duration,
+                luteal_phase_days,
+                date_choice: v["dateChoice"].as_str().map(Into::into),
+                cycle_length_choice: v["cycleLengthChoice"].as_str().map(Into::into),
+                today,
+                month_first_day: month_first,
+            };
+            let m = build_month_predictions(&input);
+            let predictions: Vec<serde_json::Value> = m
+                .predictions
+                .iter()
+                .map(|(d, p)| {
+                    let pj = match p {
+                        Some(p) => prediction_json(p),
+                        None => serde_json::Value::Null,
+                    };
+                    serde_json::json!({"date": d.to_string(), "prediction": pj})
+                })
+                .collect();
+            serde_json::json!({"ok": {
+                "month": v["month"].as_str().unwrap(),
+                "hasCycleAnchor": m.has_cycle_anchor,
+                "predictions": predictions,
             }})
             .to_string()
         }

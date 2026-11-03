@@ -66,3 +66,53 @@ fn cycle_screen_state_out_of_range_is_typed_error() {
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(v["error"].as_str().unwrap().contains("averageCycleLength"));
 }
+
+fn month_payload(month: &str) -> String {
+    format!(
+        r#"{{"settings":{{"lastPeriodStartDate":"2026-10-05","averageCycleLength":28,"periodDuration":5,"lutealPhaseDays":14}},"dateChoice":"exact","cycleLengthChoice":"28","today":"2026-11-03","month":"{month}"}}"#
+    )
+}
+
+#[test]
+fn cycle_month_predictions_valid_month() {
+    let out = cyclecare_core::dispatch_for_test("cycle_month_predictions", &month_payload("2026-11"));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let ok = &v["ok"];
+    assert_eq!(ok["month"], "2026-11");
+    assert_eq!(ok["hasCycleAnchor"], true);
+    let preds = ok["predictions"].as_array().unwrap();
+    assert_eq!(preds.len(), 32); // 30 days + one neighbor each side
+    assert_eq!(preds[0]["date"], "2026-10-31");
+    assert_eq!(preds[31]["date"], "2026-12-01");
+    // entries carry the full prediction object with the Kotlin enum name
+    let p = &preds[1]["prediction"];
+    assert_eq!(p["date"], "2026-11-01");
+    assert!(["MENSTRUAL", "FOLLICULAR", "OVULATION", "LUTEAL"].contains(&p["phase"].as_str().unwrap()));
+}
+
+#[test]
+fn cycle_month_predictions_no_anchor_empty() {
+    let payload = month_payload("2026-11").replace(r#""dateChoice":"exact""#, r#""dateChoice":"I don't know""#);
+    let out = cyclecare_core::dispatch_for_test("cycle_month_predictions", &payload);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["ok"]["hasCycleAnchor"], false);
+    assert_eq!(v["ok"]["predictions"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn cycle_month_predictions_bad_month_typed_error() {
+    let out = cyclecare_core::dispatch_for_test("cycle_month_predictions", &month_payload("2026-13"));
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("month"));
+    let out2 = cyclecare_core::dispatch_for_test("cycle_month_predictions", &month_payload("Nov 2026"));
+    let v2: serde_json::Value = serde_json::from_str(&out2).unwrap();
+    assert!(v2["error"].as_str().unwrap().contains("month"));
+}
+
+#[test]
+fn cycle_month_predictions_strict_settings() {
+    let payload = month_payload("2026-11").replace(r#""averageCycleLength":28"#, r#""averageCycleLength":"28""#);
+    let out = cyclecare_core::dispatch_for_test("cycle_month_predictions", &payload);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("averageCycleLength"));
+}
