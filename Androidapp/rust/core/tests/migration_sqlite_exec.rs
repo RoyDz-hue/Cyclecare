@@ -231,13 +231,26 @@ fn full_4_to_9_chain_executes_and_preserves_data() {
         "health_sync_revisions full tuple (incl. 7->8 serverRevision default)"
     );
     let outbox = table_info(&conn, "health_sync_outbox");
-    assert_eq!(outbox.len(), 14, "12 cols from 5->6 + 2 from 6->7");
-    assert_eq!(outbox[0], ("ownerId".into(), "TEXT".into(), true, None, 1));
-    assert_eq!(outbox[1], ("operationId".into(), "TEXT".into(), true, None, 2));
-    assert!(outbox.contains(&("payloadJson".into(), "TEXT".into(), false, None, 0)));
-    assert!(outbox.contains(&("lastError".into(), "TEXT".into(), false, None, 0)));
-    assert!(outbox.contains(&("serverReceipt".into(), "TEXT".into(), false, None, 0)));
-    assert!(outbox.contains(&("serverRevision".into(), "INTEGER".into(), false, None, 0)));
+    assert_eq!(
+        outbox,
+        vec![
+            ("ownerId".into(), "TEXT".into(), true, None, 1),
+            ("operationId".into(), "TEXT".into(), true, None, 2),
+            ("recordId".into(), "TEXT".into(), true, None, 0),
+            ("kind".into(), "TEXT".into(), true, None, 0),
+            ("baseRevision".into(), "INTEGER".into(), true, None, 0),
+            ("revision".into(), "INTEGER".into(), true, None, 0),
+            ("payloadJson".into(), "TEXT".into(), false, None, 0),
+            ("payloadHash".into(), "TEXT".into(), true, None, 0),
+            ("consentGeneration".into(), "INTEGER".into(), true, None, 0),
+            ("attempts".into(), "INTEGER".into(), true, None, 0),
+            ("nextAttemptAt".into(), "INTEGER".into(), true, None, 0),
+            ("lastError".into(), "TEXT".into(), false, None, 0),
+            ("serverReceipt".into(), "TEXT".into(), false, None, 0),
+            ("serverRevision".into(), "INTEGER".into(), false, None, 0),
+        ],
+        "health_sync_outbox FULL 14-column tuple"
+    );
     let cursors = table_info(&conn, "health_sync_cursors");
     assert_eq!(
         cursors,
@@ -247,12 +260,24 @@ fn full_4_to_9_chain_executes_and_preserves_data() {
         ]
     );
     let conflicts = table_info(&conn, "health_sync_conflicts");
-    assert_eq!(conflicts.len(), 12);
-    assert_eq!(conflicts[0], ("ownerId".into(), "TEXT".into(), true, None, 1));
-    assert_eq!(conflicts[1], ("recordId".into(), "TEXT".into(), true, None, 2));
-    assert!(conflicts.contains(&("resolvedAt".into(), "INTEGER".into(), false, None, 0)));
-    assert!(conflicts.contains(&("resolution".into(), "TEXT".into(), false, None, 0)));
-    assert!(conflicts.contains(&("remoteTombstone".into(), "INTEGER".into(), true, None, 0)));
+    assert_eq!(
+        conflicts,
+        vec![
+            ("ownerId".into(), "TEXT".into(), true, None, 1),
+            ("recordId".into(), "TEXT".into(), true, None, 2),
+            ("operationId".into(), "TEXT".into(), true, None, 0),
+            ("localRevision".into(), "INTEGER".into(), true, None, 0),
+            ("localPayloadJson".into(), "TEXT".into(), false, None, 0),
+            ("localKind".into(), "TEXT".into(), true, None, 0),
+            ("remoteRevision".into(), "INTEGER".into(), true, None, 0),
+            ("remotePayloadJson".into(), "TEXT".into(), false, None, 0),
+            ("remoteTombstone".into(), "INTEGER".into(), true, None, 0),
+            ("createdAt".into(), "INTEGER".into(), true, None, 0),
+            ("resolvedAt".into(), "INTEGER".into(), false, None, 0),
+            ("resolution".into(), "TEXT".into(), false, None, 0),
+        ],
+        "health_sync_conflicts FULL 12-column tuple"
+    );
 
     // --- Index key columns in declaration order ---
     assert_eq!(
