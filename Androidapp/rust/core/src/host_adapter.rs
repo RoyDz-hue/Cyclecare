@@ -148,10 +148,15 @@ pub trait SecureStoreFactory {
     /// getSharedPreferences(PREFS_LEGACY_NAME, MODE_PRIVATE), live singleton.
     fn open_legacy(&mut self) -> Prefs;
     /// migrateLegacyPrefs (:105-127) as the host runs it, INCLUDING its
-    /// catch(_: Throwable) swallow. Err = a Throwable escaped mid-migration
-    /// and was swallowed by the source's own catch: the selection still
-    /// returns the SECURE store and the legacy store is whatever the
-    /// partial migration left (NOT cleared when clear() was never reached).
+    /// catch(_: Throwable) swallow. Source atomicity (reviewer-executed
+    /// source reading): the secure-side writes are ONE batched editor
+    /// (edit { for.. put.. } -> apply), so a Throwable BEFORE the apply
+    /// persists NOTHING to secure; the legacy clear is a SECOND batched
+    /// editor, so a Throwable there leaves secure fully migrated and
+    /// legacy uncleared. Both failures are swallowed and the selection
+    /// still returns the SECURE store. Err = one of those two swallowed
+    /// failure points (hosts distinguish them internally; the driver
+    /// treats both identically).
     /// Staging impls delegate to secure_store::migrate_legacy (Ok path).
     fn migrate_legacy_into(&mut self, secure: &mut Prefs) -> Result<(), ()>;
     /// Persist legacy mutations (fallback sanitize; the migration path
@@ -166,10 +171,10 @@ pub struct StoreSelection {
 }
 
 /// :68-104 composed. Success: run the host migration (:105-127). Its
-/// Throwable swallow is EXECUTED here as control flow: a mid-migration
-/// failure (Err) is swallowed exactly like the source's catch - the
-/// selection still returns the SECURE store and the legacy store is left as
-/// the partial migration had it (cleared ONLY when the host ran clear()).
+/// Throwable swallow is EXECUTED here as control flow: a swallowed failure
+/// (Err) leaves state per the source's two batched editors (secure batch
+/// all-or-nothing, legacy clear separate), and the selection still returns
+/// the SECURE store.
 /// Failure: sanitize the legacy store (exactly the 14 credential keys,
 /// corpus-locked), secure=false.
 pub fn select_preference_store<F: SecureStoreFactory>(fx: &mut F) -> StoreSelection {

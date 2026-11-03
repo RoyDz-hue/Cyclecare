@@ -121,31 +121,42 @@ struct Factory {
     encrypted: Result<Prefs, ()>,
     legacy: Prefs,
     committed: Vec<Prefs>,
-    /// When true, migration "throws" mid-way (Throwable swallowed by the
-    /// source's own catch): legacy is left uncleared, secure keeps what a
-    /// partial copy added, and the selection is still secure=true.
-    migration_throws: bool,
+    /// Failure injection at the source's two batched-editor points:
+    /// SecureBatch = throw before the secure apply (NOTHING persists to
+    /// secure, legacy intact); LegacyClear = secure batch applied, throw
+    /// on the legacy clear (secure fully migrated, legacy intact).
+    migration_failure: Option<MigrateFailure>,
 }
+#[derive(Clone, Copy)]
+enum MigrateFailure { SecureBatch, LegacyClear }
 impl Factory {
     fn ok(legacy: Prefs) -> Self {
-        Factory { encrypted: Ok(Prefs::new()), legacy, committed: vec![], migration_throws: false }
+        Factory { encrypted: Ok(Prefs::new()), legacy, committed: vec![], migration_failure: None }
     }
     fn fallback(legacy: Prefs) -> Self {
-        Factory { encrypted: Err(()), legacy, committed: vec![], migration_throws: false }
+        Factory { encrypted: Err(()), legacy, committed: vec![], migration_failure: None }
     }
 }
 impl SecureStoreFactory for Factory {
     fn create_encrypted(&mut self) -> Result<Prefs, ()> { self.encrypted.clone() }
     fn open_legacy(&mut self) -> Prefs { self.legacy.clone() }
     fn migrate_legacy_into(&mut self, secure: &mut Prefs) -> Result<(), ()> {
-        if self.migration_throws {
-            // partial copy happened (one key), then clear() never ran
-            if let Some(v) = self.legacy.get("user_id").cloned() {
-                secure.insert("user_id".into(), v);
+        match self.migration_failure {
+            Some(MigrateFailure::SecureBatch) => {
+                // Throw before the batched apply: the editor is discarded,
+                // NOTHING persists to secure, legacy stays intact.
+                Err(())
             }
-            return Err(());
+            Some(MigrateFailure::LegacyClear) => {
+                // Secure batch applied atomically, then the clear failed:
+                // secure fully migrated, legacy NOT cleared.
+                for (k, v) in self.legacy.clone() {
+                    if !secure.contains_key(&k) { secure.insert(k, v); }
+                }
+                Err(())
+            }
+            None => cyclecare_core::host_adapter::staging_migrate_legacy(&mut self.legacy, secure),
         }
-        cyclecare_core::host_adapter::staging_migrate_legacy(&mut self.legacy, secure)
     }
     fn commit_legacy(&mut self, l: &Prefs) { self.legacy = l.clone(); self.committed.push(l.clone()); }
 }
@@ -224,17 +235,24 @@ fn fallback_keeps_user_id_pairing_consistent_with_db_passphrase_seam() {
 }
 
 #[test]
-fn migration_throw_midway_is_swallowed_secure_stays_true_legacy_uncleared() {
-    // AuthPreferences.kt :105-127: migrateLegacyPrefs catches Throwable
-    // internally. A failure AFTER a partial copy but BEFORE legacy clear()
-    // leaves: secure store returned (secure=true), the partially-copied key
-    // present in secure, and the legacy store NOT cleared.
-    let mut fx = Factory { migration_throws: true, ..Factory::ok(legacy_with_state()) };
+fn migration_throw_before_secure_apply_persists_nothing_and_legacy_intact() {
+    // Batched editor semantics: a Throwable BEFORE the secure apply leaves
+    // the secure store UNCHANGED (no partial writes), legacy intact, and
+    // the selection is STILL secure=true (source catch(_: Throwable)).
+    let mut fx = Factory { migration_failure: Some(MigrateFailure::SecureBatch), ..Factory::ok(legacy_with_state()) };
     let sel = select_preference_store(&mut fx);
     assert!(sel.secure, "selection is still the secure store");
-    assert_eq!(sel.prefs.get("user_id"), Some(&PrefsValue::Str("u-1".into())),
-               "partial migration result is visible");
-    assert_eq!(sel.prefs.get("access_token"), None, "keys after the throw never migrated");
-    assert!(!fx.legacy.is_empty(), "legacy NOT cleared when clear() was never reached");
-    assert_eq!(fx.legacy.get("access_token"), Some(&PrefsValue::Str("tok".into())));
+    assert!(sel.prefs.is_empty(), "no partial writes: the batch was discarded");
+    assert_eq!(fx.legacy.get("access_token"), Some(&PrefsValue::Str("tok".into())),
+               "legacy NOT cleared when clear() was never reached");
+}
+
+#[test]
+fn migration_throw_on_legacy_clear_leaves_secure_fully_migrated() {
+    let mut fx = Factory { migration_failure: Some(MigrateFailure::LegacyClear), ..Factory::ok(legacy_with_state()) };
+    let sel = select_preference_store(&mut fx);
+    assert!(sel.secure);
+    assert_eq!(sel.prefs.get("user_id"), Some(&PrefsValue::Str("u-1".into())), "secure batch applied atomically");
+    assert_eq!(sel.prefs.get("access_token"), Some(&PrefsValue::Str("tok".into())));
+    assert!(!fx.legacy.is_empty(), "legacy NOT cleared: its clear editor failed");
 }
