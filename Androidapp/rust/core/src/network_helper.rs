@@ -14,6 +14,14 @@
 //! The missing-ConnectivityManager branch emits false then closes (:28-32);
 //! that is a one-shot observation: next() yields false once and the stream
 //! ends - model it by seeding with NoConnectivityManager.
+//!
+//! UNPROVEN RUNTIME SEAMS (source review only, not executed): the Android
+//! callback threading (which thread NetworkCallback events arrive on and
+//! their serialization), the awaitClose unregister ordering (:57-61), and
+//! the initial-registration race (a network change between the :34
+//! trySend(isOnline) snapshot and registerNetworkCallback at :55 can be
+//! missed or duplicated; the source does not guard it). These stay host
+//! glue; nothing here claims behavior for them.
 
 /// The four possible outcomes of the isOnline lookup chain, with the
 /// resolved capabilities attached when every step succeeded.
