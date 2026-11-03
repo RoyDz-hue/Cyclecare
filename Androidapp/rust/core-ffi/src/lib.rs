@@ -250,6 +250,28 @@ fn dispatch(contract: &str, payload: &str) -> String {
             use corelib::cycle_math::parse_local_date_iso;
             use corelib::cycle_screen_state::{build_cycle_screen_state, CycleScreenInput};
             let st = &v["settings"];
+            if !st.is_object() {
+                return err("settings must be an object".into());
+            }
+            // No silent defaults, no silent i64->i32 truncation: every
+            // settings field must be present and fit i32 (the Kotlin side
+            // always sends real stored Ints; a missing/mistyped field is a
+            // contract bug and must fail loudly).
+            let req_i32 = |k: &str| -> Result<i32, String> {
+                match st[k].as_i64() {
+                    Some(n) => i32::try_from(n).map_err(|_| format!("settings.{k} out of i32 range")),
+                    None => Err(format!("settings.{k} missing or not an integer")),
+                }
+            };
+            let (average_cycle_length, period_duration, luteal_phase_days) =
+                match (req_i32("averageCycleLength"), req_i32("periodDuration"), req_i32("lutealPhaseDays")) {
+                    (Ok(a), Ok(p), Ok(l)) => (a, p, l),
+                    (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return err(&e),
+                };
+            let last_period_start_date = match st["lastPeriodStartDate"].as_str() {
+                Some(s) => s.to_string(),
+                None => return err("settings.lastPeriodStartDate missing or not a string"),
+            };
             let today = match v["today"].as_str().and_then(parse_local_date_iso) {
                 Some(d) => d,
                 None => return err("today must be ISO yyyy-MM-dd"),
@@ -258,11 +280,16 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 Some(d) => d,
                 None => return err("selectedDate must be ISO yyyy-MM-dd"),
             };
+            if !(v["dateChoice"].is_string() || v["dateChoice"].is_null())
+                || !(v["cycleLengthChoice"].is_string() || v["cycleLengthChoice"].is_null())
+            {
+                return err("dateChoice/cycleLengthChoice must be string or null");
+            }
             let input = CycleScreenInput {
-                last_period_start_date: st["lastPeriodStartDate"].as_str().unwrap_or("").into(),
-                average_cycle_length: st["averageCycleLength"].as_i64().unwrap_or(28) as i32,
-                period_duration: st["periodDuration"].as_i64().unwrap_or(5) as i32,
-                luteal_phase_days: st["lutealPhaseDays"].as_i64().unwrap_or(14) as i32,
+                last_period_start_date,
+                average_cycle_length,
+                period_duration,
+                luteal_phase_days,
                 date_choice: v["dateChoice"].as_str().map(Into::into),
                 cycle_length_choice: v["cycleLengthChoice"].as_str().map(Into::into),
                 today,
@@ -273,7 +300,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 Some(p) => serde_json::json!({
                     "date": p.date.to_string(),
                     "dayOfCycle": p.day_of_cycle,
-                    "phase": format!("{:?}", p.phase),
+                    "phase": p.phase.kotlin_name(), // Kotlin enum entry name, e.g. "LUTEAL" (not Debug "Luteal")
                     "phaseTitle": p.phase.kotlin_title(),
                     "phaseSubtitle": p.phase.kotlin_subtitle(),
                     "phaseDescription": p.phase.kotlin_description(),

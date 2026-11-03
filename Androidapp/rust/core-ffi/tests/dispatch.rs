@@ -15,10 +15,10 @@ fn cycle_screen_state_envelope_anchored() {
     assert_eq!(ok["selectedDayOfCycleText"], "22");
     assert_eq!(ok["daysUntilPeriodFromSelected"], 6);
     assert_eq!(ok["selectedDayTitle"], "Luteal Phase");
-    assert_eq!(ok["selectedDatePrediction"]["phase"], "Luteal");
+    assert_eq!(ok["selectedDatePrediction"]["phase"], "LUTEAL");
     assert_eq!(ok["selectedDatePrediction"]["phaseSubtitle"], "Nurture & Balance");
     assert_eq!(ok["selectedDatePrediction"]["phaseColorHex"], 0xFF695873u32);
-    assert_eq!(ok["todayPrediction"]["phase"], "Ovulation");
+    assert_eq!(ok["todayPrediction"]["phase"], "OVULATION");
     assert!(ok["disclaimer"].as_str().unwrap().starts_with("Calendar dates are estimates"));
 }
 
@@ -41,8 +41,28 @@ fn cycle_screen_state_envelope_no_anchor() {
 fn cycle_screen_state_bad_date_is_typed_error() {
     let out = cyclecare_core::dispatch_for_test(
         "cycle_screen_state",
-        r#"{"settings":{},"today":"nope","selectedDate":"2026-10-26"}"#,
+        r#"{"settings":{"lastPeriodStartDate":"2026-10-05","averageCycleLength":28,"periodDuration":5,"lutealPhaseDays":14},"today":"nope","selectedDate":"2026-10-26"}"#,
     );
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(v["error"].as_str().unwrap().contains("today"));
+}
+
+#[test]
+fn cycle_screen_state_missing_settings_field_is_typed_error() {
+    let out = cyclecare_core::dispatch_for_test(
+        "cycle_screen_state",
+        r#"{"settings":{"lastPeriodStartDate":"2026-10-05","averageCycleLength":28,"periodDuration":5},"today":"2026-10-19","selectedDate":"2026-10-26"}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("lutealPhaseDays"));
+}
+
+#[test]
+fn cycle_screen_state_out_of_range_is_typed_error() {
+    let out = cyclecare_core::dispatch_for_test(
+        "cycle_screen_state",
+        r#"{"settings":{"lastPeriodStartDate":"2026-10-05","averageCycleLength":99999999999,"periodDuration":5,"lutealPhaseDays":14},"today":"2026-10-19","selectedDate":"2026-10-26"}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("averageCycleLength"));
 }

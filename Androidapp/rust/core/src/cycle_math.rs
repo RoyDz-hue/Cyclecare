@@ -32,6 +32,17 @@ impl CyclePhase {
         }
     }
 
+    /// Verbatim CycleModels.kt enum ENTRY name (repo main@31b88f5) - the
+    /// wire/API name, NOT the display title.
+    pub fn kotlin_name(&self) -> &'static str {
+        match self {
+            CyclePhase::Menstrual => "MENSTRUAL",
+            CyclePhase::Follicular => "FOLLICULAR",
+            CyclePhase::Ovulation => "OVULATION",
+            CyclePhase::Luteal => "LUTEAL",
+        }
+    }
+
     /// Verbatim CycleModels.kt subtitle (repo main@31b88f5).
     pub fn kotlin_subtitle(&self) -> &'static str {
         match self {

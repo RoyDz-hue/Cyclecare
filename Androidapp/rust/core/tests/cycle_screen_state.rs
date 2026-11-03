@@ -21,6 +21,10 @@ fn input(last_start: &str, today: &str, selected: &str) -> CycleScreenInput {
 
 #[test]
 fn phase_strings_verbatim_from_cycle_models() {
+    assert_eq!(CyclePhase::Menstrual.kotlin_name(), "MENSTRUAL");
+    assert_eq!(CyclePhase::Follicular.kotlin_name(), "FOLLICULAR");
+    assert_eq!(CyclePhase::Ovulation.kotlin_name(), "OVULATION");
+    assert_eq!(CyclePhase::Luteal.kotlin_name(), "LUTEAL");
     assert_eq!(CyclePhase::Menstrual.kotlin_subtitle(), "Rest & Reset");
     assert_eq!(CyclePhase::Follicular.kotlin_subtitle(), "Energy Rising");
     assert_eq!(CyclePhase::Ovulation.kotlin_subtitle(), "Peak Fertility");
