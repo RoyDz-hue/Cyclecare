@@ -63,14 +63,24 @@ pub enum ImageGenError {
     /// RAW source exception: Request.Builder's url()/header() validation
     /// runs BEFORE the try block (:60-69 vs :70), so OkHttp's
     /// IllegalArgumentException propagates out of generateUsing uncaught -
-    /// it is NOT mapped to user-safe copy (Request.kt:172-174 @throws IAE;
-    /// Headers.kt:440-459 checkName/checkValue). This variant represents
-    /// that raw throw faithfully; it is not a proposed hardening and no
-    /// caller should show it to users. Message text for header failures is
-    /// verbatim OkHttp 4.10.0; the URL-failure message text is modeled
-    /// ("unexpected url: <url>") - the exact 4.10.0 string sits past the
-    /// fetch window of the verified source, so only the exception TYPE and
-    /// propagation position are source-verified for URLs.
+    /// it is NOT mapped to user-safe copy. This variant represents that raw
+    /// throw faithfully; it is not a proposed hardening and no caller
+    /// should show it to users.
+    ///
+    /// VERSION UNCERTAINTY (open): gradle/libs.versions.toml DECLARES
+    /// com.squareup.okhttp3:okhttp = 4.10.0, but no Gradle dependency
+    /// resolution has been run, so the resolved runtime version is
+    /// UNVERIFIED; the reviewer's only cached jar is 4.12. The declared pin
+    /// is not a verified runtime dependency and the cached jar is not
+    /// proof of an upgrade. The checkValue rules below are quoted from the
+    /// 4.10.0 tag sources (Headers.kt:450-459; Request.kt:172-174 @throws
+    /// IAE); against 4.12 bytecode the header error SHAPE was reasoned
+    /// about, not executed. For URLs the message text is MODELED under
+    /// either version: the reviewer's javap of 4.12 shows HttpUrl-specific
+    /// scheme/host/port error messages and NO "unexpected url" string, and
+    /// the 4.10 source line sat past the fetch window - so only the
+    /// exception TYPE (IllegalArgumentException) and propagation position
+    /// (before the try block) are claimed for URL failures.
     RawIllegalArgument(String),
 }
 
@@ -178,14 +188,16 @@ pub fn build_request(
     })
 }
 
-/// Request.kt:175-187 (okhttp 4.10.0): ws:/wss: are silently rewritten to
-/// http:/https:, then toHttpUrl() throws IllegalArgumentException on an
-/// invalid URL. FAITHFUL SUBSET: the full HttpUrl grammar (IDN, percent
-/// encoding, ports, user-info, dot-segments) is NOT ported - the check is
-/// scheme in {http, https} (case-insensitive) plus a non-empty host before
-/// the first '/', '?' or '#'. Every baseUrl the app can produce
-/// (SupabaseConfig.url) passes either way; this pins the exception SHAPE
-/// and position, not the full URL grammar.
+/// Request.kt:175-187 (4.10.0 tag sources; declared pin, resolved version
+/// unverified): ws:/wss: are silently rewritten to http:/https:, then
+/// toHttpUrl() throws IllegalArgumentException on an invalid URL.
+/// FAITHFUL SUBSET: the full HttpUrl grammar (IDN, percent encoding,
+/// ports, user-info, dot-segments) is NOT ported - the check is scheme in
+/// {http, https} (case-insensitive) plus a non-empty host before the first
+/// '/', '?' or '#'. Every baseUrl the app can produce (SupabaseConfig.url)
+/// passes either way; this pins the exception SHAPE and position, not the
+/// full URL grammar. Message text is modeled and known-wrong under 4.12
+/// (HttpUrl-specific scheme/host/port messages); see the enum doc.
 fn okhttp_url_check(url: &str) -> Result<(), ImageGenError> {
     let rewritten = if url.len() >= 3 && url[..3].eq_ignore_ascii_case("ws:") && !url[..4.min(url.len())].eq_ignore_ascii_case("wss:") {
         format!("http:{}", &url[3..])
@@ -213,7 +225,10 @@ fn okhttp_url_check(url: &str) -> Result<(), ImageGenError> {
     Ok(())
 }
 
-/// Headers.kt:450-459 checkValue (okhttp 4.10.0): each UTF-16 unit must be
+/// Headers.kt:450-459 checkValue (4.10.0 tag sources; declared pin,
+/// resolved version unverified - formatting equivalence under 4.12 was
+/// reasoned from bytecode by the reviewer, not executed): each UTF-16 unit
+/// must be
 /// '\t' or in '\u0020'..'\u007e', else IAE
 /// "Unexpected char %#04x at %d in %s value" (+ ": <value>" unless the
 /// header is sensitive). isSensitiveHeader = Authorization / Cookie /

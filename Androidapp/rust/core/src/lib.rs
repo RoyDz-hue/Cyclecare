@@ -19,6 +19,8 @@ pub mod owner_data_gate;
 pub mod sync_gate;
 pub mod sync_use_case;
 pub mod care_image_gen;
+pub mod debug_bridge;
+pub mod sound_feedback;
 pub mod network_helper;
 pub mod conflict_resolve;
 pub mod coin_amount;
