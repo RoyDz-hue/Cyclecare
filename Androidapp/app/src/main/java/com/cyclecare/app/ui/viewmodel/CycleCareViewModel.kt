@@ -2158,6 +2158,24 @@ class CycleCareViewModel(
         }
     }
 
+    /** Read-only calculation over a captured owner/settings snapshot. No DB,
+     * auth, network or writes. Caller rejects results if the owner changes. */
+    fun getPredictionForSnapshot(snapshot: CycleUiState, date: LocalDate): DayPrediction? {
+        if (!snapshot.hasCycleAnchor) return null
+        return repository.calculateDayPrediction(date, snapshot.settings)
+    }
+
+    fun getPredictionsForSnapshot(
+        snapshot: CycleUiState,
+        month: java.time.YearMonth
+    ): Map<String, DayPrediction> {
+        if (!snapshot.hasCycleAnchor) return emptyMap()
+        return (1..month.lengthOfMonth()).mapNotNull { day ->
+            val date = month.atDay(day)
+            getPredictionForSnapshot(snapshot, date)?.let { date.toString() to it }
+        }.toMap()
+    }
+
     fun getPredictionForDate(date: LocalDate): DayPrediction? {
         val current = _uiState.value
         if (!current.hasCycleAnchor) return null
