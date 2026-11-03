@@ -8,7 +8,7 @@ Classification:
 - MONEY-INERT: payment orchestration; per the standing money boundary only its gates/messages are portable, execution stays with the host, and with the production release policy the whole path stays closed.
 - ACCOUNT-MUTATION (consent/data): real account/data mutations with their own consent, authorization and wipe semantics; never folded into the payment release policy. Only gates/messages/ordering are portable; the mutation itself stays host-executed and owner-authorized.
 
-Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 28, ORCHESTRATION 26 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 16, MONEY-INERT 6, ACCOUNT-MUTATION 1, LOCAL 1 (isCurrentCareRequest inside consultCare). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
+Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 37, ORCHESTRATION 26 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 8, MONEY-INERT 6, ACCOUNT-MUTATION 0, LOCAL 1 (isCurrentCareRequest inside consultCare; ported within care_consult.rs). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
 
 | :line | method | class | evidence / remaining |
 |---|---|---|---|
@@ -36,7 +36,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :668 | saveDayLog | ORCHESTRATION | repository write |
 | :693 | deleteDayLog | ORCHESTRATION | repository delete |
 | :700 | updateSettings | DECISION-PORTED | settings_core.rs gates; VM write glue |
-| :719 | deleteCloudHealthCopy | ACCOUNT-MUTATION | ACCOUNT-MUTATION privacy sequence (see note below) |
+| :719 | deleteCloudHealthCopy | DECISION-PORTED | cloud_health_delete.rs TYPE-STATE sequence shell (v95): RpcPermit unconstructable before persisted pause; checks wired at :741/:743; RPC host-executed |
 | :750 | setAiSharingAllowed | DECISION-PORTED | ai_consent_tap.rs |
 | :773 | setAiProviderSharingAllowed | DECISION-PORTED | ai_consent_tap.rs snapshot equality |
 | :822 | enableDisplayedAiProviders | DECISION-PORTED | ai_consent_tap.rs |
@@ -45,10 +45,10 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :856 | editCareLog | DECISION-UNPORTED | care log edit draft machine (small) |
 | :862 | cancelCareLog | DECISION-UNPORTED | draft machine |
 | :868 | confirmCareLog | DECISION-UNPORTED | draft machine |
-| :884 | consultCare | DECISION-UNPORTED | entry gates + history window (:884-933) - porting now |
+| :884 | consultCare | DECISION-PORTED | care_consult.rs + 46-case JVM corpus (v93) |
 | :907 | isCurrentCareRequest | LOCAL | LOCAL inside consultCare (:907); ported as part of its surface |
 | :948 | selectTiedDownChoice | STATE-SETTER | UI-state copy; Compose/host seam |
-| :952 | generateCareImage | DECISION-UNPORTED | isAdmin||PREMIUM gate + busy gate; care_image_gen.rs ports request/response only |
+| :952 | generateCareImage | DECISION-PORTED | care_image_gen.rs care_image_entry_gate (busy/premium/token/prompt-length chain, v94) |
 | :1003 | clearGeneratedCareImage | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1007 | saveThoughtForCareReview | ORCHESTRATION | note write |
 | :1016 | openMpesaDialog | STATE-SETTER | UI-state copy; Compose/host seam |
@@ -63,15 +63,15 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1170 | initiateMpesaStkPush | MONEY-INERT | delegates SupabasePaymentService; closed under production policy |
 | :1194 | pollAndCompletePayment | DECISION-PORTED | payment_poll.rs |
 | :1230 | pollMpesaStatus | DECISION-PORTED | payment_poll.rs timeout/row-lock/ladder |
-| :1264 | cancelActivePayment | DECISION-UNPORTED | cancel-vs-poll race gate |
+| :1264 | cancelActivePayment | DECISION-PORTED | vm_sync.rs literals (v95) |
 | :1276 | triggerManualSync | DECISION-PORTED | sync_gate.rs manual_sync_preaction |
 | :1320 | refreshWalletNow | DECISION-PORTED | wallet.rs begin_refresh/apply_result (NO_SESSION gate :1320-1326 verified) |
-| :1376 | runReconnectWorkOnce | DECISION-UNPORTED | owner/session recheck pair + reconcile+verify chain |
-| :1402 | scheduleTrailingReconnectWork | DECISION-UNPORTED | trailing-job coalescing |
-| :1407 | launchTrailingReconnectWork | DECISION-UNPORTED | owner-at-schedule capture |
+| :1376 | runReconnectWorkOnce | DECISION-PORTED | vm_sync.rs reconnect_success conjunction (v95) |
+| :1402 | scheduleTrailingReconnectWork | DECISION-PORTED | vm_sync.rs coalescing (v95) |
+| :1407 | launchTrailingReconnectWork | DECISION-PORTED | vm_sync.rs trailing dispatch + owner capture (v95) |
 | :1431 | onForeground | ORCHESTRATION | lifecycle trigger |
 | :1437 | onBackground | ORCHESTRATION | wallet realtime stop glue |
-| :1439 | autoSyncSilently | DECISION-UNPORTED | silent-sync gate composition |
+| :1439 | autoSyncSilently | DECISION-PORTED | vm_sync.rs composition helpers over sync_gate/account_start (v95) |
 | :1496 | unlockApp | DECISION-PORTED | app_lock.rs + pin_verify.rs |
 | :1508 | unlockViaBiometric | DECISION-PORTED | app_lock.rs (fail-open parity, security-review hold, labeled) |
 | :1512 | saveQuickUnlockPin | DECISION-PORTED | pin.rs + pin_verify.rs PBKDF2+legacy |
@@ -90,7 +90,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1678 | setVaultOpen | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1683 | claimCoinsManual | ORCHESTRATION | delegates earnCoinsUseCase.claimDailyAttunement (verified read); claim gates in economy_rules.rs |
 | :1698 | mineCoinsManual | ORCHESTRATION | verbatim delegate to claimCoinsManual (verified read) |
-| :1702 | transferCoins | DECISION-UNPORTED | offline gate + toast literal; rest delegates |
+| :1702 | transferCoins | DECISION-PORTED | economy_rules.rs transfer_may_proceed + toast literal (v94) |
 | :1723 | unlockArtifact | ORCHESTRATION | delegates miningUseCase.purchaseArtifact (verified read); missing-coins math in economy_rules.rs |
 | :1738 | equipItem | ORCHESTRATION | economy delegate |
 | :1753 | purchasePackage | MONEY-INERT | routes to checkout; closed under production policy |

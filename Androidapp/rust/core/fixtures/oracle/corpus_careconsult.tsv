@@ -70,3 +70,39 @@ m8	cigate	false	true	false	tok	short prompt
 m9	cigate	false	true	false	tok	<EMOJI>
 q1	toff	true
 q2	toff	false
+v1	reauth	true	true	true
+v2	reauth	false	true	false
+v3	reauth	false	false	true
+v4	reauth	false	false	false
+b1	alo	true
+b2	alo	false
+k1	achk	true	false
+k2	achk	false	true
+k3	achk	false	false
+k4	achk	true	true
+w5	rprobe	true	false	true
+w6	rprobe	true	true	false
+w7	rprobe	true	true	true
+w8	rprobe	false	false	false
+e1x	telig	false	true
+e2x	telig	true	true
+e3x	telig	false	false
+p1x	tdisp	true	true	true
+p2x	tdisp	false	true	true
+p3x	tdisp	false	true	false
+p4x	tdisp	false	false	true
+r1x	rsucc	true	true
+r2x	rsucc	true	false
+r3x	rsucc	false	true
+c1x	ccoal	true
+c2x	ccoal	false
+f1x	fgate	true
+f2x	fgate	false
+t1	dpath	true	false	u	true	false	true	false
+t2	dpath	false	true	u	true	false	true	false
+t3	dpath	false	false	-	true	false	true	false
+t4	dpath	false	false	u	false	false	true	false
+t5	dpath	false	false	u	true	true	true	false
+t6	dpath	false	false	u	true	false	true	true
+t7	dpath	false	false	u	true	false	true	false
+t8	dpath	false	false	u	true	false	false	false

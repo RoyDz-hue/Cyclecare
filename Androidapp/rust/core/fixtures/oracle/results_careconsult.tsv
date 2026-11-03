@@ -70,3 +70,39 @@ m8	Proceed
 m9	Proceed
 q1	proceed
 q2	Sending coins needs an internet connection. Please reconnect and try again.
+v1	false
+v2	true
+v3	true
+v4	false
+b1	false,false
+b2	false,true
+k1	true
+k2	true
+k3	false
+k4	true
+w5	true
+w6	true
+w7	false
+w8	false
+e1x	true
+e2x	false
+e3x	false
+p1x	Run
+p2x	Reschedule
+p3x	Nothing
+p4x	Nothing
+r1x	true
+r2x	false
+r3x	false
+c1x	false
+c2x	true
+f1x	true
+f2x	false
+t1	busy
+t2	msg:No online account is connected, so only this device's records were erased.
+t3	msg:No online account is connected, so only this device's records were erased.
+t4	msg:Your choice couldn't be saved, so nothing was erased online. Please try again.
+t5	paused;effects(true,false,false,Erasing your online copy…);token;stale1
+t6	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;stale2
+t7	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept.
+t8	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.

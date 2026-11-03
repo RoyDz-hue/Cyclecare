@@ -14,6 +14,7 @@
 pub mod kotlin_text;
 pub mod account_start;
 pub mod startup_route;
+pub mod vm_sync;
 pub mod wallet;
 pub mod owner_data_gate;
 pub mod sync_gate;

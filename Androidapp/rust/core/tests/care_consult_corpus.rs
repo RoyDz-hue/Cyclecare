@@ -7,6 +7,7 @@
 
 use cyclecare_core::care_consult::*;
 use cyclecare_core::cloud_health_delete as chd;
+use cyclecare_core::vm_sync as vs;
 use std::path::PathBuf;
 
 fn rows(name: &str) -> Vec<Vec<String>> {
@@ -136,35 +137,82 @@ fn care_consult_matches_jvm_outputs() {
             "fail" => CARE_FAILURE_MESSAGE.to_string(),
             "dentry" => {
                 let uid = if c[4] == "-" { None } else { Some(dec(&c[4])) };
-                let e = chd::delete_entry(
-                    c[2].parse().unwrap(),
-                    c[3].parse().unwrap(),
-                    uid.as_deref(),
-                );
-                format!("{e:?}")
+                let e = chd::begin(c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref(), "o1", 7);
+                match e {
+                    chd::BeginOutcome::Busy => "Busy".to_string(),
+                    chd::BeginOutcome::NoOnlineAccount => "NoOnlineAccount".to_string(),
+                    chd::BeginOutcome::Ready(_) => "Proceed".to_string(),
+                }
             }
             "dpause" => {
-                if chd::pause_must_precede_rpc(c[2].parse().unwrap()) {
-                    "proceed".to_string()
-                } else {
-                    chd::MSG_SAVE_FAILED.to_string()
+                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
+                match r.after_pause(c[2].parse().unwrap()) {
+                    chd::PauseOutcome::Persisted(_) => "proceed".to_string(),
+                    chd::PauseOutcome::SaveFailed => chd::MSG_SAVE_FAILED.to_string(),
                 }
             }
             "dstate" => {
-                let st = chd::in_flight_state();
-                format!(
-                    "{},{},{},{}",
-                    st.is_deleting_cloud_health, st.is_cloud_sync_allowed, st.is_ai_sharing_allowed, st.message
-                )
+                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
+                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
+                let st = p.privacy_effects();
+                format!("{},{},{},{}", st.is_deleting_cloud_health, st.is_cloud_sync_allowed, st.is_ai_sharing_allowed, st.message)
             }
-            "dcurrent" => chd::still_current(
-                "o1",
-                7,
-                if c[2].parse().unwrap() { "o1" } else { "o2" },
-                if c[3].parse().unwrap() { 7 } else { 8 },
-            )
-            .to_string(),
-            "dfinal" => chd::final_message(c[2].parse().unwrap()).to_string(),
+            "dcurrent" => {
+                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
+                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
+                p.permit_rpc(
+                    if c[2].parse().unwrap() { "o1" } else { "o2" },
+                    if c[3].parse().unwrap() { 7 } else { 8 },
+                )
+                .is_ok()
+                .to_string()
+            }
+            "dfinal" => {
+                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
+                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
+                let permit = p.permit_rpc("o1", 7).expect("permit");
+                match permit.complete(c[2].parse().unwrap(), "o1", 7) {
+                    chd::Completion::Applied { message } => message.to_string(),
+                    chd::Completion::Stale => "stale".to_string(),
+                }
+            }
+            "dpath" => {
+                let uid = if c[4] == "-" { None } else { Some(dec(&c[4])) };
+                let mut trace = String::new();
+                match chd::begin(c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref(), "owner1", 7) {
+                    chd::BeginOutcome::Busy => trace.push_str("busy"),
+                    chd::BeginOutcome::NoOnlineAccount => {
+                        trace.push_str("msg:"); trace.push_str(chd::MSG_NO_ONLINE_ACCOUNT);
+                    }
+                    chd::BeginOutcome::Ready(r) => match r.after_pause(c[5].parse().unwrap()) {
+                        chd::PauseOutcome::SaveFailed => {
+                            trace.push_str("msg:"); trace.push_str(chd::MSG_SAVE_FAILED);
+                        }
+                        chd::PauseOutcome::Persisted(p) => {
+                            let st = p.privacy_effects();
+                            trace.push_str(&format!("paused;effects({},{},{},{});token;",
+                                st.is_deleting_cloud_health, st.is_cloud_sync_allowed,
+                                st.is_ai_sharing_allowed, st.message));
+                            let stale1: bool = c[6].parse().unwrap();
+                            let deleted: bool = c[7].parse().unwrap();
+                            let stale2: bool = c[8].parse().unwrap();
+                            match p.permit_rpc(if stale1 { "other" } else { "owner1" }, 7) {
+                                Err(_) => trace.push_str("stale1"),
+                                Ok(permit) => {
+                                    trace.push_str("permit;rpc;");
+                                    match permit.complete(deleted, if stale2 { "other" } else { "owner1" }, 7) {
+                                        chd::Completion::Stale => trace.push_str("stale2"),
+                                        chd::Completion::Applied { message } => {
+                                            trace.push_str("msg:"); trace.push_str(message);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
+                trace
+            }
             "cigate" => {
                 let tok = if c[5] == "-" { None } else { Some(dec(&c[5])) };
                 let g = cyclecare_core::care_image_gen::care_image_entry_gate(
@@ -183,6 +231,18 @@ fn care_consult_matches_jvm_outputs() {
                         .to_string(),
                 }
             }
+            "reauth" => vs::reauth_after_sync(c[2].parse().unwrap(), c[3].parse().unwrap(), c[4].parse().unwrap()).to_string(),
+            "alo" => {
+                let (a, b) = vs::autosync_local_only_return(c[2].parse().unwrap());
+                format!("{a},{b}")
+            }
+            "achk" => vs::autosync_checking(c[2].parse().unwrap(), c[3].parse().unwrap()).to_string(),
+            "rprobe" => vs::needs_remote_profile_probe(c[2].parse().unwrap(), c[3].parse().unwrap(), c[4].parse().unwrap()).to_string(),
+            "telig" => vs::trailing_eligible(c[2].parse().unwrap(), c[3].parse().unwrap()).to_string(),
+            "tdisp" => format!("{:?}", vs::trailing_dispatch(c[2].parse().unwrap(), c[3].parse().unwrap(), c[4].parse().unwrap())),
+            "rsucc" => vs::reconnect_success(c[2].parse().unwrap(), c[3].parse().unwrap()).to_string(),
+            "ccoal" => vs::account_refresh_coalesce(c[2].parse().unwrap()).to_string(),
+            "fgate" => vs::on_foreground_autosync(c[2].parse().unwrap()).to_string(),
             "toff" => {
                 if cyclecare_core::economy_rules::transfer_may_proceed(c[2].parse().unwrap()) {
                     "proceed".to_string()
