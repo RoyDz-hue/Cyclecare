@@ -16,8 +16,10 @@ pub struct CareLogDraft {
 }
 
 /// :856-860 editCareLog always (re)proposes and shows the interpretation.
-pub fn edit_proposed() -> CareLogDraft {
-    CareLogDraft { pending: true }
+pub fn edit_proposed(proposal_present: bool) -> CareLogDraft {
+    // :858-859 pendingCareLog = proposal?.interpretation: a NULL proposal
+    // leaves the pending draft UNSET (not pending).
+    CareLogDraft { pending: proposal_present }
 }
 
 /// :862-866 cancelCareLog clears the draft and turn id.
@@ -51,4 +53,25 @@ pub fn confirm(draft: CareLogDraft, gate_confirmed: bool) -> ConfirmOutcome {
 /// proposal's owner must still be the effective user at BOTH checkpoints.
 pub fn confirmed_owner_still_current(confirmed_owner: &str, current_owner: &str) -> bool {
     confirmed_owner == current_owner
+}
+
+#[cfg(test)]
+mod null_proposal_tests {
+    use super::*;
+
+    #[test]
+    fn null_proposal_leaves_draft_unset() {
+        // :858-859 proposal?.interpretation: propose() returned null ->
+        // pendingCareLog stays unset; confirm() then hits :869 NoPending.
+        let d = edit_proposed(false);
+        assert!(!d.pending);
+        assert_eq!(format!("{:?}", confirm(d, true)), "NoPending");
+    }
+
+    #[test]
+    fn present_proposal_marks_pending() {
+        let d = edit_proposed(true);
+        assert!(d.pending);
+        assert_eq!(format!("{:?}", confirm(d, true)), "Cleared");
+    }
 }

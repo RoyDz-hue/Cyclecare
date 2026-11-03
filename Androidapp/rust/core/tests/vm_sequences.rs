@@ -193,6 +193,7 @@ fn trailing_skip_does_nothing() {
 
 struct AutoFx {
     local_only: bool,
+    ui_onboarding_completed: bool,
     user_id_present: bool,
     owner: String,
     session: i64,
@@ -205,6 +206,7 @@ struct AutoFx {
     remote: Option<bool>,
     sync_success: bool,
     sync_requires_auth: bool,
+    stale_after_admin: bool,
     calls: Vec<String>,
     destination_flags: Option<(bool, bool, bool)>,
 }
@@ -213,6 +215,7 @@ impl AutoFx {
     fn online(checking: bool, local: Option<LocalSnapshot>) -> Self {
         AutoFx {
             local_only: false,
+            ui_onboarding_completed: false,
             user_id_present: true,
             owner: "o1".into(),
             session: 7,
@@ -225,6 +228,7 @@ impl AutoFx {
             remote: Some(true),
             sync_success: true,
             sync_requires_auth: false,
+            stale_after_admin: false,
             calls: vec![],
             destination_flags: None,
         }
@@ -253,6 +257,9 @@ impl AutoSyncEffects for AutoFx {
     fn session_needs_reauthentication(&self) -> bool {
         self.reauth
     }
+    fn ui_settings_onboarding_completed(&self) -> bool {
+        self.ui_onboarding_completed
+    }
     fn apply_local_only_return(&mut self, show_onboarding: bool) {
         self.calls.push(format!("local_only_return({})", show_onboarding));
     }
@@ -277,7 +284,7 @@ impl AutoSyncEffects for AutoFx {
         self.calls.push("remote_probe".to_string());
         self.remote
     }
-    fn apply_destination_flags(&mut self, check_failed: bool, show_onboarding: bool, sync_gated: bool) {
+    fn apply_destination_flags(&mut self, check_failed: bool, show_onboarding: bool, sync_gated: bool, _local: Option<&LocalSnapshot>) {
         self.calls.push("destination_flags".to_string());
         self.destination_flags = Some((check_failed, show_onboarding, sync_gated));
     }
@@ -285,30 +292,46 @@ impl AutoSyncEffects for AutoFx {
         self.calls.push("execute_sync".to_string());
         SyncResult { is_success: self.sync_success, requires_authentication: self.sync_requires_auth }
     }
-    fn apply_sync_result(&mut self, _r: &SyncResult, reauth: bool) {
+    fn read_restored_after_sync(&mut self) -> cyclecare_core::vm_sync::RestoredState {
+        self.calls.push("restored_reads".to_string());
+        if self.stale_after_admin {
+            self.owner = "other".to_string();
+        }
+        cyclecare_core::vm_sync::RestoredState { settings_onboarding_completed: true, profile_present: true }
+    }
+    fn fetch_is_admin(&mut self) -> bool {
+        self.calls.push("is_admin".to_string());
+        if self.stale_after_admin {
+            self.owner = "other".to_string();
+        }
+        false
+    }
+    fn apply_sync_result(&mut self, _r: &SyncResult, _restored: &cyclecare_core::vm_sync::RestoredState, _is_admin: bool, reauth: bool) {
         self.calls.push(format!("apply_result(reauth={})", reauth));
     }
-    fn update_calculations(&mut self) {
+    fn update_calculations(&mut self, _restored: &cyclecare_core::vm_sync::RestoredState) {
         self.calls.push("update_calculations".to_string());
     }
 }
 
 #[test]
-fn autosync_local_only_returns_before_wallet_refresh() {
+fn autosync_local_only_uses_ui_state_no_storage_read() {
+    // :1440-1444: showOnboarding from ALREADY-LOADED uiState.settings, no
+    // repository read in this branch.
     let mut fx = AutoFx::online(false, None);
     fx.local_only = true;
-    fx.local = Some(LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true });
+    fx.ui_onboarding_completed = true;
     auto_sync_silently(&mut fx, true);
-    assert_eq!(fx.calls, vec!["read_local", "local_only_return(false)"]);
+    assert_eq!(fx.calls, vec!["local_only_return(false)"]);
 }
 
 #[test]
-fn autosync_local_only_no_settings_shows_onboarding() {
+fn autosync_local_only_incomplete_ui_settings_shows_onboarding() {
     let mut fx = AutoFx::online(false, None);
     fx.local_only = true;
-    fx.local = Some(LocalSnapshot { profile_present: false, profile_completed: false, settings_onboarding_completed: false });
+    fx.ui_onboarding_completed = false;
     auto_sync_silently(&mut fx, true);
-    assert_eq!(fx.calls, vec!["read_local", "local_only_return(true)"]);
+    assert_eq!(fx.calls, vec!["local_only_return(true)"]);
 }
 
 #[test]
@@ -326,7 +349,7 @@ fn autosync_checking_with_complete_local_skips_remote_probe_and_syncs() {
     auto_sync_silently(&mut fx, true);
     assert_eq!(
         fx.calls,
-        vec!["wallet(true)", "checking_flags", "read_local", "conflicts", "destination_flags", "execute_sync", "apply_result(reauth=false)", "update_calculations"]
+        vec!["wallet(true)", "checking_flags", "read_local", "conflicts", "destination_flags", "execute_sync", "restored_reads", "is_admin", "apply_result(reauth=false)", "update_calculations"]
     );
     assert_eq!(fx.destination_flags, Some((false, false, false)));
 }
@@ -361,6 +384,18 @@ fn autosync_onboarding_destination_gates_upload() {
     auto_sync_silently(&mut fx, true);
     assert!(!fx.calls.contains(&"execute_sync".to_string()));
     assert_eq!(fx.destination_flags, Some((false, true, false)));
+}
+
+#[test]
+fn autosync_third_recheck_after_restored_reads_and_admin_blocks_apply() {
+    // :1485: owner change during restored reads / isAdmin -> result discarded.
+    let snap = LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true };
+    let mut fx = AutoFx::online(true, Some(snap));
+    fx.stale_after_admin = true;
+    auto_sync_silently(&mut fx, true);
+    assert!(!fx.calls.iter().any(|c| c.starts_with("apply_result(")));
+    assert!(!fx.calls.contains(&"update_calculations".to_string()));
+    assert!(fx.calls.contains(&"restored_reads".to_string()));
 }
 
 #[test]

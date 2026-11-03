@@ -321,7 +321,7 @@ fn care_consult_matches_jvm_outputs() {
                 }
             }
             "draft" => {
-                let d = if c[2].parse().unwrap() { cld::edit_proposed() } else { cld::cancelled() };
+                let d = if c[2].parse().unwrap() { cld::edit_proposed(true) } else { cld::cancelled() };
                 format!("{:?}", cld::confirm(d, c[3].parse().unwrap()))
             }
             "pset" => {

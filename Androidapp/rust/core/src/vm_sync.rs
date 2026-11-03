@@ -325,6 +325,12 @@ pub struct LocalSnapshot {
     pub settings_onboarding_completed: bool,
 }
 
+/// What executeSync restored, re-read from the repository (:1481-1483).
+pub struct RestoredState {
+    pub settings_onboarding_completed: bool,
+    pub profile_present: bool,
+}
+
 /// Host effects for autoSyncSilently (:1439-1494).
 pub trait AutoSyncEffects {
     fn is_local_only(&self) -> bool;
@@ -334,6 +340,10 @@ pub trait AutoSyncEffects {
     fn is_checking_cloud_profile(&self) -> bool;
     fn cloud_profile_check_failed(&self) -> bool;
     fn session_needs_reauthentication(&self) -> bool;
+    /// :1441-1443 local-only early return flags. The source reads
+    /// uiState.settings.isOnboardingCompleted - ALREADY-LOADED UI STATE, no
+    /// storage read - so this is a plain bool, never a fallible read.
+    fn ui_settings_onboarding_completed(&self) -> bool;
     /// :1441-1443 local-only early return flags.
     fn apply_local_only_return(&mut self, show_onboarding: bool);
     /// :1446 refreshWalletNow(force).
@@ -349,14 +359,21 @@ pub trait AutoSyncEffects {
     /// :1461-1463 withTimeoutOrNull(20s) hasRemoteProfile; only invoked when
     /// needs_remote_profile_probe says so. None = timeout (source nullable).
     fn has_remote_profile(&mut self) -> Option<bool>;
-    /// :1465-1470 destination-driven flags (checking branch only).
-    fn apply_destination_flags(&mut self, check_failed: bool, show_onboarding: bool, sync_gated: bool);
+    /// :1465-1470 destination-driven flags (checking branch only). The
+    /// source also writes settings=localSettings (CycleSettings() default on
+    /// read failure) and onboardingProfile=localProfile (null on failure)
+    /// into the same uiState copy; the host gets the snapshot as-is.
+    fn apply_destination_flags(&mut self, check_failed: bool, show_onboarding: bool, sync_gated: bool, local: Option<&LocalSnapshot>);
     /// :1479 executeSync.
     fn execute_sync(&mut self) -> SyncResult;
-    /// :1483-1491 apply result + restored reads + admin + reauth composition.
-    fn apply_sync_result(&mut self, result: &SyncResult, session_needs_reauthentication: bool);
-    /// :1493
-    fn update_calculations(&mut self);
+    /// :1481-1483 restored repository reads AFTER a passed second recheck.
+    fn read_restored_after_sync(&mut self) -> RestoredState;
+    /// :1484 runCatching { isCycleCareAdmin() }.getOrDefault(false).
+    fn fetch_is_admin(&mut self) -> bool;
+    /// :1485-1491 apply result + restored reads + admin + reauth composition.
+    fn apply_sync_result(&mut self, result: &SyncResult, restored: &RestoredState, is_admin: bool, session_needs_reauthentication: bool);
+    /// :1493 updateCalculations(restoredSettings, currentDate, selectedDate).
+    fn update_calculations(&mut self, restored: &RestoredState);
 }
 
 pub struct SyncResult {
@@ -369,12 +386,8 @@ pub struct SyncResult {
 /// users still reach HOME, only the upload is gated.
 pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: bool) {
     if fx.is_local_only() || !fx.user_id_present() {
-        // :1441-1444
-        let show_onboarding = !fx
-            .read_local()
-            .map(|s| s.settings_onboarding_completed)
-            .unwrap_or(false);
-        fx.apply_local_only_return(show_onboarding);
+        // :1440-1444 - UI state only, no storage read.
+        fx.apply_local_only_return(!fx.ui_settings_onboarding_completed());
         return;
     }
     fx.refresh_wallet_now(force_wallet_refresh); // :1446
@@ -417,6 +430,7 @@ pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: 
             destination == AccountStartDestination::Retry,
             destination == AccountStartDestination::Onboarding,
             state == LocalDataState::Conflicted,
+            local.as_ref(),
         ); // :1466-1470
     }
     if !may_upload(destination, state) {
@@ -424,9 +438,15 @@ pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: 
     }
     let result = fx.execute_sync(); // :1479
     if owner != fx.effective_user_id() || session != fx.session_generation() {
-        return; // :1480
+        return; // :1480 second recheck
+    }
+    let restored = fx.read_restored_after_sync(); // :1481-1483
+    let is_admin = fx.fetch_is_admin(); // :1484
+    if owner != fx.effective_user_id() || session != fx.session_generation() {
+        return; // :1485 THIRD recheck, after repository reads + isAdmin,
+                // BEFORE applying the sync result. Modeled explicitly.
     }
     let reauth = reauth_after_sync(result.is_success, result.requires_authentication, fx.session_needs_reauthentication());
-    fx.apply_sync_result(&result, reauth); // :1483-1491
-    fx.update_calculations(); // :1493
+    fx.apply_sync_result(&result, &restored, is_admin, reauth); // :1486-1491
+    fx.update_calculations(&restored); // :1493
 }
