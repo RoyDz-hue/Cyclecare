@@ -81,11 +81,11 @@ fn cycle_month_predictions_valid_month() {
     assert_eq!(ok["month"], "2026-11");
     assert_eq!(ok["hasCycleAnchor"], true);
     let preds = ok["predictions"].as_array().unwrap();
-    assert_eq!(preds.len(), 32); // 30 days + one neighbor each side
-    assert_eq!(preds[0]["date"], "2026-10-31");
-    assert_eq!(preds[31]["date"], "2026-12-01");
+    assert_eq!(preds.len(), 30); // exactly the grid cells; neighbors never leave the month
+    assert_eq!(preds[0]["date"], "2026-11-01");
+    assert_eq!(preds[29]["date"], "2026-11-30");
     // entries carry the full prediction object with the Kotlin enum name
-    let p = &preds[1]["prediction"];
+    let p = &preds[0]["prediction"];
     assert_eq!(p["date"], "2026-11-01");
     assert!(["MENSTRUAL", "FOLLICULAR", "OVULATION", "LUTEAL"].contains(&p["phase"].as_str().unwrap()));
 }

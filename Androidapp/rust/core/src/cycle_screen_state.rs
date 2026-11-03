@@ -131,8 +131,10 @@ pub fn build_cycle_screen_state(input: &CycleScreenInput) -> CycleScreenState {
 }
 
 /// Batch grid contract: CycleCareViewModel.getPredictionForDate (:2153-2156)
-/// applied to every date the month grid can query - [first-1 ..= last+1]
-/// (grid cells plus the immediate span-merge neighbor lookups, :238-253).
+/// applied to every date the month grid can query - [first ..= last] of the
+/// displayed month. The span-merge neighbor lookups (:245-253) are guarded
+/// by column > 0 / column < 6 AND dayNumber > 1 / dayNumber < daysInMonth,
+/// so they NEVER leave the displayed month; no padding entries are needed.
 /// Semantics mirror the source exactly: predictions exist iff
 /// hasCycleAnchor; each per-date value is the corpus-locked
 /// calculate_day_prediction primitive, so batch == per-date by
@@ -153,7 +155,7 @@ pub struct MonthPredictionsInput {
 
 pub struct MonthPredictions {
     pub has_cycle_anchor: bool,
-    /// One entry per date in [month_first_day-1 ..= month_last_day+1],
+    /// One entry per date in [month_first_day ..= month_last_day],
     /// ascending; empty when !has_cycle_anchor (source: getPredictionForDate
     /// returns null for every date).
     pub predictions: Vec<(NaiveDate, Option<DayPrediction>)>,
@@ -184,10 +186,9 @@ pub fn build_month_predictions(input: &MonthPredictionsInput) -> MonthPrediction
     }
     let first = input.month_first_day;
     let last = month_last_day(first);
-    let start = first.pred_opt().unwrap();
-    let end = last.succ_opt().unwrap();
+    let end = last;
     let mut predictions = Vec::new();
-    let mut d = start;
+    let mut d = first;
     while d <= end {
         let p = calculate_day_prediction(
             d,

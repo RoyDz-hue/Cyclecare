@@ -21,13 +21,14 @@ fn input(last_start: &str, date_choice: Option<&str>, cl_choice: Option<&str>, t
 }
 
 #[test]
-fn november_2026_covers_grid_plus_neighbors() {
+fn november_2026_covers_grid_exactly() {
     let m = build_month_predictions(&input("2026-10-05", Some("exact"), Some("28"), "2026-11-03", "2026-11-01"));
     assert!(m.has_cycle_anchor);
-    // 30 days + one neighbor each side = 32 entries, ascending from Oct 31 to Dec 1.
-    assert_eq!(m.predictions.len(), 32);
-    assert_eq!(m.predictions[0].0.to_string(), "2026-10-31");
-    assert_eq!(m.predictions[31].0.to_string(), "2026-12-01");
+    // Exactly the 30 grid cells: the source's neighbor lookups are guarded
+    // (column/dayNumber bounds) and never leave the displayed month.
+    assert_eq!(m.predictions.len(), 30);
+    assert_eq!(m.predictions[0].0.to_string(), "2026-11-01");
+    assert_eq!(m.predictions[29].0.to_string(), "2026-11-30");
     for w in m.predictions.windows(2) {
         assert_eq!((w[1].0 - w[0].0).num_days(), 1);
     }
@@ -83,12 +84,12 @@ fn anchor_gate_independent_of_today() {
 #[test]
 fn february_leap_and_nonleap_lengths() {
     let leap = build_month_predictions(&input("2024-01-10", Some("exact"), Some("28"), "2024-02-10", "2024-02-01"));
-    assert_eq!(leap.predictions.len(), 31); // 29 + 2
-    assert_eq!(leap.predictions[0].0.to_string(), "2024-01-31");
-    assert_eq!(leap.predictions[30].0.to_string(), "2024-03-01");
+    assert_eq!(leap.predictions.len(), 29);
+    assert_eq!(leap.predictions[0].0.to_string(), "2024-02-01");
+    assert_eq!(leap.predictions[28].0.to_string(), "2024-02-29");
     let plain = build_month_predictions(&input("2026-01-10", Some("exact"), Some("28"), "2026-02-10", "2026-02-01"));
-    assert_eq!(plain.predictions.len(), 30); // 28 + 2
+    assert_eq!(plain.predictions.len(), 28);
     let dec = build_month_predictions(&input("2026-11-20", Some("exact"), Some("28"), "2026-12-10", "2026-12-01"));
-    assert_eq!(dec.predictions.len(), 33); // 31 + 2, crosses year boundary
-    assert_eq!(dec.predictions[32].0.to_string(), "2027-01-01");
+    assert_eq!(dec.predictions.len(), 31);
+    assert_eq!(dec.predictions[30].0.to_string(), "2026-12-31");
 }
