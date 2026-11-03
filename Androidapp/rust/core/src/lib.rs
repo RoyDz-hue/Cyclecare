@@ -18,6 +18,7 @@ pub mod wallet;
 pub mod owner_data_gate;
 pub mod sync_gate;
 pub mod sync_use_case;
+pub mod care_image_gen;
 pub mod network_helper;
 pub mod conflict_resolve;
 pub mod coin_amount;
