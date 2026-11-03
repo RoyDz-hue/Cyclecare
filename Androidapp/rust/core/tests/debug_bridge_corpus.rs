@@ -47,3 +47,28 @@ fn unparseable_returns_none() {
     let fits = format!("https://{}", "a".repeat(2040));
     assert!(base_url(true, &fits).is_some(), "2048 units exactly passes");
 }
+
+#[test]
+fn jdk17_differential_boundary() {
+    // Each case from the executed JDK17 differential: Java getHost() null
+    // (or the shape rejected) -> None here too.
+    for bad in [
+        "https://my_host",
+        "https://exa!mple.com",
+        "https://-bad.com",
+        "https://a..b",
+        "https://host.123",
+        "https://ho%73t.com",
+        "https://héllo.com",
+    ] {
+        assert_eq!(base_url(true, bad), None, "JDK17 differential false-accept: {bad}");
+    }
+    // Empty port: Java ACCEPTS with port -1 (differential evidence).
+    assert_eq!(base_url(true, "https://host:"), Some("https://host".into()));
+    // Still-accepted neighbors that must not regress.
+    assert_eq!(base_url(true, "https://a-b.example-1.com"), Some("https://a-b.example-1.com".into()));
+    assert_eq!(base_url(true, "https://bad-.com"), None, "label ending in dash");
+    // Narrowing deviation, documented on the module: IPv4 literals are
+    // REJECTED here although Java accepts them.
+    assert_eq!(base_url(true, "https://1.2.3.4"), None, "labeled narrowing: IPv4 literal rejected");
+}
