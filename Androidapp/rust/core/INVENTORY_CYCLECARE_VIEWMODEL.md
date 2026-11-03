@@ -8,7 +8,7 @@ Classification:
 - MONEY-INERT: payment orchestration; per the standing money boundary only its gates/messages are portable, execution stays with the host, and with the production release policy the whole path stays closed.
 - ACCOUNT-MUTATION (consent/data): real account/data mutations with their own consent, authorization and wipe semantics; never folded into the payment release policy. Only gates/messages/ordering are portable; the mutation itself stays host-executed and owner-authorized.
 
-Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 38, ORCHESTRATION 26 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 7, MONEY-INERT 6, ACCOUNT-MUTATION 0, LOCAL 1 (isCurrentCareRequest inside consultCare; ported within care_consult.rs). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
+Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 44, ORCHESTRATION 27 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 0, MONEY-INERT 6, ACCOUNT-MUTATION 0, LOCAL 1 (isCurrentCareRequest inside consultCare; ported within care_consult.rs). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
 
 | :line | method | class | evidence / remaining |
 |---|---|---|---|
@@ -42,9 +42,9 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :822 | enableDisplayedAiProviders | DECISION-PORTED | ai_consent_tap.rs |
 | :834 | refreshAiProcessorManifest | ORCHESTRATION | manifest fetch delegate |
 | :849 | previewCareContext | ORCHESTRATION | care context assembly delegate |
-| :856 | editCareLog | DECISION-UNPORTED | care log edit draft machine (small) |
-| :862 | cancelCareLog | DECISION-UNPORTED | draft machine |
-| :868 | confirmCareLog | DECISION-UNPORTED | draft machine |
+| :856 | editCareLog | DECISION-PORTED | care_log_draft.rs edit_proposed incl. null-proposal-unset path (:858-859, corrected v97) |
+| :862 | cancelCareLog | DECISION-PORTED | care_log_draft.rs cancelled (draft + turn id cleared) |
+| :868 | confirmCareLog | DECISION-PORTED | care_log_draft.rs confirm decisions + confirm_care_log_body composed driver (:871-881: recheck, read-or-default, recheck, saveLog(merge), message, updateCalculations, autoSyncSilently) + merge_log corpus-locked to JVM oracle (14 cases incl. NBSP trim, non-consecutive distinct, pain coerce); saveLog/autoSync host-executed |
 | :884 | consultCare | DECISION-PORTED | care_consult.rs + 46-case JVM corpus (v93) |
 | :907 | isCurrentCareRequest | LOCAL | LOCAL inside consultCare (:907); ported as part of its surface |
 | :948 | selectTiedDownChoice | STATE-SETTER | UI-state copy; Compose/host seam |
@@ -71,7 +71,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1407 | launchTrailingReconnectWork | DECISION-PORTED | vm_sync.rs composed execute_trailing (v96): owner-at-launch capture, eligible/online/now reads, reconnect_policy.decide_trailing dispatch; Throttled arm preserves retryAfterMs and uses DIRECT job reassignment bypassing the active-job check with allowReschedule=true (:1422-1425); 7 transition tests |
 | :1431 | onForeground | ORCHESTRATION | lifecycle trigger |
 | :1437 | onBackground | ORCHESTRATION | wallet realtime stop glue |
-| :1439 | autoSyncSilently | DECISION-PORTED | vm_sync.rs composed driver auto_sync_silently (v96, third-recheck + UI-state local-only corrected v97): injected AutoSyncEffects driving :1439-1493 in order - local-only early return (:1440-1444) -> refreshWalletNow (:1446) -> coalesce (:1447) -> owner/session capture -> checking flags -> local reads -> conflicts -> conditional remote probe (:1461-1463, timeout=null) -> recheck (:1464) -> account_start::decide -> destination flags (incl. localSettings/localProfile into the same uiState copy) -> may_upload preservation gates (HOME + not CONFLICTED) -> executeSync -> recheck (:1480) -> restored repository reads + isAdmin (:1481-1484) -> THIRD recheck (:1485) before applying the result -> reauth_after_sync composition -> updateCalculations(restoredSettings); local-only branch reads uiState.settings.isOnboardingCompleted (no storage read); 9 transition tests on effect order |
+| :1439 | autoSyncSilently | DECISION-PORTED | vm_sync.rs composed driver auto_sync_silently (v96, third-recheck + UI-state local-only corrected v97, typed outcome/fault return v100: silent exits are explicit AutoSyncOutcome variants; the :1481-1483 unguarded-throw path returns Err(AutoSyncFault::RestoredReadFailed) - propagation modeled, host uncaught-handler semantics unproven): injected AutoSyncEffects driving :1439-1493 in order - local-only early return (:1440-1444) -> refreshWalletNow (:1446) -> coalesce (:1447) -> owner/session capture -> checking flags -> local reads -> conflicts -> conditional remote probe (:1461-1463, timeout=null) -> recheck (:1464) -> account_start::decide -> destination flags (incl. localSettings/localProfile into the same uiState copy) -> may_upload preservation gates (HOME + not CONFLICTED) -> executeSync -> recheck (:1480) -> restored repository reads + isAdmin (:1481-1484) -> THIRD recheck (:1485) before applying the result -> reauth_after_sync composition -> updateCalculations(restoredSettings); local-only branch reads uiState.settings.isOnboardingCompleted (no storage read); 10 transition tests on effect order + typed outcomes |
 | :1496 | unlockApp | DECISION-PORTED | app_lock.rs + pin_verify.rs |
 | :1508 | unlockViaBiometric | DECISION-PORTED | app_lock.rs (fail-open parity, security-review hold, labeled) |
 | :1512 | saveQuickUnlockPin | DECISION-PORTED | pin.rs + pin_verify.rs PBKDF2+legacy |
@@ -85,7 +85,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1582 | startLocalOnly | DECISION-PORTED | lifecycle.rs |
 | :1599 | completeInitialAuth | DECISION-PORTED | lifecycle.rs |
 | :1618 | handleAuthDeepLink | ORCHESTRATION | delegates authService.completeEmailLink (verified read); link parse in auth_link.rs/auth_uri.rs |
-| :1657 | completePasswordSetup | DECISION-UNPORTED | password validation gates |
+| :1657 | completePasswordSetup | DECISION-PORTED | vm_sync.rs password_setup_state (corpus ps1-ps3) |
 | :1674 | dismissPasswordSetup | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1678 | setVaultOpen | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1683 | claimCoinsManual | ORCHESTRATION | delegates earnCoinsUseCase.claimDailyAttunement (verified read); claim gates in economy_rules.rs |
@@ -100,8 +100,8 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1785 | setNotificationCenterOpen | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1790 | dismissGiftModal | STATE-SETTER | UI-state copy; Compose/host seam |
 | :1797 | dismissFloatingBanner | STATE-SETTER | UI-state copy; Compose/host seam |
-| :1801 | reviveInactivityStreak | DECISION-UNPORTED | streak-revive conditions |
-| :1810 | refreshNotifications | DECISION-UNPORTED | assembly/ordering beyond notifications.rs parse helpers |
+| :1801 | reviveInactivityStreak | ORCHESTRATION | pure delegate miningUseCase.reviveStreak(economyProfile); EconomyResult.Error -> economyToastMessage = errorMessage (:1804-1806); no decision logic |
+| :1810 | refreshNotifications | DECISION-PORTED | vm_sync.rs composed driver refresh_notifications (v101): entry local-only return, fetch order notifications-then-verified, owner/session recheck :1819, corpus-locked gift chain (resolve_gift_item + economy_catalog ALL_ITEMS[1] fallback), success assembly with GiftDialogResolution (Resolved vs KeepExisting per :1845), failure path notifications-only; 7 transition tests |
 | :1853 | markNotificationAsRead | ORCHESTRATION | read-state write |
 | :1863 | markAllNotificationsAsRead | ORCHESTRATION | read-state write |
 | :1872 | signOut | ORCHESTRATION | pref resets + worker cancel + authService.signOut (verified read); auth_flows.rs sign_out |
@@ -113,7 +113,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :2049 | buildDataExportPdf | DECISION-PORTED | data_export_pdf.rs layout core; PDF bytes host glue, labeled |
 | :2055 | wipeAllData | DECISION-PORTED | owner_data_gate.rs namespaces/marker/resume; deletion host |
 | :2085 | eraseAllDataUnified | DECISION-PORTED | owner_data_gate.rs; deletion host |
-| :2153 | getPredictionForDate | DECISION-UNPORTED | prediction lookup; cycle_math has engine |
+| :2153 | getPredictionForDate | DECISION-PORTED | gate = !hasCycleAnchor -> null ported (vm_sync prediction_gate); body is a pure delegate to repository.calculateDayPrediction (host; cycle_math engine) |
 | :2166 | create | ORCHESTRATION | DI wiring (Factory) |
 
 ## Remaining port candidates, priority order
@@ -135,8 +135,9 @@ DECISION-UNPORTED methods, ORIGINAL review list (16 named) - consultCare, genera
 transferCoins, cancelActivePayment, deleteCloudHealthCopy, runReconnectWorkOnce,
 scheduleTrailingReconnectWork, launchTrailingReconnectWork, autoSyncSilently,
 completePasswordSetup and buildDataExportJson have since been ported (see table);
-STILL UNPORTED: editCareLog/cancelCareLog/confirmCareLog draft machine (decision parts),
-reviveInactivityStreak, refreshNotifications, getPredictionForDate (gate ported).
+STILL UNPORTED: none. reviveInactivityStreak reclassified ORCHESTRATION (pure delegate);
+refreshNotifications composed (v101); getPredictionForDate = ported gate + pure delegate.
+DECISION-COMPLETE IS A COVERAGE QUALIFIER, NOT CLOSURE: the platform seams below stay open.
 ACCOUNT-MUTATION (1): deleteCloudHealthCopy.
 
 Platform seams that stay in this inventory (not closure): SharedPreferences/repository IO, Supabase service calls, SoundFeedbackManager synthesis, NetworkHelper, coroutine dispatch, all Compose state.

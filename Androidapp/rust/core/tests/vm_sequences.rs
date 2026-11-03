@@ -326,7 +326,8 @@ fn autosync_local_only_uses_ui_state_no_storage_read() {
     let mut fx = AutoFx::online(false, None);
     fx.local_only = true;
     fx.ui_onboarding_completed = true;
-    auto_sync_silently(&mut fx, true);
+    let out = auto_sync_silently(&mut fx, true);
+    assert_eq!(out, Ok(cyclecare_core::vm_sync::AutoSyncOutcome::LocalOnlyReturn));
     assert_eq!(fx.calls, vec!["local_only_return(false)"]);
 }
 
@@ -351,7 +352,8 @@ fn autosync_wallet_then_coalesce_stops() {
 fn autosync_checking_with_complete_local_skips_remote_probe_and_syncs() {
     let snap = LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true };
     let mut fx = AutoFx::online(true, Some(snap));
-    auto_sync_silently(&mut fx, true);
+    let out = auto_sync_silently(&mut fx, true);
+    assert_eq!(out, Ok(cyclecare_core::vm_sync::AutoSyncOutcome::Completed));
     assert_eq!(
         fx.calls,
         vec!["wallet(true)", "checking_flags", "read_local", "conflicts", "destination_flags", "execute_sync", "restored_reads", "is_admin", "apply_result(reauth=false)", "update_calculations"]
@@ -397,20 +399,23 @@ fn autosync_third_recheck_after_restored_reads_and_admin_blocks_apply() {
     let snap = LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true };
     let mut fx = AutoFx::online(true, Some(snap));
     fx.stale_after_admin = true;
-    auto_sync_silently(&mut fx, true);
+    let out = auto_sync_silently(&mut fx, true);
+    assert_eq!(out, Ok(cyclecare_core::vm_sync::AutoSyncOutcome::StaleOwner));
     assert!(!fx.calls.iter().any(|c| c.starts_with("apply_result(")));
     assert!(!fx.calls.contains(&"update_calculations".to_string()));
     assert!(fx.calls.contains(&"restored_reads".to_string()));
 }
 
 #[test]
-fn autosync_restored_read_failure_cancels_before_apply() {
-    // :1481-1483 unguarded repository read throws -> coroutine cancelled;
+fn autosync_restored_read_failure_propagates_typed_fault() {
+    // :1481-1483 unguarded repository read throws -> the failure PROPAGATES
+    // (source: uncaught coroutine throw), it is NOT a silent early return;
     // the sync result is never applied, no third recheck, no updateCalculations.
     let snap = LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true };
     let mut fx = AutoFx::online(true, Some(snap));
     fx.restored_reads_fail = true;
-    auto_sync_silently(&mut fx, true);
+    let out = auto_sync_silently(&mut fx, true);
+    assert_eq!(out, Err(cyclecare_core::vm_sync::AutoSyncFault::RestoredReadFailed));
     assert!(fx.calls.contains(&"execute_sync".to_string()));
     assert!(fx.calls.contains(&"restored_reads".to_string()));
     assert!(!fx.calls.contains(&"is_admin".to_string()));
@@ -426,4 +431,142 @@ fn autosync_reauth_composition_reaches_apply_result() {
     fx.sync_requires_auth = true;
     auto_sync_silently(&mut fx, true);
     assert!(fx.calls.iter().any(|c| c.starts_with("apply_result(")));
+}
+
+// --- refreshNotifications (:1810-1851) ------------------------------------
+
+use cyclecare_core::vm_sync::{
+    refresh_notifications, GiftDialogResolution, NotificationEntry, RefreshNotificationsEffects,
+    VerifiedEconomyView,
+};
+
+struct RefFx {
+    local_only: bool,
+    user_id_present: bool,
+    owner: String,
+    session: i64,
+    verified: Option<VerifiedEconomyView>,
+    notifications: Vec<NotificationEntry>,
+    flip_owner_at_fetch: bool,
+    calls: Vec<String>,
+    applied_gift: Option<GiftDialogResolution>,
+}
+
+impl RefFx {
+    fn new(verified: Option<VerifiedEconomyView>, notifications: Vec<NotificationEntry>) -> Self {
+        RefFx {
+            local_only: false,
+            user_id_present: true,
+            owner: "o1".into(),
+            session: 7,
+            verified,
+            notifications,
+            flip_owner_at_fetch: false,
+            calls: vec![],
+            applied_gift: None,
+        }
+    }
+}
+
+fn notif(is_read: bool, type_: &str, title: &str, body: &str) -> NotificationEntry {
+    NotificationEntry { is_read, type_: type_.into(), title: title.into(), body: body.into() }
+}
+
+fn econ(gifts: Vec<&str>) -> VerifiedEconomyView {
+    VerifiedEconomyView {
+        econ_ref: "ECON".into(),
+        gifted_artifacts: gifts.into_iter().map(|s| s.to_string()).collect(),
+        is_banned: false,
+        is_suspended: false,
+        suspension_reason: None,
+    }
+}
+
+impl RefreshNotificationsEffects for RefFx {
+    fn is_local_only(&self) -> bool {
+        self.local_only
+    }
+    fn user_id_present(&self) -> bool {
+        self.user_id_present
+    }
+    fn effective_user_id(&self) -> &str {
+        &self.owner
+    }
+    fn session_generation(&self) -> i64 {
+        self.session
+    }
+    fn fetch_notifications(&mut self, _user: &str) -> Vec<NotificationEntry> {
+        self.calls.push("fetch_notifications".to_string());
+        std::mem::take(&mut self.notifications)
+    }
+    fn fetch_verified_profile(&mut self, _user: &str) -> Option<VerifiedEconomyView> {
+        self.calls.push("fetch_verified".to_string());
+        if self.flip_owner_at_fetch {
+            self.owner = "other".to_string();
+        }
+        self.verified.take()
+    }
+    fn apply_refresh_success(
+        &mut self,
+        _list: Vec<NotificationEntry>,
+        _econ_ref: &str,
+        _b: bool,
+        _s: bool,
+        _r: Option<&str>,
+        gift: GiftDialogResolution,
+    ) {
+        self.calls.push("apply_success".to_string());
+        self.applied_gift = Some(gift);
+    }
+    fn apply_refresh_notifications_only(&mut self, _list: Vec<NotificationEntry>) {
+        self.calls.push("apply_notifications_only".to_string());
+    }
+}
+
+#[test]
+fn refresh_local_only_never_fetches() {
+    let mut fx = RefFx::new(None, vec![]);
+    fx.local_only = true;
+    assert!(refresh_notifications(&mut fx));
+    assert!(fx.calls.is_empty());
+}
+
+#[test]
+fn refresh_fetch_order_notifications_then_verified() {
+    let mut fx = RefFx::new(None, vec![]);
+    assert!(refresh_notifications(&mut fx));
+    assert_eq!(fx.calls, vec!["fetch_notifications", "fetch_verified", "apply_notifications_only"]);
+}
+
+#[test]
+fn refresh_stale_owner_discards_everything() {
+    // :1819 recheck: owner changed during the verified fetch -> return@launch.
+    let mut fx = RefFx::new(Some(econ(vec![])), vec![]);
+    fx.flip_owner_at_fetch = true;
+    assert!(!refresh_notifications(&mut fx));
+    assert_eq!(fx.calls, vec!["fetch_notifications", "fetch_verified"]);
+}
+
+#[test]
+fn refresh_gift_from_last_gifted_artifact_name() {
+    let mut fx = RefFx::new(Some(econ(vec!["Golden Blossom"])), vec![]);
+    assert!(refresh_notifications(&mut fx));
+    assert_eq!(fx.applied_gift, Some(GiftDialogResolution::Resolved("artifact_bloom".to_string())));
+}
+
+#[test]
+fn refresh_gift_from_unread_gift_notification_body() {
+    let mut fx = RefFx::new(
+        Some(econ(vec![])),
+        vec![notif(false, "GIFT", "A gift", "You received the Luminescent Moon")],
+    );
+    assert!(refresh_notifications(&mut fx));
+    assert_eq!(fx.applied_gift, Some(GiftDialogResolution::Resolved("artifact_moon".to_string())));
+}
+
+#[test]
+fn refresh_no_gift_signal_keeps_existing_dialog_item() {
+    let mut fx = RefFx::new(Some(econ(vec![])), vec![notif(true, "SYSTEM", "hi", "plain")]);
+    assert!(refresh_notifications(&mut fx));
+    assert_eq!(fx.applied_gift, Some(GiftDialogResolution::KeepExisting));
 }

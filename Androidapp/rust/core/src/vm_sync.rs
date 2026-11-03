@@ -384,18 +384,50 @@ pub struct SyncResult {
     pub requires_authentication: bool,
 }
 
+/// Terminal state of the composed autoSync. Silent source exits (local-only
+/// return, coalescing, owner/session staleness at any of the three rechecks,
+/// preservation gates) are explicit outcomes, not swallowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoSyncOutcome {
+    /// :1440-1444 local-only / no user: flags applied, returned.
+    LocalOnlyReturn,
+    /// :1447 an account refresh job is already active.
+    Coalesced,
+    /// Owner/session changed at a recheck (:1464/:1480/:1485): source
+    /// return@launch, result discarded.
+    StaleOwner,
+    /// :1477-1478 preservation gate: destination not HOME or conflicts
+    /// unresolved; no upload.
+    UploadGated,
+    /// Reached updateCalculations (:1493).
+    Completed,
+}
+
+/// Faults that PROPAGATE out of the source coroutine. The restored
+/// repository reads (:1481-1483) are UNGUARDED: a throw cancels the
+/// coroutine via the uncaught path; nothing is applied. Err models that the
+/// failure LEAVES this driver - the host's uncaught-coroutine-handler
+/// semantics themselves stay unproven and are not claimed here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoSyncFault {
+    RestoredReadFailed,
+}
+
 /// :1439-1494 composed. Preservation gates from sync_gate.rs: upload only
 /// when the destination is HOME and no conflicts are unresolved; conflicted
 /// users still reach HOME, only the upload is gated.
-pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: bool) {
+pub fn auto_sync_silently<E: AutoSyncEffects>(
+    fx: &mut E,
+    force_wallet_refresh: bool,
+) -> Result<AutoSyncOutcome, AutoSyncFault> {
     if fx.is_local_only() || !fx.user_id_present() {
         // :1440-1444 - UI state only, no storage read.
         fx.apply_local_only_return(!fx.ui_settings_onboarding_completed());
-        return;
+        return Ok(AutoSyncOutcome::LocalOnlyReturn);
     }
     fx.refresh_wallet_now(force_wallet_refresh); // :1446
     if fx.account_refresh_job_active() {
-        return; // :1447
+        return Ok(AutoSyncOutcome::Coalesced); // :1447
     }
     let owner = fx.effective_user_id().to_string();
     let session = fx.session_generation();
@@ -425,7 +457,7 @@ pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: 
         Some(true)
     };
     if owner != fx.effective_user_id() || session != fx.session_generation() {
-        return; // :1464
+        return Ok(AutoSyncOutcome::StaleOwner); // :1464
     }
     let destination = account_start_decide(valid, state, remote); // :1465
     if checking {
@@ -437,23 +469,137 @@ pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: 
         ); // :1466-1470
     }
     if !may_upload(destination, state) {
-        return; // :1477-1478
+        return Ok(AutoSyncOutcome::UploadGated); // :1477-1478
     }
     let result = fx.execute_sync(); // :1479
     if owner != fx.effective_user_id() || session != fx.session_generation() {
-        return; // :1480 second recheck
+        return Ok(AutoSyncOutcome::StaleOwner); // :1480 second recheck
     }
     let restored = match fx.read_restored_after_sync() {
         Ok(r) => r,
-        Err(()) => return, // :1481-1483 unguarded Kotlin throw: coroutine
-                           // cancelled, sync result never applied.
+        // :1481-1483 unguarded Kotlin throw: the failure PROPAGATES (source
+        // coroutine is cancelled by its uncaught path); it is never a silent
+        // skip. The host's uncaught-handler behavior stays unproven.
+        Err(()) => return Err(AutoSyncFault::RestoredReadFailed),
     };
     let is_admin = fx.fetch_is_admin(); // :1484
     if owner != fx.effective_user_id() || session != fx.session_generation() {
-        return; // :1485 THIRD recheck, after repository reads + isAdmin,
-                // BEFORE applying the sync result. Modeled explicitly.
+        return Ok(AutoSyncOutcome::StaleOwner); // :1485 THIRD recheck, after
+        // repository reads + isAdmin, BEFORE applying the sync result.
     }
     let reauth = reauth_after_sync(result.is_success, result.requires_authentication, fx.session_needs_reauthentication());
     fx.apply_sync_result(&result, &restored, is_admin, reauth); // :1486-1491
     fx.update_calculations(&restored); // :1493
+    Ok(AutoSyncOutcome::Completed)
+}
+
+// ---------------------------------------------------------------------------
+// refreshNotifications (:1810-1851) composed driver. The gift-chain pieces
+// above stay corpus-locked; this composes them with the fetch order, the
+// owner/session recheck and the success/failure state assembly.
+// ---------------------------------------------------------------------------
+
+/// One notification row as the gift chain reads it.
+pub struct NotificationEntry {
+    pub is_read: bool,
+    pub type_: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// The verified-economy fields refreshNotifications reads (the profile
+/// payload itself stays host-owned; `econ_ref` is an opaque host handle
+/// passed back at assembly time).
+pub struct VerifiedEconomyView {
+    pub econ_ref: String,
+    pub gifted_artifacts: Vec<String>,
+    pub is_banned: bool,
+    pub is_suspended: bool,
+    pub suspension_reason: Option<String>,
+}
+
+/// How the activeGiftDialogItem write resolves (:1845).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GiftDialogResolution {
+    /// A gift item was resolved from the chain (catalog item id).
+    Resolved(String),
+    /// giftItem stayed null: `giftItem ?: activeGiftDialogItem` keeps the
+    /// CURRENT dialog item.
+    KeepExisting,
+}
+
+/// Host effects for refreshNotifications.
+pub trait RefreshNotificationsEffects {
+    fn is_local_only(&self) -> bool;
+    fn user_id_present(&self) -> bool;
+    fn effective_user_id(&self) -> &str;
+    fn session_generation(&self) -> i64;
+    /// :1816 notificationService.fetchNotifications(userIdentifier).
+    fn fetch_notifications(&mut self, user: &str) -> Vec<NotificationEntry>;
+    /// :1818 economyService.fetchVerifiedProfile(userIdentifier);
+    /// Some(view) iff EconomyResult.Success.
+    fn fetch_verified_profile(&mut self, user: &str) -> Option<VerifiedEconomyView>;
+    /// :1839-1846 success assembly: notifications + economyProfile +
+    /// walletStatus READY + ban/suspension flags + notice + gift resolution.
+    fn apply_refresh_success(
+        &mut self,
+        list: Vec<NotificationEntry>,
+        econ_ref: &str,
+        is_banned: bool,
+        is_suspended: bool,
+        suspension_reason: Option<&str>,
+        gift: GiftDialogResolution,
+    );
+    /// :1847-1849 failure assembly: notifications list only.
+    fn apply_refresh_notifications_only(&mut self, list: Vec<NotificationEntry>);
+}
+
+/// :1810-1851 composed. Returns false when the owner/session recheck at
+/// :1819 discarded the run (source return@launch, nothing applied).
+pub fn refresh_notifications<E: RefreshNotificationsEffects>(fx: &mut E) -> bool {
+    if fx.is_local_only() || !fx.user_id_present() {
+        return true; // :1811 plain return, no launch
+    }
+    let user = fx.effective_user_id().to_string(); // :1814
+    let session = fx.session_generation(); // :1815
+    let list = fx.fetch_notifications(&user); // :1816
+    let verified = fx.fetch_verified_profile(&user); // :1818
+    if user != fx.effective_user_id() || session != fx.session_generation() {
+        return false; // :1819
+    }
+    match verified {
+        Some(econ) => {
+            // :1821-1837 gift chain (resolve_gift_item, corpus-locked).
+            let last_gift = econ.gifted_artifacts.last().cloned(); // :1822 lastOrNull
+            let unread_gift = list
+                .iter()
+                .find(|n| !n.is_read && crate::kotlin_text::kotlin_equals_ignore_case(&n.type_, "GIFT"))
+                .map(|n| (n.title.as_str(), n.body.as_str())); // :1830
+            let all: Vec<(&str, &str)> = crate::economy_catalog::ALL_ITEMS
+                .iter()
+                .map(|it| (it.name, it.id))
+                .collect();
+            let resolved = resolve_gift_item(
+                last_gift.as_deref(),
+                |name| crate::economy_catalog::find_item(name).map(|it| it.id.to_string()),
+                || crate::economy_catalog::ALL_ITEMS[1].id.to_string(), // ALL_ITEMS[1]
+                unread_gift,
+                &all,
+            );
+            let gift = match resolved {
+                Some(id) => GiftDialogResolution::Resolved(id),
+                None => GiftDialogResolution::KeepExisting, // :1845 ?: current
+            };
+            fx.apply_refresh_success(
+                list,
+                &econ.econ_ref,
+                econ.is_banned,
+                econ.is_suspended,
+                econ.suspension_reason.as_deref(),
+                gift,
+            ); // :1839-1846
+        }
+        None => fx.apply_refresh_notifications_only(list), // :1847-1849
+    }
+    true
 }
