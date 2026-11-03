@@ -24,7 +24,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::v3_consent::{journal_explicit_snapshot, V3ConsentError};
 use crate::v3_dao_sqlite::SqliteV3Store;
+use crate::v3_outbox::{run_v3_outbox, V3DaoError, V3Transport};
+use crate::v3_pull::{run_v3_pull, V3PullError, V3ReadTransport};
 
 /// CycleCareDatabase.kt:25 — the deliberately unassigned guest database
 /// (null/blank identity), verbatim.
@@ -98,10 +101,16 @@ impl OwnerScopedStores {
     /// resolves to the legacy name, which never equals its namespace - the
     /// mismatch is refused before any I/O. Per-owner generation checks stay
     /// with the flow-level `current` gate inside each transaction.
+    ///
+    /// The closure receives an OwnerBoundStore whose dispatch methods derive
+    /// the owner from the binding - the caller never supplies an owner
+    /// argument, so a mismatched owner/file dispatch is unrepresentable
+    /// through this API. (The ported primitives keep their owner parameter;
+    /// they are 1:1 ports and this wrapper is the sanctioned call path.)
     pub fn run_for_owner<R>(
         &mut self,
         owner: &str,
-        body: impl FnOnce(&mut SqliteV3Store) -> R,
+        body: impl FnOnce(&mut OwnerBoundStore<'_>) -> R,
     ) -> Result<R, OwnerBindError> {
         let name = Self::name_for(Some(owner));
         if name != namespace_for(owner) {
@@ -110,7 +119,8 @@ impl OwnerScopedStores {
         let store = self
             .for_identity(Some(owner))
             .map_err(|e| OwnerBindError::Store(e.to_string()))?;
-        Ok(body(store))
+        let mut bound = OwnerBoundStore { store, owner: owner.to_string() };
+        Ok(body(&mut bound))
     }
 
     /// OwnerScopedDatabaseProvider.current(): the owner comes from
@@ -123,5 +133,68 @@ impl OwnerScopedStores {
     ) -> rusqlite::Result<&mut SqliteV3Store> {
         let id = user_id();
         self.for_identity(id.as_deref())
+    }
+}
+
+/// A store bound to one owner at dispatch time (OwnerScopedStores::
+/// run_for_owner). The owner is private and set only from the verified
+/// binding; every dispatch derives it internally.
+pub struct OwnerBoundStore<'a> {
+    /// Raw store access for reads/assertions; writes that carry an owner go
+    /// through the dispatch methods so the owner can never be supplied
+    /// inconsistently.
+    pub store: &'a mut SqliteV3Store,
+    owner: String,
+}
+
+impl OwnerBoundStore<'_> {
+    /// The owner this dispatch is bound to (the identity that resolved the
+    /// underlying file).
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// run_v3_pull with the bound owner (SupabaseSyncService.kt:150-187).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_pull(
+        &mut self,
+        transport: &mut dyn V3ReadTransport,
+        access_token: &str,
+        local: i64,
+        server: i64,
+        current: &mut dyn FnMut() -> bool,
+        now_ms: &mut dyn FnMut() -> i64,
+    ) -> Result<i32, V3PullError> {
+        run_v3_pull(transport, access_token, self.store, &self.owner, local, server, current, now_ms)
+    }
+
+    /// run_v3_outbox with the bound owner (SupabaseSyncService.kt:61-113).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_outbox(
+        &mut self,
+        transport: &mut dyn V3Transport,
+        access_token: &str,
+        session: i64,
+        local: i64,
+        server: i64,
+        current: &mut dyn FnMut() -> bool,
+        now_ms: &mut dyn FnMut() -> i64,
+    ) -> Result<i32, V3DaoError> {
+        run_v3_outbox(transport, access_token, self.store, &self.owner, session, local, server, current, now_ms)
+    }
+
+    /// journalExplicitSnapshot with the bound owner
+    /// (SupabaseSyncService.kt:45-57).
+    #[allow(clippy::too_many_arguments)]
+    pub fn journal_snapshot(
+        &mut self,
+        session: i64,
+        local: i64,
+        server: i64,
+        current: &mut dyn FnMut() -> bool,
+        uuid: &mut dyn FnMut() -> String,
+        now_ms: &mut dyn FnMut() -> i64,
+    ) -> Result<(), V3ConsentError> {
+        journal_explicit_snapshot(&self.owner, session, local, server, self.store, current, uuid, now_ms)
     }
 }

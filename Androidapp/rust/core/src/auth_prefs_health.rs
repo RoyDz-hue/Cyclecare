@@ -207,3 +207,25 @@ impl ConsentPrefs for HealthAuthPrefs<'_> {
         HealthAuthPrefs::save_server_health_consent_receipt(self, owner, session, local, server, enabled)
     }
 }
+
+/// SupabaseSyncService.kt:27 - current(owner, session, local, server),
+/// verbatim and COMPLETE: every term is re-read live from the preferences
+/// on each evaluation, exactly like the Kotlin property getters. This is
+/// the real gate the injected `current` closures stand in for; wire it at
+/// the call site as `|| current_gate(&prefs, owner, session, local, server)`.
+/// serverHealthConsentGeneration is nullable (:182-187); the Kotlin
+/// `== server` is true only when a receipt exists and matches.
+pub fn current_gate(
+    prefs: &HealthAuthPrefs,
+    owner: &str,
+    session: i64,
+    local: i64,
+    server: i64,
+) -> bool {
+    prefs.user_id().as_deref() == Some(owner)
+        && prefs.session_generation() == session
+        && prefs.health_consent_generation() == local
+        && prefs.server_health_consent_generation() == Some(server)
+        && prefs.is_cloud_sync_allowed()
+        && !prefs.owner_wiped
+}

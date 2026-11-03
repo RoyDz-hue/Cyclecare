@@ -146,17 +146,19 @@ fn bound_runner_refuses_blank_owners_and_binds_store_to_operation_owner() {
     assert!(std::fs::read_dir(&d).unwrap().next().is_none(), "refusals perform no I/O");
     // Real remote-domain writes through the binding land in the owner's own
     // file: the owner argument resolves the store AND scopes the operation.
+    // Dispatch derives the owner from the binding - no owner argument at
+    // the call site.
     let mut alice_page = OnePage(vec![vec![remote_log_change("alice", "2026-11-06", 5, 1, "alice-remote")]].into());
-    p.run_for_owner("alice", |s| {
-        run_v3_pull(&mut alice_page, "tok", s, "alice", LOCAL, SERVER, &mut || true, &mut || 5_000)
+    p.run_for_owner("alice", |b| {
+        b.run_pull(&mut alice_page, "tok", LOCAL, SERVER, &mut || true, &mut || 5_000)
     }).unwrap().unwrap();
     let mut bob_page = OnePage(vec![vec![remote_log_change("bob", "2026-11-06", 3, 1, "bob-remote")]].into());
-    p.run_for_owner("bob", |s| {
-        run_v3_pull(&mut bob_page, "tok", s, "bob", LOCAL, SERVER, &mut || true, &mut || 6_000)
+    p.run_for_owner("bob", |b| {
+        b.run_pull(&mut bob_page, "tok", LOCAL, SERVER, &mut || true, &mut || 6_000)
     }).unwrap().unwrap();
     let notes = |p: &mut OwnerScopedStores, owner: &'static str| -> Option<String> {
-        p.run_for_owner(owner, |s| {
-            s.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok()
+        p.run_for_owner(owner, |b| {
+            b.store.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok()
         }).unwrap()
     };
     assert_eq!(notes(&mut p, "alice").as_deref(), Some("alice-remote"));
@@ -169,5 +171,34 @@ fn bound_runner_refuses_blank_owners_and_binds_store_to_operation_owner() {
     assert_eq!(notes(&mut p2, "bob").as_deref(), Some("bob-remote"), "bob data persists across reopen");
     let files: Vec<String> = std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     assert_eq!(files.len(), 2, "exactly the two owner files, no guest file was ever created");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn bound_dispatch_never_touches_another_owners_file() {
+    let d = tmpdir("nodiv");
+    let mut p = OwnerScopedStores::new(&d);
+    // Alice has data first.
+    let mut alice_page = OnePage(vec![vec![remote_log_change("alice", "2026-11-07", 5, 1, "alice-v1")]].into());
+    p.run_for_owner("alice", |b| b.run_pull(&mut alice_page, "tok", LOCAL, SERVER, &mut || true, &mut || 5_000)).unwrap().unwrap();
+    let alice_counts = |p: &mut OwnerScopedStores| -> (i64, i64, i64) {
+        p.run_for_owner("alice", |b| {
+            let c = |t: &str| b.store.conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap();
+            (c("cycle_day_logs"), c("health_sync_revisions"), c("health_sync_outbox"))
+        }).unwrap()
+    };
+    let before = alice_counts(&mut p);
+    // A full bob-bound cycle: snapshot journal + outbox drain + pull.
+    insert_log(p.for_identity(Some("bob")).unwrap(), "2026-11-08", "bob-local");
+    p.run_for_owner("bob", |b| {
+        let mut n = 0i64;
+        b.journal_snapshot(SESSION, LOCAL, SERVER, &mut || true, &mut || { n += 1; format!("uuid-{n}") }, &mut || 1_000)
+    }).unwrap().unwrap();
+    p.run_for_owner("bob", |b| b.run_outbox(&mut Acks, "tok", SESSION, LOCAL, SERVER, &mut || true, &mut || 2_000)).unwrap().unwrap();
+    let mut bob_page = OnePage(vec![vec![remote_log_change("bob", "2026-11-09", 3, 2, "bob-remote")]].into());
+    p.run_for_owner("bob", |b| b.run_pull(&mut bob_page, "tok", LOCAL, SERVER, &mut || true, &mut || 6_000)).unwrap().unwrap();
+    assert_eq!(alice_counts(&mut p), before, "alice's file byte-identical counts after the whole bob cycle - zero wrong-file writes");
+    // And the binding reports the owner it actually resolved.
+    p.run_for_owner("bob", |b| assert_eq!(b.owner(), "bob")).unwrap();
     let _ = std::fs::remove_dir_all(&d);
 }
