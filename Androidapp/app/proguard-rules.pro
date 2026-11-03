@@ -1,5 +1,8 @@
 # CycleCare release ProGuard/R8 rules.
 
+# Exact JNI names in Rust cdylib, including private native entry points.
+-keep class com.cyclecare.app.rust.CycleCareCoreBridge { *; }
+
 # Keep stack traces readable enough to diagnose production crashes while
 # still obfuscating class/member names.
 -keepattributes SourceFile,LineNumberTable

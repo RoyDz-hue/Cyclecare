@@ -1,0 +1,24 @@
+{
+  "status": "UNACCEPTED_PACKAGING_DIAGNOSTIC_CANDIDATE",
+  "rustBase": "2b684073039f135c8f5e1553b64117cbba95b8e2",
+  "hardeningCandidate": "da0c53711e513991468e478fcc7b96a358d66fa9",
+  "runtimeFlags": "unchanged false; baseline disabled",
+  "native": {
+    "path": "Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so",
+    "sha256": "dcb37aa43dc2931be81de10090be3fdd2967bbc58f8285cef60ba21e6de48521",
+    "bytes": 1363624,
+    "coreArchiveSha256": "e83fada64b001171d7e58e78402e8c12acd1862955753b9b8091f529d61c814f",
+    "ffiArchiveSha256": "4bdf8f70f53ca29f93233c6d261198aef68fb42f56299f8fb6bb5e1ae8f76ddd"
+  },
+  "sourcePin": "Externally supplied expected_source_sha input after commit creation; assert HEAD",
+  "acceptance": "Explicit ACCEPTANCE.txt and verification-exit-code.txt, not green CI",
+  "open": [
+    "Encrypted Android saved data/Keystore",
+    "Room rollback execution",
+    "prefs-backed token execution",
+    "consent commit atomicity",
+    "offline claim supersession",
+    "Android JNI/frame/runtime/pixels/accessibility",
+    "whole Rust app integration"
+  ]
+}

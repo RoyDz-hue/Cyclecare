@@ -455,3 +455,124 @@ workflows:
       - build-logs/spike/**/*
       - spike/out/**/*
       - Androidapp/app/build/outputs/apk/**/*.apk
+
+  cyclecare-current-rust-diagnostic:
+    name: CycleCare current native unsigned integration diagnostic
+    max_build_duration: 45
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact final candidate commit, supplied after commit creation
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.m2
+    scripts:
+      - name: Verify source and native input, forbid signing custody
+        script: |
+          set -euo pipefail
+          mkdir -p build-logs
+          test ! -e Androidapp/.private/cyclecare-debug.jks
+          test ! -e Androidapp/my-upload-key.jks
+          test -z "${CYCLECARE_DEBUG_KEYSTORE:-}"
+          test -z "${CYCLECARE_DEBUG_STORE_PASSWORD:-}"
+          test -z "${CYCLECARE_DEBUG_KEY_PASSWORD:-}"
+          test -z "${KEYSTORE_PATH:-}"
+          test -z "${STORE_PASSWORD:-}"
+          test -z "${KEY_PASSWORD:-}"
+          test -n "${EXPECTED_SOURCE_SHA:-}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git rev-parse HEAD | tee build-logs/source-commit.txt
+          git ls-files --error-unmatch Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so
+          python3 ci/verify-current-native.py input | tee build-logs/native-input.txt
+      - name: Route org.robolectric via Google-hosted Maven Central mirror
+        script: |
+          set -e
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+          settingsEvaluated { settings ->
+              settings.dependencyResolutionManagement.repositories {
+                  exclusiveContent {
+                      forRepository {
+                          maven {
+                              name = 'GoogleCloudStorageMavenCentralMirror'
+                              url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                          }
+                      }
+                      filter { includeGroup('org.robolectric') }
+                  }
+              }
+          }
+          GRADLE
+      - name: Prefetch Robolectric runtime jar (bounded, logged)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          VER="14-robolectric-10818077-i7"
+          BASE="https://maven-central.storage-download.googleapis.com/maven2/org/robolectric/android-all-instrumented/$VER"
+          DEST="$HOME/.m2/repository/org/robolectric/android-all-instrumented/$VER"
+          mkdir -p "$DEST"
+          for f in "android-all-instrumented-$VER.jar" "android-all-instrumented-$VER.pom"; do
+            if [ ! -s "$DEST/$f" ]; then
+              echo "fetching $f"
+              curl -fsSL --max-time 240 -o "$DEST/$f" "$BASE/$f"
+            fi
+            ls -la "$DEST/$f"
+          done
+          echo "prefetch complete"
+          } 2>&1 | tee build-logs/robolectric-prefetch.log
+      - name: Targeted unit tests
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          mkdir -p ../build-logs
+          ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
+            --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
+            --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
+            --tests "com.cyclecare.app.domain.ai.LayeredChatOrchestratorTest" \
+            --tests "com.cyclecare.app.ui.CoinAmountInputTest" \
+            --tests "com.cyclecare.app.ui.SettingsPinTest" \
+            --tests "com.cyclecare.app.ui.GuidedChatsRoomOpenTest" \
+            --tests "com.cyclecare.app.AccountStartPolicyTest" \
+            --tests "com.cyclecare.app.ReturningUserReopenTest" \
+            --tests "com.cyclecare.app.ReopenSplashGateTest" \
+            --tests "com.cyclecare.app.WalletStatusTest" \
+            --tests "com.cyclecare.app.domain.ai.CareAiSourceContractTest" \
+            2>&1 | tee ../build-logs/test-run.log
+      - name: Build unsigned slim APK (arm64, minified)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          mkdir -p ../build-logs
+          ./gradlew assembleSlim -PslimApk 2>&1 | tee ../build-logs/assemble-run.log
+      - name: Verify packaged native bytes and unsigned APK
+        script: |
+          set -euo pipefail
+          set +e
+          python3 ci/verify-current-native.py apk > build-logs/packaged-native.txt 2>&1
+          RC=$?
+          cat build-logs/packaged-native.txt
+          printf '%s\n' "$RC" > build-logs/verification-exit-code.txt
+          if [ "$RC" -eq 0 ]; then
+            printf '%s\n' 'ACCEPTED_PACKAGING_DIAGNOSTIC_ONLY' > build-logs/ACCEPTANCE.txt
+          else
+            printf '%s\n' 'NOT_ACCEPTED: verifier failed; artifact must not be delivered' > build-logs/ACCEPTANCE.txt
+          fi
+          cat build-logs/ACCEPTANCE.txt
+          exit 0
+    artifacts:
+      - Androidapp/app/build/outputs/apk/**/*.apk
+      - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
+      - build-logs/*
+      - Androidapp/app/build/outputs/mapping/slim/*

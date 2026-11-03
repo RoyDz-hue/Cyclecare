@@ -640,7 +640,9 @@ class CycleCareViewModel(
         val allLogsList = explicitLogs ?: logsMap.value.values.toList()
         val currentLog = allLogsList.find { it.dateString == today.toString() } ?: logsMap.value[today.toString()]
         val safety = SafetyEngine.evaluate(currentLog)
-        val baseline = PatternEngine.computeBaseline(settings, allLogsList)
+        val baseline = if (com.cyclecare.bridge.RustBaselineConfig.ENABLED)
+            com.cyclecare.bridge.RustBaseline.compute(settings, allLogsList)
+        else PatternEngine.computeBaseline(settings, allLogsList)
         val detectedPatterns = PatternEngine.detectPatterns(settings, allLogsList)
         val attentionItem = AttentionEngine.evaluateTodayPriority(todayPrediction, safety, settings, allLogsList)
         val learnedObs = LearningEngine.compileLearnedObservations(settings, allLogsList, profile)
