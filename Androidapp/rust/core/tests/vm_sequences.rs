@@ -207,6 +207,7 @@ struct AutoFx {
     sync_success: bool,
     sync_requires_auth: bool,
     stale_after_admin: bool,
+    restored_reads_fail: bool,
     calls: Vec<String>,
     destination_flags: Option<(bool, bool, bool)>,
 }
@@ -229,6 +230,7 @@ impl AutoFx {
             sync_success: true,
             sync_requires_auth: false,
             stale_after_admin: false,
+            restored_reads_fail: false,
             calls: vec![],
             destination_flags: None,
         }
@@ -292,12 +294,15 @@ impl AutoSyncEffects for AutoFx {
         self.calls.push("execute_sync".to_string());
         SyncResult { is_success: self.sync_success, requires_authentication: self.sync_requires_auth }
     }
-    fn read_restored_after_sync(&mut self) -> cyclecare_core::vm_sync::RestoredState {
+    fn read_restored_after_sync(&mut self) -> Result<cyclecare_core::vm_sync::RestoredState, ()> {
         self.calls.push("restored_reads".to_string());
+        if self.restored_reads_fail {
+            return Err(());
+        }
         if self.stale_after_admin {
             self.owner = "other".to_string();
         }
-        cyclecare_core::vm_sync::RestoredState { settings_onboarding_completed: true, profile_present: true }
+        Ok(cyclecare_core::vm_sync::RestoredState { settings_onboarding_completed: true, profile_present: true })
     }
     fn fetch_is_admin(&mut self) -> bool {
         self.calls.push("is_admin".to_string());
@@ -396,6 +401,21 @@ fn autosync_third_recheck_after_restored_reads_and_admin_blocks_apply() {
     assert!(!fx.calls.iter().any(|c| c.starts_with("apply_result(")));
     assert!(!fx.calls.contains(&"update_calculations".to_string()));
     assert!(fx.calls.contains(&"restored_reads".to_string()));
+}
+
+#[test]
+fn autosync_restored_read_failure_cancels_before_apply() {
+    // :1481-1483 unguarded repository read throws -> coroutine cancelled;
+    // the sync result is never applied, no third recheck, no updateCalculations.
+    let snap = LocalSnapshot { profile_present: true, profile_completed: true, settings_onboarding_completed: true };
+    let mut fx = AutoFx::online(true, Some(snap));
+    fx.restored_reads_fail = true;
+    auto_sync_silently(&mut fx, true);
+    assert!(fx.calls.contains(&"execute_sync".to_string()));
+    assert!(fx.calls.contains(&"restored_reads".to_string()));
+    assert!(!fx.calls.contains(&"is_admin".to_string()));
+    assert!(!fx.calls.iter().any(|c| c.starts_with("apply_result(")));
+    assert!(!fx.calls.contains(&"update_calculations".to_string()));
 }
 
 #[test]

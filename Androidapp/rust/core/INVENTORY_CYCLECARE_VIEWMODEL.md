@@ -8,7 +8,7 @@ Classification:
 - MONEY-INERT: payment orchestration; per the standing money boundary only its gates/messages are portable, execution stays with the host, and with the production release policy the whole path stays closed.
 - ACCOUNT-MUTATION (consent/data): real account/data mutations with their own consent, authorization and wipe semantics; never folded into the payment release policy. Only gates/messages/ordering are portable; the mutation itself stays host-executed and owner-authorized.
 
-Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 37, ORCHESTRATION 26 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 8, MONEY-INERT 6, ACCOUNT-MUTATION 0, LOCAL 1 (isCurrentCareRequest inside consultCare; ported within care_consult.rs). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
+Method counts (mechanically generated: one row per fun declaration, 103 rows): DECISION-PORTED 38, ORCHESTRATION 26 (incl. Factory.create), STATE-SETTER 25, DECISION-UNPORTED 7, MONEY-INERT 6, ACCOUNT-MUTATION 0, LOCAL 1 (isCurrentCareRequest inside consultCare; ported within care_consult.rs). Breakdown: 101 named member functions + Factory.create (generic override, listed separately) + 1 local (isCurrentCareRequest) = 103 declarations; 102 excluding Factory.create, matching the reviewer regex count. Reviewer line offsets reconciled: reviewer cited :1789/:915 from spike af04874 (+8 lines from a disabled startup-gate init); this table's lines are grep-verified against main 31b88f5 (:1781/:907).
 
 | :line | method | class | evidence / remaining |
 |---|---|---|---|
@@ -109,7 +109,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1897 | completeOnboarding | DECISION-PORTED | onboarding_complete.rs + onboarding_vm.rs |
 | :1972 | refreshExplainMyBody | ORCHESTRATION | care_knowledge delegate |
 | :1984 | openOnboarding | STATE-SETTER | UI-state copy; Compose/host seam |
-| :1988 | buildDataExportJson | DECISION-UNPORTED | export JSON assembly; codec in sync_codec.rs |
+| :1988 | buildDataExportJson | DECISION-PORTED | data_export_json.rs (v98): org.json writer semantics verified against REAL AOSP org.json classes on jdk-17.0.21+9 - 62-case corpus (escaping incl. every-'/' escape, numberToString integral->long + checkDouble THROW parity, toString(2) layout, stable dateString sort, absent profile -> {}); NaN/Inf abort with Err matching the source's JSONException; Float digits Java-verified in plain range, x34 subnormal divergence labeled |
 | :2049 | buildDataExportPdf | DECISION-PORTED | data_export_pdf.rs layout core; PDF bytes host glue, labeled |
 | :2055 | wipeAllData | DECISION-PORTED | owner_data_gate.rs namespaces/marker/resume; deletion host |
 | :2085 | eraseAllDataUnified | DECISION-PORTED | owner_data_gate.rs; deletion host |
@@ -131,10 +131,12 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 12. editCareLog/cancelCareLog/confirmCareLog draft machine (:856-868).
 13. processUnified* gate/message layer only (:1042-1132), money-inert, after 1-12.
 
-DECISION-UNPORTED methods (15): editCareLog, cancelCareLog, confirmCareLog, consultCare,
-generateCareImage, cancelActivePayment, runReconnectWorkOnce, scheduleTrailingReconnectWork,
-launchTrailingReconnectWork, autoSyncSilently, completePasswordSetup, transferCoins,
-reviveInactivityStreak, refreshNotifications, buildDataExportJson, getPredictionForDate.
+DECISION-UNPORTED methods, ORIGINAL review list (16 named) - consultCare, generateCareImage,
+transferCoins, cancelActivePayment, deleteCloudHealthCopy, runReconnectWorkOnce,
+scheduleTrailingReconnectWork, launchTrailingReconnectWork, autoSyncSilently,
+completePasswordSetup and buildDataExportJson have since been ported (see table);
+STILL UNPORTED: editCareLog/cancelCareLog/confirmCareLog draft machine (decision parts),
+reviveInactivityStreak, refreshNotifications, getPredictionForDate (gate ported).
 ACCOUNT-MUTATION (1): deleteCloudHealthCopy.
 
 Platform seams that stay in this inventory (not closure): SharedPreferences/repository IO, Supabase service calls, SoundFeedbackManager synthesis, NetworkHelper, coroutine dispatch, all Compose state.

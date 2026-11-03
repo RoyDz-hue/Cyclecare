@@ -367,7 +367,10 @@ pub trait AutoSyncEffects {
     /// :1479 executeSync.
     fn execute_sync(&mut self) -> SyncResult;
     /// :1481-1483 restored repository reads AFTER a passed second recheck.
-    fn read_restored_after_sync(&mut self) -> RestoredState;
+    /// UNGUARDED in source: a throw cancels the coroutine before anything
+    /// is applied. Err models that propagation boundary explicitly; the
+    /// host's failure handling itself stays unverified.
+    fn read_restored_after_sync(&mut self) -> Result<RestoredState, ()>;
     /// :1484 runCatching { isCycleCareAdmin() }.getOrDefault(false).
     fn fetch_is_admin(&mut self) -> bool;
     /// :1485-1491 apply result + restored reads + admin + reauth composition.
@@ -440,7 +443,11 @@ pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: 
     if owner != fx.effective_user_id() || session != fx.session_generation() {
         return; // :1480 second recheck
     }
-    let restored = fx.read_restored_after_sync(); // :1481-1483
+    let restored = match fx.read_restored_after_sync() {
+        Ok(r) => r,
+        Err(()) => return, // :1481-1483 unguarded Kotlin throw: coroutine
+                           // cancelled, sync result never applied.
+    };
     let is_admin = fx.fetch_is_admin(); // :1484
     if owner != fx.effective_user_id() || session != fx.session_generation() {
         return; // :1485 THIRD recheck, after repository reads + isAdmin,
