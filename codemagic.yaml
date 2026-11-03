@@ -636,6 +636,9 @@ workflows:
           cd Androidapp
           chmod +x gradlew
           mkdir -p ../build-logs
+          # Fail fast on source-set configuration mistakes before assembling/R8.
+          ./gradlew :app:dependencies --configuration androidTestDebugImplementation \
+            2>&1 | tee ../build-logs/lab-config-preflight.log
           ./gradlew -Pcyclecare.testBuildType=lab -PslimApk \
             assembleLab assembleLabAndroidTest 2>&1 | tee ../build-logs/lab-build.log \
             || { rc=$?; \
