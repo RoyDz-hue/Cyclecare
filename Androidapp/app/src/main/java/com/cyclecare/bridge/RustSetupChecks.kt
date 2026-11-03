@@ -23,6 +23,9 @@ object RustSetupChecks {
 
     /** Production: SupabaseEconomyService.hasRemoteProfile body check. Null = inconclusive. */
     fun hasRemoteProfile(httpOk: Boolean, body: String, owner: String): Boolean? {
+        // Source-preserving short-circuit: a failed HTTP status is inconclusive in both
+        // implementations; skip the native parse entirely.
+        if (!httpOk) return kotlinHasRemoteProfile(httpOk, body, owner)
         val kotlin = kotlinHasRemoteProfile(httpOk, body, owner)
         val native = nativeHasRemoteProfile(httpOk, body, owner) ?: return kotlin
         return if (native.answered && native.value == kotlin) native.value else kotlin
