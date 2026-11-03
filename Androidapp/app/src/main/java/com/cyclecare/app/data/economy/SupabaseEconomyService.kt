@@ -74,8 +74,13 @@ class SupabaseEconomyService(
                 .header("apikey", anonKey).header("Authorization", "Bearer $token").post("{}".toRequestBody(jsonMediaType)).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful || !stillOwns(initial)) return@withContext null
-                val state = JSONObject(boundedBody(response) ?: return@withContext null)
-                if (state.optString("user_id") != initial.owner || !state.has("exists")) null else state.getBoolean("exists")
+                val body = boundedBody(response) ?: return@withContext null
+                if (com.cyclecare.bridge.RustSetupChecksConfig.ENABLED)
+                    com.cyclecare.bridge.RustSetupChecks.hasRemoteProfile(true, body, initial.owner)
+                else {
+                    val state = JSONObject(body)
+                    if (state.optString("user_id") != initial.owner || !state.has("exists")) null else state.getBoolean("exists")
+                }
             }
         } catch (_: Exception) { null }
     }
@@ -101,7 +106,10 @@ class SupabaseEconomyService(
             client.newCall(ensureRequest).execute().use { response ->
                 val body = boundedBody(response) ?: throw Rejected("Wallet setup response was too large")
                 if (!stillOwns(initial)) throw Rejected("Session changed while verifying wallet")
-                if (!response.isSuccessful || !runCatching { JSONObject(body).optBoolean("success", false) }.getOrDefault(false))
+                val setupOk = if (com.cyclecare.bridge.RustSetupChecksConfig.ENABLED)
+                    com.cyclecare.bridge.RustSetupChecks.ensureSetupOk(body)
+                else runCatching { JSONObject(body).optBoolean("success", false) }.getOrDefault(false)
+                if (!response.isSuccessful || !setupOk)
                     throw Rejected("Cloud wallet setup could not be verified")
             }
 
