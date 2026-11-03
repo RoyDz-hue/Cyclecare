@@ -77,5 +77,56 @@ class RustLogParserTest {
         assertTrue(!RustLogParser.hasUnpairedSurrogate("plain text"))
     }
 
+    // --- strict decode: required-null and coercible-type directed cases ---
+
+    private fun validOk(): org.json.JSONObject {
+        val item = org.json.JSONObject().put("category", "Flow").put("label", "Period Active")
+            .put("detail", "Heavy flow").put("iconEmoji", "X")
+        return org.json.JSONObject().put("rawText", "period started")
+            .put("items", org.json.JSONArray().put(item))
+            .put("followUpQuestion", org.json.JSONObject.NULL)
+            .put("flowLevelResult", "HEAVY")
+            .put("energyResult", org.json.JSONObject.NULL)
+            .put("moodResult", org.json.JSONObject.NULL)
+            .put("symptomsResult", org.json.JSONArray())
+            .put("painIntensityResult", 0)
+    }
+
+    @Test fun decodeAcceptsValid() {
+        val d = RustLogParser.decode(validOk())!!
+        assertEquals("HEAVY", d.flowLevelResult)
+        assertNull(d.followUpQuestion)
+        assertEquals(1, d.items.size)
+    }
+    @Test fun decodeRejectsNullRawText() =
+        assertNull(RustLogParser.decode(validOk().put("rawText", org.json.JSONObject.NULL)))
+    @Test fun decodeRejectsNullPain() =
+        assertNull(RustLogParser.decode(validOk().put("painIntensityResult", org.json.JSONObject.NULL)))
+    @Test fun decodeRejectsDoublePain() =
+        assertNull(RustLogParser.decode(validOk().put("painIntensityResult", 4.5)))
+    @Test fun decodeRejectsStringPain() =
+        assertNull(RustLogParser.decode(validOk().put("painIntensityResult", "8")))
+    @Test fun decodeRejectsLongPain() =
+        assertNull(RustLogParser.decode(validOk().put("painIntensityResult", 8L)))
+    @Test fun decodeRejectsNumericCategory() {
+        val bad = validOk()
+        bad.getJSONArray("items").getJSONObject(0).put("category", 42)
+        assertNull(RustLogParser.decode(bad))
+    }
+    @Test fun decodeRejectsNullItemLabel() {
+        val bad = validOk()
+        bad.getJSONArray("items").getJSONObject(0).put("label", org.json.JSONObject.NULL)
+        assertNull(RustLogParser.decode(bad))
+    }
+    @Test fun decodeRejectsNumericFlowLevel() =
+        assertNull(RustLogParser.decode(validOk().put("flowLevelResult", 3)))
+
+    // --- invalid UTF-16 routed to exact Kotlin before JNI ---
+
+    @Test fun unpairedSurrogateInputUsesKotlinPath() {
+        val input = "feeling \uD800 weird"
+        assertEquals(com.cyclecare.app.domain.parser.NaturalLanguageLogParser.parse(input), RustLogParser.parse(input))
+    }
+
     @Test fun flagRemainsDisabled() = assertTrue(!RustLogParserConfig.ENABLED)
 }

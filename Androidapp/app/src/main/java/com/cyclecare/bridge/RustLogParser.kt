@@ -48,17 +48,20 @@ object RustLogParser {
         return decode(ok)
     }
 
+    /** Strict decode: AOSP getString/getInt COERCE (a numeric category becomes "42", a
+     * double pain rating truncates, a string "8" becomes 8) - require actual JSON types. */
     internal fun decode(ok: JSONObject): ParsedLogInterpretation? = try {
-        val rawText = ok.getString("rawText")
+        val rawText = ok.get("rawText")
+        require(rawText is String)
         val itemsArr = ok.getJSONArray("items")
         val items = mutableListOf<ParsedLogItem>()
         for (i in 0 until itemsArr.length()) {
             val o = itemsArr.getJSONObject(i)
-            items.add(ParsedLogItem(
-                category = o.getString("category"),
-                label = o.getString("label"),
-                detail = o.getString("detail"),
-                iconEmoji = o.getString("iconEmoji")))
+            val category = o.get("category"); require(category is String)
+            val label = o.get("label"); require(label is String)
+            val detail = o.get("detail"); require(detail is String)
+            val iconEmoji = o.get("iconEmoji"); require(iconEmoji is String)
+            items.add(ParsedLogItem(category = category, label = label, detail = detail, iconEmoji = iconEmoji))
         }
         val symsArr = ok.getJSONArray("symptomsResult")
         val syms = mutableListOf<String>()
@@ -67,14 +70,21 @@ object RustLogParser {
             require(s is String)
             syms.add(s)
         }
+        fun optString(k: String): String? = if (ok.isNull(k)) null else {
+            val v = ok.get(k)
+            require(v is String)
+            v
+        }
+        val pain = ok.get("painIntensityResult")
+        require(pain is Int)
         ParsedLogInterpretation(
             rawText = rawText,
             items = items,
-            followUpQuestion = if (ok.isNull("followUpQuestion")) null else ok.getString("followUpQuestion"),
-            flowLevelResult = if (ok.isNull("flowLevelResult")) null else ok.getString("flowLevelResult"),
-            energyResult = if (ok.isNull("energyResult")) null else ok.getString("energyResult"),
-            moodResult = if (ok.isNull("moodResult")) null else ok.getString("moodResult"),
+            followUpQuestion = optString("followUpQuestion"),
+            flowLevelResult = optString("flowLevelResult"),
+            energyResult = optString("energyResult"),
+            moodResult = optString("moodResult"),
             symptomsResult = syms,
-            painIntensityResult = ok.getInt("painIntensityResult"))
+            painIntensityResult = pain)
     } catch (_: org.json.JSONException) { null } catch (_: IllegalArgumentException) { null }
 }
