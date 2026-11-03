@@ -63,6 +63,32 @@ enum Op {
     Remove(String),
 }
 
+
+/// Lexical path normalization for the live-file registry key: makes the
+/// path absolute (against the current dir) and resolves "." / ".." without
+/// touching the filesystem, so two spellings of one file share one live
+/// instance. LIMIT: symlinks/hard links are NOT resolved (canonicalize
+/// would fail for a file not yet created); two spellings that differ only
+/// through a symlink still yield separate live instances.
+fn normalize_key(path: &Path) -> PathBuf {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut out = PathBuf::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::Prefix(p) => out.push(p.as_os_str()),
+            std::path::Component::RootDir => out.push(c.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => { out.pop(); }
+            std::path::Component::Normal(s2) => out.push(s2),
+        }
+    }
+    out
+}
+
 impl ScratchPrefs {
     pub fn open_in_memory() -> Self { ScratchPrefs::default() }
 
@@ -72,7 +98,7 @@ impl ScratchPrefs {
     /// is returned (the file is NOT re-read - Android serves its cached
     /// instance); once all handles dropped, the next open reloads from disk.
     pub fn open_file(path: &Path) -> std::io::Result<Self> {
-        let key = path.to_path_buf();
+        let key = normalize_key(path);
         if let Some(shared) = LIVE_FILES.with(|l| l.borrow().get(&key).and_then(|w| w.upgrade())) {
             return Ok(ScratchPrefs { map: shared, file: Some(key), inject_commit_failure: false });
         }

@@ -230,6 +230,27 @@ fn effective_user_id_scopes_keys_and_falls_back_to_device() {
 }
 
 #[test]
+fn path_spellings_normalize_to_one_live_instance() {
+    // "dir/x.xml", "dir/./x.xml" and "dir/sub/../x.xml" are ONE file - the
+    // registry key is normalized lexically so the spellings share one live
+    // in-memory instance. LIMIT: symlink-differing spellings still split
+    // (documented on open_file).
+    let f = scratch_file("spell");
+    let _ = std::fs::remove_file(&f);
+    let mut a = ScratchPrefs::open_file(&f).unwrap();
+    a.edit().put_long("n", 7).commit();
+    let dotted = f.parent().unwrap().join(".").join(f.file_name().unwrap());
+    let b = ScratchPrefs::open_file(&dotted).unwrap();
+    assert_eq!(b.get_long("n", 0), 7, "dot-spelling shares the live instance");
+    let sub = f.parent().unwrap().join("sub_nonexistent");
+    let updown = sub.join("..").join(f.file_name().unwrap());
+    let c = ScratchPrefs::open_file(&updown).unwrap();
+    assert_eq!(c.get_long("n", 0), 7, "dotdot-spelling shares the live instance");
+    drop(a); drop(b); drop(c);
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
 fn live_handles_share_one_in_memory_instance_while_alive() {
     // AOSP SharedPreferencesImpl parity: same file, one live in-memory
     // instance. Two handles see each other's commits immediately; once ALL

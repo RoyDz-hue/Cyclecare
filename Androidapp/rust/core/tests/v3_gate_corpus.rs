@@ -53,7 +53,7 @@ impl Rig {
             }),
             live_owner_wiped: self.live_wiped.as_ref().map(|c| {
                 let c = Rc::clone(c);
-                Box::new(move || *c.borrow()) as Box<dyn Fn() -> bool>
+                Box::new(move |_: &str| *c.borrow()) as Box<dyn Fn(&str) -> bool>
             }),
         }
     }

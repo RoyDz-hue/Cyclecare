@@ -33,7 +33,7 @@ pub struct HealthAuthPrefs<'a> {
     pub live_user_id: Option<Box<dyn Fn() -> Option<String>>>,
     /// LIVE OwnerDataGate.isWiped seam: consulted per call when attached,
     /// falling back to the construction-time field otherwise.
-    pub live_owner_wiped: Option<Box<dyn Fn() -> bool>>,
+    pub live_owner_wiped: Option<Box<dyn Fn(&str) -> bool>>,
 }
 
 const KEY_CLOUD_SYNC_ALLOWED: &str = "cloud_sync_allowed";
@@ -49,8 +49,8 @@ impl HealthAuthPrefs<'_> {
 
     /// OwnerDataGate.isWiped seam: provider-backed when live_owner_wiped is
     /// attached, the construction-time field otherwise.
-    pub fn is_owner_wiped(&self) -> bool {
-        if let Some(w) = &self.live_owner_wiped { w() } else { self.owner_wiped }
+    pub fn is_owner_wiped(&self, owner: &str) -> bool {
+        if let Some(w) = &self.live_owner_wiped { w(owner) } else { self.owner_wiped }
     }
 
     /// :522-531: signed-in id, else the host-computed device fallback.
@@ -173,7 +173,7 @@ impl HealthAuthPrefs<'_> {
             || self.session_generation() != session
             || self.health_consent_generation() != local_generation
             || server_generation <= 0
-            || (enabled && (!self.is_cloud_sync_allowed() || self.has_pending_health_sync_revoke() || self.is_owner_wiped()))
+            || (enabled && (!self.is_cloud_sync_allowed() || self.has_pending_health_sync_revoke() || self.is_owner_wiped(owner)))
         {
             return false;
         }
@@ -244,7 +244,7 @@ pub fn current_gate(
         && prefs.health_consent_generation() == local
         && prefs.server_health_consent_generation() == Some(server)
         && prefs.is_cloud_sync_allowed()
-        && !prefs.is_owner_wiped()
+        && !prefs.is_owner_wiped(owner)
 }
 
 /// PROPOSED HARDENING - separate, unwired, NOT production parity.
@@ -256,12 +256,22 @@ pub fn current_gate(
 /// across terms - and that is the faithful Kotlin behavior, kept 1:1 in
 /// current_gate above, not a production safety fix.
 ///
-/// This variant evaluates all terms against ONE coherent snapshot: the
+/// This variant evaluates all terms against ONE coherent identity: the
 /// identity is read exactly once, the effective owner is derived from that
-/// single read, and every keyed value comes straight from the prefs map
-/// under that one identity. Wipe is read exactly once. If any caller ever
-/// wants a gate immune to mid-evaluation identity drift, it must opt into
-/// this variant deliberately; the ported default stays as-is.
+/// single read, every keyed value comes straight from the prefs map under
+/// that one identity, and the wipe read is keyed to that captured identity
+/// (the parity path keys wipe to the operation owner, per source). If any
+/// caller ever wants a gate immune to mid-evaluation identity drift, it
+/// must opt into this variant deliberately; the ported default stays as-is.
+///
+/// REMAINING GAPS (this is NOT a coherent production snapshot):
+/// - The identity read and the wipe read are separate, non-atomic reads;
+///   a provider flipping BETWEEN them can still pair identity A with
+///   identity B's wipe state. The source has the same non-atomic shape.
+/// - The prefs map is read term-by-term, not frozen: a writer between two
+///   reads (another handle; in this single-threaded model, a provider or
+///   injected closure mutating state) can mix generations across terms.
+/// - Thread-local / Rc limits of the prefs model apply unchanged.
 pub fn current_gate_snapshot(
     prefs: &HealthAuthPrefs,
     owner: &str,
@@ -309,5 +319,5 @@ pub fn current_gate_snapshot(
         return false;
     }
     // ONE wipe read.
-    !prefs.is_owner_wiped()
+    !prefs.is_owner_wiped(uid.as_deref().unwrap_or(""))
 }
