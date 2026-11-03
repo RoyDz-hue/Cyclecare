@@ -171,13 +171,21 @@ class CycleRepository(database: CycleCareDatabase) {
     internal var afterContextCaptured: (suspend (StoredContext) -> Unit)? = null
 
     /** Preferred account-bound construction; signed-in users never fall back to legacy storage. */
-    constructor(context: Context, authPreferences: AuthPreferences) : this(
-        CycleCareDatabase.getDatabase(context.applicationContext, authPreferences.userId)
+    constructor(context: Context, authPreferences: AuthPreferences) : this(context, authPreferences, authPreferences.userId)
+
+    /**
+     * The owner is read from the preferences ONCE; the database and the identity both come from
+     * that single value, so they cannot name different owners if an identity change lands during
+     * construction. A change after this read is reconciled by the ViewModel's identity reset,
+     * which publishes through activateCurrentOwner.
+     */
+    private constructor(context: Context, authPreferences: AuthPreferences, owner: String?) : this(
+        CycleCareDatabase.getDatabase(context.applicationContext, owner)
     ) {
         lifecycleContext = context.applicationContext
         lifecyclePreferences = authPreferences
-        lifecycleIdentity = authPreferences.userId
-        current = StoredContext(activeDatabase.value, lifecycleIdentity, contextEpoch)
+        lifecycleIdentity = owner
+        current = StoredContext(activeDatabase.value, owner, contextEpoch)
     }
     private val dao get() = activeDatabase.value.cycleDao()
     private val onboardingDao get() = activeDatabase.value.onboardingDao()
@@ -387,21 +395,31 @@ class CycleRepository(database: CycleCareDatabase) {
         afterContextCaptured?.invoke(captured)
         val db = captured.database
         val key = ownerKey(captured.owner)
-        val profile = db.onboardingDao().getProfile()
-        val updatedProfile = profile?.copy(
-            cycleLengthOption = if (newSettings.averageCycleLength != previousAverageCycleLength) {
-                "${newSettings.averageCycleLength} days"
-            } else profile.cycleLengthOption,
-            cycleLengthDays = newSettings.averageCycleLength,
-            periodDurationDays = newSettings.periodDuration
-        )
-        journalMutation(db, "settings", HealthSyncPayloadCodec.settingsPayload(newSettings), ownerKey = key, consentGeneration = write.consentGeneration) {
-            db.cycleDao().saveSettings(newSettings)
-        }
-        if (updatedProfile != null) {
-            journalMutation(db, "profile", HealthSyncPayloadCodec.profilePayload(updatedProfile), ownerKey = key, consentGeneration = write.consentGeneration) {
-                db.onboardingDao().insertOrUpdateProfile(updatedProfile)
+        // ONE transaction for the profile read and both journaled writes (Room's withTransaction
+        // joins an enclosing transaction: RoomDatabase.android.kt withTransactionContext reuses the
+        // inherited TransactionElement). If either write throws, both roll back, so settings can
+        // never be saved without the matching profile, and the profile cannot be overwritten from a
+        // stale read. The token is re-checked at the start of the transaction; that check is still
+        // not atomic with the commit.
+        val (profile, updatedProfile) = db.withTransaction {
+            requireTokenFresh(write)
+            val read = db.onboardingDao().getProfile()
+            val changed = read?.copy(
+                cycleLengthOption = if (newSettings.averageCycleLength != previousAverageCycleLength) {
+                    "${newSettings.averageCycleLength} days"
+                } else read.cycleLengthOption,
+                cycleLengthDays = newSettings.averageCycleLength,
+                periodDurationDays = newSettings.periodDuration
+            )
+            journalMutation(db, "settings", HealthSyncPayloadCodec.settingsPayload(newSettings), ownerKey = key, consentGeneration = write.consentGeneration) {
+                db.cycleDao().saveSettings(newSettings)
             }
+            if (changed != null) {
+                journalMutation(db, "profile", HealthSyncPayloadCodec.profilePayload(changed), ownerKey = key, consentGeneration = write.consentGeneration) {
+                    db.onboardingDao().insertOrUpdateProfile(changed)
+                }
+            }
+            read to changed
         }
         return SettingsUpdate(captured, updatedProfile ?: profile)
     }
