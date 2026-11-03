@@ -236,6 +236,24 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 "observedCycleIntervals": m.observed_cycle_intervals}})
                 .to_string()
         }
+        "calculate_phase_for_date" => {
+            let s = &v["settings"];
+            let settings = PatternSettings {
+                average_cycle_length: s["averageCycleLength"].as_i64().unwrap_or(28) as i32,
+                period_duration: s["periodDuration"].as_i64().unwrap_or(5) as i32,
+                luteal_phase_days: s["lutealPhaseDays"].as_i64().unwrap_or(14) as i32,
+                last_period_start_date: s["lastPeriodStartDate"].as_str().unwrap_or("").into(),
+            };
+            let date = v["date"].as_str().unwrap_or("");
+            let parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d");
+            match parsed {
+                Ok(d) => {
+                    let phase = pattern_engine::calculate_phase_for_date(d, &settings);
+                    serde_json::json!({"ok": {"phase": phase.kotlin_name()}}).to_string()
+                }
+                Err(_) => serde_json::json!({"error": "invalid date"}).to_string(),
+            }
+        }
         "verified_coin_amount" => {
             let field = v["field"].as_str().unwrap_or("value");
             let num = match &v["value"] {
