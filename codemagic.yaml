@@ -548,6 +548,7 @@ workflows:
             --tests "com.cyclecare.bridge.RustLogParserTest" \
             --tests "com.cyclecare.bridge.RustCyclePhaseTest" \
             --tests "com.cyclecare.bridge.RustEffectiveUserIdTest" \
+            --tests "com.cyclecare.app.data.local.RoomBoundaryHostTest" \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
             --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
