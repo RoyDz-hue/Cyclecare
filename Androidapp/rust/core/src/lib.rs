@@ -118,3 +118,4 @@ pub mod home_anchor;
 /// Host-only SQLCipher conversion rehearsal (feature `sqlcipher-host`).
 #[cfg(feature = "sqlcipher-host")]
 pub mod encrypted_host;
+pub mod host_adapter;
