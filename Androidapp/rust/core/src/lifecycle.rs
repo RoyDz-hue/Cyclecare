@@ -43,7 +43,10 @@ pub fn name_uuid_from_bytes(data: &[u8]) -> String {
 /// else the device-bound anonymous id (UUID v3 of the device id).
 pub fn effective_user_id(user_id: Option<&str>, device_id: &str) -> String {
     match user_id {
-        Some(uid) if !uid.trim().is_empty() => uid.to_string(),
+        // Kotlin isNullOrBlank parity: the CENTRAL kotlin_trim helper
+        // (Rust char::is_whitespace MINUS U+0085 PLUS U+001C-1F). Plain
+        // Rust trim() diverges on both boundaries (executed-bug class).
+        Some(uid) if !crate::kotlin_text::kotlin_trim(uid).is_empty() => uid.to_string(),
         // Kotlin checks isNullOrBlank (no trim); a blank-but-nonempty string
         // falls through to the UUID branch there too. JVM probe WsProbe.kt:
         // Kotlin Char.isWhitespace INCLUDES NBSP/2007/202F, excludes only

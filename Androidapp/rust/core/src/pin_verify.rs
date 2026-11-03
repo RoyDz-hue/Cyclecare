@@ -78,7 +78,17 @@ pub fn encode_pin_pbkdf2_with_salt(raw: &str, salt: &[u8; PBKDF2_SALT_BYTES]) ->
 
 /// verifyPinPbkdf2: parse, bounds-check iterations, constant-time compare.
 /// Any malformed part fails closed (Kotlin catch -> false).
+///
+/// PBEKeySpec input gates (reviewer differential 2026-11-03: 95/400 random
+/// inputs where Java throws but Rust computed): an EMPTY candidate makes
+/// PBEKeySpec throw IllegalArgumentException, which the source's catch
+/// turns into `false`; an empty SALT from a malformed stored value throws
+/// the same way. Rust computes happily on both - gate them to `false` to
+/// match the executed Java behavior.
 pub fn verify_pin_pbkdf2(stored: &str, candidate: &str) -> bool {
+    if candidate.is_empty() {
+        return false; // PBEKeySpec empty-password throw -> catch -> false
+    }
     let body = match stored.strip_prefix(PBKDF2_PREFIX) {
         Some(b) => b,
         None => return false,
@@ -95,21 +105,20 @@ pub fn verify_pin_pbkdf2(stored: &str, candidate: &str) -> bool {
         return false;
     }
     let salt = match hex_to_bytes(parts[1]) {
-        Some(v) => v,
-        None => return false,
+        Some(v) if !v.is_empty() => v,
+        _ => return false, // PBEKeySpec empty-salt throw -> catch -> false
     };
     let expected = match hex_to_bytes(parts[2]) {
         Some(v) => v,
         None => return false,
     };
     let actual = pbkdf2(candidate, &salt, iterations);
-    // MessageDigest.isEqual: constant-time over equal lengths, false otherwise.
-    expected.len() == actual.len()
-        && expected
-            .iter()
-            .zip(actual.iter())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+    // MessageDigest.isEqual via the established timing-safe primitive
+    // (subtle::ConstantTimeEq; a hand-rolled XOR fold is only a best-effort
+    // claim the compiler is free to weaken - reviewer note 2026-11-03).
+    // Mismatched lengths cannot be equal; ct_eq returns Choice(0) there.
+    use subtle::ConstantTimeEq;
+    expected.ct_eq(&actual).into()
 }
 
 /// hashPinLegacyDevice: SHA-256 hex of "cyclecare_<deviceId>_<raw>".
