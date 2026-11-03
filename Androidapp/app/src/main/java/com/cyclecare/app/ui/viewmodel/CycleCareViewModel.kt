@@ -229,6 +229,29 @@ class CycleCareViewModel(
         return null
     }
 
+    /**
+     * For flows that must publish a start decision: waits briefly for an owner
+     * switch to settle (8 attempts, 250 ms apart). Never publishes an unstable read.
+     */
+    private suspend fun readStableLocalSnapshotWithBackoff(resetFirst: Boolean): com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot? {
+        repeat(8) {
+            readStableLocalSnapshot(resetFirst)?.let { return it }
+            kotlinx.coroutines.delay(250L)
+        }
+        return null
+    }
+
+    /**
+     * Explicit state when the local data could not be read stably: the existing
+     * "check failed, try again" state. It never routes to onboarding and never
+     * implies the data is missing.
+     */
+    private fun markLocalReadUnavailable() {
+        _uiState.value = _uiState.value.copy(
+            isCheckingCloudProfile = false, cloudProfileCheckFailed = true, showOnboarding = false
+        )
+    }
+
     /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
     fun loadSyncConflicts() {
         val snapshot = captureConflictOwnerSnapshot()
@@ -347,7 +370,7 @@ class CycleCareViewModel(
         viewModelScope.launch {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val stored = readStableLocalSnapshot(resetFirst = true) ?: return@launch
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
             val settings = stored.settings
             val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
@@ -725,19 +748,17 @@ class CycleCareViewModel(
     }
 
     fun updateSettings(newSettings: CycleSettings) {
+        val owner = captureConflictOwnerSnapshot()
         viewModelScope.launch {
             val previousSettings = _uiState.value.settings
-            val profile = repository.getOnboardingProfile()
-            val updatedProfile = profile?.copy(
-                cycleLengthOption = if (newSettings.averageCycleLength != previousSettings.averageCycleLength) {
-                    "${newSettings.averageCycleLength} days"
-                } else profile.cycleLengthOption,
-                cycleLengthDays = newSettings.averageCycleLength,
-                periodDurationDays = newSettings.periodDuration
-            )
-            repository.saveSettings(newSettings)
-            if (updatedProfile != null) repository.saveOnboardingProfile(updatedProfile)
-            _uiState.value = _uiState.value.copy(onboardingProfile = updatedProfile ?: profile)
+            // Profile read and both writes use the one database/owner/consent capture made by the repository.
+            // During an owner transition the repository refuses the write; nothing is saved or published.
+            val update = try {
+                repository.updateSettingsBound(newSettings, previousSettings.averageCycleLength)
+            } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return@launch }
+            // The write stays with its own owner; only the current owner's UI is updated.
+            if (!isCurrentConflictSnapshot(owner) || !repository.isCurrentContext(update.context)) return@launch
+            _uiState.value = _uiState.value.copy(onboardingProfile = update.profile)
             updateCalculations(newSettings, _uiState.value.currentDate, _uiState.value.selectedDate)
             autoSyncSilently()
         }
@@ -1614,8 +1635,9 @@ class CycleCareViewModel(
         authPreferences.isAiSharingAllowed = false
         resetIdentityUiIfNeeded()
         viewModelScope.launch {
-            val settings = repository.getSettings()
-            val profile = repository.getOnboardingProfile()
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
+            val settings = stored.settings
+            val profile = stored.profile
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
                 settings = settings, onboardingProfile = profile, showOnboarding = !settings.isOnboardingCompleted,
                 isCheckingCloudProfile = false, isAppLocked = authPreferences.isPinEnabled || authPreferences.isFingerprintEnabled,
@@ -1648,8 +1670,9 @@ class CycleCareViewModel(
                 is com.cyclecare.app.data.supabase.AuthResult.Success -> {
                     authPreferences.hasCompletedInitialAuth = true
                     resetIdentityUiIfNeeded()
-                    val settings = repository.getSettings()
-                    val profile = repository.getOnboardingProfile()
+                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
+                    val settings = stored.settings
+                    val profile = stored.profile
                     _uiState.value = _uiState.value.copy(
                         hasCompletedInitialAuth = true,
                         isAppLocked = false,
@@ -1977,11 +2000,10 @@ class CycleCareViewModel(
                 typicalSleepQuality = typicalSleep,
                 hasCompletedDeepBaseline = hasCompletedDeepBaseline
             )
-            val completion = repository.completeOnboardingWithProfile(
-                profile = profile,
-                pin = pin,
-                enableLock = enableLock
-            )
+            // Refused during an owner transition: nothing is written to the database or published.
+            val completion = try {
+                repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock)
+            } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return@launch }
             SoundFeedbackManager.playGentleRewardChime()
             // The write above is bound to the database/owner captured at its start.
             // Publish only if that owner, session and repository context are still

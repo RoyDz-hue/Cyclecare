@@ -75,6 +75,9 @@ data class PeriodDateValidationResult(
     val warningMessage: String? = null
 )
 
+/** The preferences owner and the repository's database owner disagree: a switch is in progress, so the write is refused. */
+class OwnerTransitionException : IllegalStateException("owner_transition")
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CycleRepository(database: CycleCareDatabase) {
     private val activeDatabase = MutableStateFlow(database)
@@ -83,18 +86,60 @@ class CycleRepository(database: CycleCareDatabase) {
     private var lifecycleIdentity: String? = null
     /** Bumped on every owner/database switch, so a switch away and back is still detectable. */
     private var contextEpoch = 0L
+    /** Single immutable value, replaced atomically, so one read can never mix database, owner and epoch. */
+    @Volatile private var current = StoredContext(database, null, 0L)
 
     /** The database, owner and switch epoch captured together before any suspension. */
     data class StoredContext(val database: CycleCareDatabase, val owner: String?, val epoch: Long)
     data class StoredSnapshot(val context: StoredContext, val settings: CycleSettings, val profile: OnboardingProfile?)
     data class OnboardingCompletion(val context: StoredContext, val settings: CycleSettings)
 
-    private fun captureContext() = StoredContext(activeDatabase.value, lifecycleIdentity, contextEpoch)
+    private fun captureContext(): StoredContext = current
+
+    /** A write context: database, owner, epoch and the consent generation of THAT owner. */
+    data class WriteContext(val context: StoredContext, val consentGeneration: Long)
+
+    /**
+     * The consent generation is stored per account by the preferences object, which
+     * switches owner before this repository does. Accept the pair only when the
+     * preferences owner equals the captured database owner on both sides of the
+     * generation read and the context did not change; otherwise an owner transition
+     * is in progress and the write is refused rather than mixing owner A's database
+     * with owner B's generation.
+     */
+    private fun captureWriteContext(): WriteContext {
+        val prefs = lifecyclePreferences ?: return WriteContext(current, 0L)
+        repeat(5) {
+            val before = current
+            val ownerBefore = prefs.userId
+            val generation = prefs.healthConsentGeneration
+            val ownerAfter = prefs.userId
+            if (ownerBefore == before.owner && ownerAfter == before.owner && current === before) {
+                return WriteContext(before, generation)
+            }
+        }
+        throw OwnerTransitionException()
+    }
     private fun ownerKey(owner: String?) = owner?.takeIf { it.isNotBlank() } ?: "legacy_guest"
 
     /** True only while the database, owner and switch epoch are exactly the captured ones. */
-    fun isCurrentContext(context: StoredContext): Boolean =
-        context.database === activeDatabase.value && context.owner == lifecycleIdentity && context.epoch == contextEpoch
+    fun isCurrentContext(context: StoredContext): Boolean {
+        val now = current
+        return context.database === now.database && context.owner == now.owner && context.epoch == now.epoch
+    }
+
+    /** Switches database, owner and epoch together; the database is resolved before anything is published. */
+    @Synchronized
+    private fun publishContext(database: CycleCareDatabase, owner: String?) {
+        lifecycleIdentity = owner
+        contextEpoch++
+        storedPeriodDateRange = null
+        current = StoredContext(database, owner, contextEpoch)
+        activeDatabase.value = database
+    }
+
+    /** Test seam: runs right after a read/write captures its context, before its first database call. Null in production. */
+    internal var afterContextCaptured: (suspend (StoredContext) -> Unit)? = null
 
     /** Preferred account-bound construction; signed-in users never fall back to legacy storage. */
     constructor(context: Context, authPreferences: AuthPreferences) : this(
@@ -103,6 +148,7 @@ class CycleRepository(database: CycleCareDatabase) {
         lifecycleContext = context.applicationContext
         lifecyclePreferences = authPreferences
         lifecycleIdentity = authPreferences.userId
+        current = StoredContext(activeDatabase.value, lifecycleIdentity, contextEpoch)
     }
     private val dao get() = activeDatabase.value.cycleDao()
     private val onboardingDao get() = activeDatabase.value.onboardingDao()
@@ -113,17 +159,11 @@ class CycleRepository(database: CycleCareDatabase) {
         val preferences = lifecyclePreferences ?: return
         val owner = preferences.userId
         if (lifecycleIdentity == owner) return
-        lifecycleIdentity = owner
-        contextEpoch++
-        storedPeriodDateRange = null
-        activeDatabase.value = CycleCareDatabase.getDatabase(context, owner)
+        publishContext(CycleCareDatabase.getDatabase(context, owner), owner)
     }
 
     internal fun activateDatabaseForTest(database: CycleCareDatabase, owner: String?) {
-        lifecycleIdentity = owner
-        contextEpoch++
-        storedPeriodDateRange = null
-        activeDatabase.value = database
+        publishContext(database, owner)
     }
 
     // In-memory cache for validated period date boundaries
@@ -186,9 +226,15 @@ class CycleRepository(database: CycleCareDatabase) {
     /** Settings and profile read from ONE captured database/owner, never two independent lookups. */
     suspend fun getStoredSnapshot(): StoredSnapshot {
         val context = captureContext()
-        val settings = settingsFor(context)
-        val profile = context.database.onboardingDao().getProfile()
-        return StoredSnapshot(context, settings, profile)
+        afterContextCaptured?.invoke(context)
+        // One transaction on the captured database: settings (including the
+        // default-row creation, which nests) and profile are read from the same
+        // consistent state, not two independent reads.
+        return context.database.withTransaction {
+            val settings = settingsFor(context)
+            val profile = context.database.onboardingDao().getProfile()
+            StoredSnapshot(context, settings, profile)
+        }
     }
 
     private suspend fun settingsFor(context: StoredContext): CycleSettings {
@@ -222,7 +268,9 @@ class CycleRepository(database: CycleCareDatabase) {
         // Database, owner and switch epoch are captured together BEFORE the
         // first suspension, so the transaction and its journal keys can never
         // straddle an owner switch.
-        val capturedContext = captureContext()
+        val writeContext = captureWriteContext()
+        val capturedContext = writeContext.context
+        afterContextCaptured?.invoke(capturedContext)
         val selectedDatabase = capturedContext.database
         val dao = selectedDatabase.cycleDao()
         val onboardingDao = selectedDatabase.onboardingDao()
@@ -237,7 +285,7 @@ class CycleRepository(database: CycleCareDatabase) {
             isAppLockEnabled = enableLock
         )
         val owner = ownerKey(capturedContext.owner)
-        val capturedConsentGeneration = consentGeneration
+        val capturedConsentGeneration = writeContext.consentGeneration
         selectedDatabase.withTransaction {
             val sync = selectedDatabase.healthSyncDao()
             val profilePayload = HealthSyncPayloadCodec.profilePayload(profile)
@@ -269,6 +317,40 @@ class CycleRepository(database: CycleCareDatabase) {
         return OnboardingCompletion(capturedContext, updated)
     }
 
+    /**
+     * Settings change plus the matching profile adjustment, all against ONE captured
+     * database/owner: the profile is read from, and both writes go to, the context
+     * captured here. Returns the context and the profile that was current for it.
+     */
+    data class SettingsUpdate(val context: StoredContext, val profile: OnboardingProfile?)
+    suspend fun updateSettingsBound(
+        newSettings: CycleSettings,
+        previousAverageCycleLength: Int
+    ): SettingsUpdate {
+        val write = captureWriteContext()
+        val captured = write.context
+        afterContextCaptured?.invoke(captured)
+        val db = captured.database
+        val key = ownerKey(captured.owner)
+        val profile = db.onboardingDao().getProfile()
+        val updatedProfile = profile?.copy(
+            cycleLengthOption = if (newSettings.averageCycleLength != previousAverageCycleLength) {
+                "${newSettings.averageCycleLength} days"
+            } else profile.cycleLengthOption,
+            cycleLengthDays = newSettings.averageCycleLength,
+            periodDurationDays = newSettings.periodDuration
+        )
+        journalMutation(db, "settings", HealthSyncPayloadCodec.settingsPayload(newSettings), ownerKey = key, consentGeneration = write.consentGeneration) {
+            db.cycleDao().saveSettings(newSettings)
+        }
+        if (updatedProfile != null) {
+            journalMutation(db, "profile", HealthSyncPayloadCodec.profilePayload(updatedProfile), ownerKey = key, consentGeneration = write.consentGeneration) {
+                db.onboardingDao().insertOrUpdateProfile(updatedProfile)
+            }
+        }
+        return SettingsUpdate(captured, updatedProfile ?: profile)
+    }
+
     suspend fun saveSettings(settings: CycleSettings) {
         val db = activeDatabase.value
         val selectedDao = db.cycleDao()
@@ -283,6 +365,7 @@ class CycleRepository(database: CycleCareDatabase) {
         payload: String,
         kind: String = "UPSERT",
         ownerKey: String = ownerKey(lifecycleIdentity),
+        consentGeneration: Long = this.consentGeneration,
         write: suspend () -> Unit
     ) {
         val owner = ownerKey
