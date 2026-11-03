@@ -589,3 +589,82 @@ workflows:
       - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
       - build-logs/*
       - Androidapp/app/build/outputs/mapping/slim/*
+  # The lab APKs are the Firebase Test Lab input. The device-side invocation
+  # MUST target ONLY the lab suite (the assembled test APK also contains the
+  # shared androidTest classes, which must not run on Test Lab):
+  #   testTargets: ["class com.cyclecare.app.RustLabInstrumentedTest"]
+  #   (gcloud equivalent: gcloud firebase test android run --type instrumentation
+  #    --app app-lab.apk --test app-lab-androidTest.apk
+  #    --test-targets "class com.cyclecare.app.RustLabInstrumentedTest")
+  cyclecare-rust-lab-build:
+    name: CycleCare Rust lab APK build (disposable, Test Lab input)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact final candidate commit, supplied after commit creation
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Verify source pin and forbid signing custody
+        script: |
+          set -euo pipefail
+          mkdir -p build-logs
+          test ! -e Androidapp/.private/cyclecare-debug.jks
+          test ! -e Androidapp/my-upload-key.jks
+          test -z "${CYCLECARE_DEBUG_KEYSTORE:-}"
+          test -z "${CYCLECARE_DEBUG_STORE_PASSWORD:-}"
+          test -z "${CYCLECARE_DEBUG_KEY_PASSWORD:-}"
+          test -z "${KEYSTORE_PATH:-}"
+          test -z "${STORE_PASSWORD:-}"
+          test -z "${KEY_PASSWORD:-}"
+          test -n "${EXPECTED_SOURCE_SHA:-}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git rev-parse HEAD | tee build-logs/source-commit.txt
+          git ls-files --error-unmatch Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so
+          python3 ci/verify-current-native.py input | tee build-logs/native-input.txt
+      - name: Build lab app + instrumented test APKs (arm64, minified)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          mkdir -p ../build-logs
+          ./gradlew -Pcyclecare.testBuildType=lab -PslimApk \
+            assembleLab assembleLabAndroidTest 2>&1 | tee ../build-logs/lab-build.log
+      - name: Verify lab APKs (native bytes, DEX JNI, ephemeral debug cert)
+        script: |
+          set -euo pipefail
+          APK_DIR=Androidapp/app/build/outputs/apk/lab APK_SIGNED=1 \
+            python3 ci/verify-current-native.py apk | tee build-logs/lab-packaged-native.txt
+          BT=$(ls -d "$ANDROID_HOME/build-tools/"*/ | sort -V | tail -1)
+          test -x "$BT/apksigner" && test -x "$BT/aapt2"
+          LABAPK=$(ls Androidapp/app/build/outputs/apk/lab/*.apk | head -1)
+          TESTAPK=$(ls Androidapp/app/build/outputs/androidTest/apk/lab/*.apk | head -1)
+          echo "lab apk: $LABAPK"; echo "test apk: $TESTAPK"
+          for A in "$LABAPK" "$TESTAPK"; do
+            "$BT/apksigner" verify --print-certs "$A" | tee -a build-logs/lab-signing.txt
+          done
+          grep -q 'Android Debug' build-logs/lab-signing.txt
+          "$BT/aapt2" dump badging "$LABAPK" | grep -E "package: name='com.cyclecare.app.lab'" | tee build-logs/lab-package.txt
+      - name: Check R8 obfuscation active and caller path kept (bounded)
+        script: |
+          set -euo pipefail
+          MAP=Androidapp/app/build/outputs/mapping/lab/mapping.txt
+          test -s "$MAP"
+          grep -q 'com.cyclecare.app.rust.CycleCareCoreBridge' "$MAP"
+          grep -q 'com.cyclecare.app.lab.RustLabSelfCheck' "$MAP"
+          # Obfuscation must be active: some mapping line must rename a class.
+          grep -Eq '^com\.cyclecare\.app\..+ -> [a-z]+:' "$MAP"
+          echo "mapping present; bridge + lab caller kept; obfuscation active" | tee build-logs/lab-mapping.txt
+    artifacts:
+      - Androidapp/app/build/outputs/apk/lab/*.apk
+      - Androidapp/app/build/outputs/androidTest/apk/lab/*.apk
+      - Androidapp/app/build/outputs/mapping/lab/mapping.txt
+      - build-logs/*

@@ -120,12 +120,16 @@ def unsigned_structure(raw,names):
 if sys.argv[1]=='input':
     print(json.dumps({'native':str(SO),'sha256':verify(SO.read_bytes()),'bytes':SO.stat().st_size,'elfExports':'verified'}))
 elif sys.argv[1]=='apk':
-    apks=list(pathlib.Path('Androidapp/app/build/outputs/apk/slim').rglob('*.apk'));assert len(apks)==1,apks
+    apkdir=os.environ.get('APK_DIR','Androidapp/app/build/outputs/apk/slim')
+    apks=list(pathlib.Path(apkdir).rglob('*.apk'));assert len(apks)==1,apks
     apk=apks[0];raw=apk.read_bytes()
     with zipfile.ZipFile(apk) as z:
         assert z.testzip() is None
         names=z.namelist();assert len(names)==len(set(names)),'duplicate entries'
-        unsigned_structure(raw,names)
+        if os.environ.get('APK_SIGNED')=='1':
+            print(json.dumps({'signedLabApk':True,'note':'unsigned-structure checks skipped; ephemeral debug-cert signature expected'}))
+        else:
+            unsigned_structure(raw,names)
         packaged=z.read('lib/arm64-v8a/libcyclecare_core.so')
         digest=verify(packaged,packaged=True)
         assert_strip_only(SO.read_bytes(),packaged)

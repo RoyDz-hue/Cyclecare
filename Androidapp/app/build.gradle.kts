@@ -39,6 +39,11 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // Instrumented-test build type stays "debug" by default (device-verify
+  // workflow). The Rust lab workflow selects the lab build type with
+  // ./gradlew -Pcyclecare.testBuildType=lab ... connectedLabAndroidTest.
+  testBuildType = providers.gradleProperty("cyclecare.testBuildType").orElse("debug").get()
+
   signingConfigs {
     create("fixedDebug") {
       storeFile = file(System.getenv("CYCLECARE_DEBUG_KEYSTORE") ?: "${rootDir}/.private/cyclecare-debug.jks")
@@ -118,6 +123,27 @@ android {
       isMinifyEnabled = !noMinify
       isShrinkResources = !noMinify
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+    }
+    // Rust-execution lab: R8-processed like slim, but with an explicit lab
+    // caller path (com.cyclecare.app.lab.RustLabSelfCheck, kept via
+    // proguard-lab.pro) so the packaged native dispatcher is actually
+    // exercised. Disposable identity and cert, emulator/device-test only,
+    // never distributed. Does NOT enable any production Rust flag; the UI
+    // caller adapters stay const-false here too.
+    create("lab") {
+      initWith(getByName("slim"))
+      applicationIdSuffix = ".lab" // com.cyclecare.app.lab - isolated data namespace
+      versionNameSuffix = "-lab"
+      // Non-debuggable like slim so R8 runs in full mode (repo rule: AGP
+      // compiles debuggable variants through R8 debug mode, which silently
+      // disables obfuscation). Instrumentation does not need debuggable:
+      // the test APK shares the same debug signing cert.
+      isDebuggable = false
+      // Disposable signing: AGP auto-generated debug keystore (~/.android),
+      // never the release/upload key, never a committed keystore.
+      signingConfig = signingConfigs.getByName("debug")
+      proguardFiles("proguard-lab.pro")
+      buildConfigField("boolean", "RUST_LAB", "true")
     }
   }
   compileOptions {
