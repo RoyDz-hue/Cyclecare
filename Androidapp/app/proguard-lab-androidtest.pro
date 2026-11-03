@@ -7,3 +7,12 @@
 # annotation is compile-time-only and never runs on device; suppressing the
 # reference is behavior-neutral. Exact class only, no wildcards.
 -dontwarn javax.lang.model.element.Modifier
+# monitor:1.8.0 uses these only as RuntimeInvisibleAnnotations on Checks
+# and tracing methods (javap + upstream sources verified). CanIgnoreReturnValue
+# explicitly has CLASS retention; MustBeClosed uses Java's default CLASS
+# retention. Neither has runtime behavior. The isolated lab graph omits the
+# Espresso dependency that previously supplied error_prone_annotations.
+# Local R8 9.1.31 negative/positive probe reproduces exactly these two missing
+# classes, then passes with these exact rules and emits no errorprone DEX types.
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
+-dontwarn com.google.errorprone.annotations.MustBeClosed
