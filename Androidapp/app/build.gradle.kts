@@ -296,34 +296,29 @@ tasks.register("packageRustCore") {
 }
 tasks.named("preBuild") { dependsOn("packageRustCore") }
 
-// Disposable lab ONLY. AGP 9.1.1 independently runs L8 for app and androidTest;
-// independent short-name assignment produced a confirmed interface/class
-// collision under ART. Keep semantic desugar-library names on BOTH outputs.
-// The test copy is complete so test-first class loading cannot shadow an app
-// class with a member-stripped subset. App L8 still shrinks; real app R8 and
-// resource shrinking remain enabled. No production variant is changed.
-// INTERNAL API, intentionally pinned and fail-closed. Re-review on AGP change.
+// Lab ONLY: identical reviewed L8 root union, with shrinking still enabled.
+// Uses pinned INTERNAL AGP APIs. Re-review on AGP/source/dependency change.
+// Dynamic reflection/JNI names are not proved by the static root audit.
 if (providers.gradleProperty("cyclecare.testBuildType").orNull == "lab") {
 gradle.projectsEvaluated {
-    check(com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION == "9.1.1") {
-        "Lab L8 compatibility configuration requires reviewed AGP 9.1.1"
-    }
+    check(com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION == "9.1.1")
+    val sharedRoots = file("lab-l8-union-roots.pro").readText()
+    check(sharedRoots.lines().count { it.startsWith("-keep class ") } == 27)
+    check(!sharedRoots.contains("-dontshrink"))
     val labL8Tasks = listOf("l8DexDesugarLibLab", "l8DexDesugarLibLabAndroidTest")
     labL8Tasks.forEach { taskName ->
         val l8 = tasks.named<com.android.build.gradle.internal.tasks.L8DexDesugarLibTask>(taskName).get()
-        l8.keepRulesConfigurations.addAll(listOf("-dontobfuscate", "-dontoptimize"))
-        if (taskName == "l8DexDesugarLibLabAndroidTest") {
-            l8.keepRulesConfigurations.add("-dontshrink")
-        }
+        l8.keepRulesConfigurations.addAll(listOf("-dontobfuscate", "-dontoptimize", sharedRoots))
         l8.doFirst {
+            check(l8.keepRulesConfigurations.get().none { it.trim() == "-dontshrink" })
             logger.lifecycle("LAB_L8_FLAGS task=$taskName minSdk=${l8.minSdkVersion.get()} rules=${l8.keepRulesConfigurations.get()}")
         }
         check(l8.minSdkVersion.get() == 24)
-        check(l8.keepRulesConfigurations.get().containsAll(listOf("-dontobfuscate", "-dontoptimize")))
-        check(("-dontshrink" in l8.keepRulesConfigurations.get()) == (taskName == "l8DexDesugarLibLabAndroidTest"))
+        check(l8.keepRules.isPresent) // AGP TraceReferences root generation/shrinking enabled.
+        check(l8.keepRulesConfigurations.get().none { it.trim() == "-dontshrink" })
     }
     check(android.buildTypes.getByName("lab").isMinifyEnabled)
     check(android.buildTypes.getByName("lab").isShrinkResources)
-    logger.lifecycle("LAB_L8_SCOPE property=lab AGP=9.1.1 appR8=true resourceShrink=true minSdk=24 productionVariantsUnchanged=true")
+    logger.lifecycle("LAB_L8_SCOPE property=lab AGP=9.1.1 unionRoots=27 L8shrink=true appR8=true resourceShrink=true minSdk=24 productionVariantsUnchanged=true")
 }
 }

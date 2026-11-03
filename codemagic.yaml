@@ -699,7 +699,28 @@ workflows:
           # Proves runner + lab test + kept lab entry point are defined and
           # every test-APK type reference resolves to test APK, app APK, or
           # the platform (android.jar), minus an exact-name reviewed allowlist.
+          # Historical flat closure result retained verbatim and separately.
+          # Flat type-only closure cannot check j$ member/hierarchy collisions.
+          # Preserve its exact report/exit; strict current closure below remains mandatory.
+          set +e
           python3 ci/lab-dex-closure.py             lab-artifacts/app-arm64-v8a-lab.apk             lab-artifacts/app-arm64-v8a-lab-androidTest.apk             "$ANDROID_JAR" | tee build-logs/lab-dex-closure.txt
+          FLAT_RC=${PIPESTATUS[0]}
+          set -e
+          echo "$FLAT_RC" > build-logs/lab-historical-flat-exit.txt
+          # Parser versions pinned for canonical scanner and exact reviewer gate.
+          python3 -m pip install --disable-pip-version-check 'androguard==4.1.4' 'loguru==0.7.3'
+          python3 ci/lab-device-static-closure.py lab-artifacts/app-arm64-v8a-lab.apk lab-artifacts/app-arm64-v8a-lab-androidTest.apk "$ANDROID_JAR" | tee build-logs/lab-current-type-closure.txt
+          # Non-j$ executable reachability/member review remains a separate
+          # mandatory pre-device check. Diagnostic flat type gaps are not waived
+          # by this workflow. No matrix submission occurs in this workflow.
+          # Mandatory controls and current-pair root equality. Regeneration writes
+          # an artifact, NEVER overwrites the reviewed input used by L8.
+          python3 ci/test-l8-union-roots.py | tee build-logs/lab-root-fixtures.txt
+          python3 ci/lab-l8-union-roots.py lab-artifacts/app-arm64-v8a-lab.apk lab-artifacts/app-arm64-v8a-lab-androidTest.apk --write build-logs/lab-l8-regenerated-roots.pro
+          python3 ci/lab-l8-union-roots.py lab-artifacts/app-arm64-v8a-lab.apk lab-artifacts/app-arm64-v8a-lab-androidTest.apk --check Androidapp/app/lab-l8-union-roots.pro | tee build-logs/lab-l8-root-equality.json
+          # Exact reviewer gate, no allowlist or waived violations.
+          python3 ci/j8-both-order-gate.py lab-artifacts/app-arm64-v8a-lab.apk lab-artifacts/app-arm64-v8a-lab-androidTest.apk --json build-logs/lab-both-order.json | tee build-logs/lab-both-order.txt
+          echo 'L8_STATIC_GATES=PASS; device requires independent executable reachability review; not ART acceptance' | tee build-logs/lab-l8-static-gates.txt
       - name: Check R8 obfuscation active and caller path kept (bounded)
         script: |
           set -euo pipefail
