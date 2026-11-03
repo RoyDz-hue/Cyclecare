@@ -2,13 +2,19 @@
 """Strict diagnostic assertions. No credentials, network, signing or deployment."""
 import hashlib,json,pathlib,sys,zipfile,subprocess,os,struct,re
 EXPECTED='dcb37aa43dc2931be81de10090be3fdd2967bbc58f8285cef60ba21e6de48521'
+# Packaged form: AGP stripSlimDebugSymbols ran `llvm-strip --strip-unneeded`. Offline, NDK r27c
+# `llvm-strip --strip-unneeded` on the committed input reproduces these exact bytes.
+STRIPPED='8a5b90c0381302de4d3e1c874f3c5c591cb534e9bb73373d677d11f084b7adb1'
+STRIPPED_LEN=908984
+REMOVED={'.symtab','.strtab'}
 SO=pathlib.Path('Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so')
 BRIDGE='Lcom/cyclecare/app/rust/CycleCareCoreBridge;'
 METHODS={'nativeCall','nativeCoreHandshake'}
-def verify(data):
+def verify(data,packaged=False):
     actual=hashlib.sha256(data).hexdigest()
-    assert actual==EXPECTED,(actual,EXPECTED)
-    assert len(data)==1363624,len(data)
+    want,length=(STRIPPED,STRIPPED_LEN) if packaged else (EXPECTED,1363624)
+    assert actual==want,(actual,want)
+    assert len(data)==length,len(data)
     # ELF64 little-endian AArch64 dynamic exports, not arbitrary byte strings.
     assert data[:6]==b'\x7fELF\x02\x01' and struct.unpack_from('<H',data,18)[0]==183
     shoff=struct.unpack_from('<Q',data,40)[0];size,count=struct.unpack_from('<HH',data,58)
@@ -22,6 +28,37 @@ def verify(data):
             if index and info>>4 in (1,2):exports.add(table[name:table.index(b'\0',name)].decode())
     for method in METHODS:assert 'Java_com_cyclecare_app_rust_CycleCareCoreBridge_'+method in exports
     return actual
+
+def elf_layout(data):
+    shoff=struct.unpack_from('<Q',data,40)[0];size,count,strndx=struct.unpack_from('<HHH',data,58)
+    phoff=struct.unpack_from('<Q',data,32)[0];phsize,phnum=struct.unpack_from('<HH',data,54)
+    sh=[struct.unpack_from('<IIQQQQIIQQ',data,shoff+i*size) for i in range(count)]
+    st=sh[strndx];tab=data[st[4]:st[4]+st[5]]
+    secs={}
+    for s in sh:
+        name=tab[s[0]:tab.index(b'\0',s[0])].decode()
+        assert name not in secs,'duplicate section '+name
+        secs[name]=(s[1],s[2],s[3],hashlib.sha256(b'' if s[1]==8 else data[s[4]:s[4]+s[5]]).hexdigest())
+    # Mask only the three ELF header fields that strip legitimately rewrites (e_shoff, e_shnum, e_shstrndx).
+    masked=bytearray(data);masked[40:48]=bytes(8);masked[60:64]=bytes(4);data=bytes(masked)
+    ph=[struct.unpack_from('<IIQQQQQQ',data,phoff+i*phsize) for i in range(phnum)]
+    segs=[(p[0],p[1],p[3],p[4],p[5],p[6],p[7],hashlib.sha256(data[p[2]:p[2]+p[5]]).hexdigest()) for p in ph]
+    return secs,segs
+
+def assert_strip_only(committed,packaged):
+    """Packaged lib may differ from the committed lib ONLY by removal of .symtab/.strtab
+    (and the rewritten .shstrtab). Every other section and every program header segment
+    (type, flags, vaddr, paddr, sizes, align, content) must be identical."""
+    a,sa=elf_layout(committed);b,sb=elf_layout(packaged)
+    assert set(a)-set(b)==REMOVED,('removed sections differ from approved strip',sorted(set(a)-set(b)))
+    assert not set(b)-set(a),('new sections',sorted(set(b)-set(a)))
+    for name in b:
+        if name=='.shstrtab':continue
+        assert a[name]==b[name],('section changed',name)
+    assert sa==sb,'program header segments changed'
+    mc=bytearray(committed[:64]);mp=bytearray(packaged[:64])
+    for m in (mc,mp):m[40:48]=bytes(8);m[60:64]=bytes(4)
+    assert mc==mp,'ELF header changed beyond section-table fields'
 
 def uleb(d,p):
     n=0;shift=0
@@ -81,13 +118,15 @@ elif sys.argv[1]=='apk':
         assert z.testzip() is None
         names=z.namelist();assert len(names)==len(set(names)),'duplicate entries'
         unsigned_structure(raw,names)
-        digest=verify(z.read('lib/arm64-v8a/libcyclecare_core.so'))
+        packaged=z.read('lib/arm64-v8a/libcyclecare_core.so')
+        digest=verify(packaged,packaged=True)
+        assert_strip_only(SO.read_bytes(),packaged)
         found=set()
         for name in names:
             if re.fullmatch(r'classes(?:\d+)?\.dex',name):found|=dex_native_methods(z.read(name))
         assert METHODS<=found,('JNI names missing from actual DEX',found)
     # Structural checks above are mandatory even if SDK tooling is unavailable.
-    print(json.dumps({'structuralNativeChecks':'PASS','nativeSha256':digest,'nativeDexNames':sorted(found),'unsignedStructure':'PASS - no v1 files or APK Signing Block'}),flush=True)
+    print(json.dumps({'structuralNativeChecks':'PASS','packagedNativeSha256':digest,'stripOnlyVsCommitted':'PASS','nativeDexNames':sorted(found),'unsignedStructure':'PASS - no v1 files or APK Signing Block'}),flush=True)
     sdkpath=os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT')
     assert sdkpath,'SDK location missing: ANDROID_HOME/ANDROID_SDK_ROOT'
     sdk=pathlib.Path(sdkpath)
@@ -101,5 +140,5 @@ elif sys.argv[1]=='apk':
     output=result.stdout+result.stderr
     assert 'DOES NOT VERIFY' in output and 'Missing META-INF/MANIFEST.MF' in output,('unclassified apksigner failure, not unsigned proof',output)
     # Unsigned classification is structural, NOT inferred from tool failure.
-    print(json.dumps({'apk':str(apk),'nativeSha256':digest,'apkSha256':hashlib.sha256(raw).hexdigest(),'unsignedStructure':'no v1 signature files and no APK signing block','nativeDexNames':sorted(found),'apksignerReturnCode':result.returncode}))
+    print(json.dumps({'apk':str(apk),'packagedNativeSha256':digest,'committedNativeSha256':EXPECTED,'nativeTransform':'strip-only (.symtab/.strtab removed; all other sections and segments identical)','apkSha256':hashlib.sha256(raw).hexdigest(),'unsignedStructure':'no v1 signature files and no APK signing block','nativeDexNames':sorted(found),'apksignerReturnCode':result.returncode}))
 else:raise SystemExit('usage: verify-current-native.py input|apk')

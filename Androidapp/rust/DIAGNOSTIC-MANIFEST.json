@@ -20,5 +20,23 @@
     "offline claim supersession",
     "Android JNI/frame/runtime/pixels/accessibility",
     "whole Rust app integration"
-  ]
+  ],
+  "historicalCodemagicBuild": {
+    "id": "6ae99731e83a9019991c9d9b",
+    "commit": "f5d4d04887aba15b9978a8a04c048c2695faab4b",
+    "result": "NOT_ACCEPTED by the original verifier (expected unstripped native hash); retained unchanged as history",
+    "apkSha256": "a45c7f955014aea9d971de1f645355f41b0a65a9ce30315a6845fa43f8d1386b"
+  },
+  "offlineVerifierV2": {
+    "status": "OFFLINE_PACKAGING_EVIDENCE_ONLY",
+    "packagedNativeSha256": "8a5b90c0381302de4d3e1c874f3c5c591cb534e9bb73373d677d11f084b7adb1",
+    "transform": "llvm-strip --strip-unneeded (NDK r27c reproduces packaged bytes from the committed native)",
+    "apksigner": "build-tools 34 and 36: DOES NOT VERIFY / Missing META-INF/MANIFEST.MF",
+    "notProven": [
+      "device/ART load or JNI call",
+      "APK install",
+      "saved-account/onboarding/wallet",
+      "pixels"
+    ]
+  }
 }
