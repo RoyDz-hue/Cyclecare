@@ -257,6 +257,27 @@ class CycleCareViewModel(
         return null
     }
 
+    private var localReadEpoch = 0L
+
+    /**
+     * Start-decision read shared by startup, local-only start and deep link. Each call is
+     * tagged; only the newest call may publish. A superseded call returns null and publishes
+     * nothing. A failure sets localReadFailed only if the owner it started under is still
+     * current; a success clears it. Not proven by an executed VM test.
+     */
+    private suspend fun readStartSnapshotTagged(): com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot? {
+        val epoch = ++localReadEpoch
+        val owner = captureConflictOwnerSnapshot()
+        val stored = readStableLocalSnapshotWithBackoff(resetFirst = true)
+        if (epoch != localReadEpoch) return null
+        if (stored == null) {
+            if (isCurrentConflictSnapshot(owner)) _uiState.value = _uiState.value.copy(localReadFailed = true)
+            return null
+        }
+        _uiState.value = _uiState.value.copy(localReadFailed = false)
+        return stored
+    }
+
     /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
     fun loadSyncConflicts() {
         val snapshot = captureConflictOwnerSnapshot()
@@ -378,7 +399,7 @@ class CycleCareViewModel(
         startupJob = viewModelScope.launch {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
+            val stored = readStartSnapshotTagged() ?: return@launch
             val settings = stored.settings
             val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
@@ -1657,7 +1678,7 @@ class CycleCareViewModel(
         authPreferences.isAiSharingAllowed = false
         resetIdentityUiIfNeeded()
         viewModelScope.launch {
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
+            val stored = readStartSnapshotTagged() ?: return@launch
             val settings = stored.settings
             val profile = stored.profile
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
@@ -1692,7 +1713,7 @@ class CycleCareViewModel(
                 is com.cyclecare.app.data.supabase.AuthResult.Success -> {
                     authPreferences.hasCompletedInitialAuth = true
                     resetIdentityUiIfNeeded()
-                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
+                    val stored = readStartSnapshotTagged() ?: return@launch
                     val settings = stored.settings
                     val profile = stored.profile
                     _uiState.value = _uiState.value.copy(

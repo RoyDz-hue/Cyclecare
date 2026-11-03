@@ -113,6 +113,9 @@ class CycleRepository(database: CycleCareDatabase) {
      */
     private fun requireTokenFresh(token: OperationToken) {
         val prefs = lifecyclePreferences ?: return
+        // Same database, owner and switch epoch as when the user acted. Skipped without
+        // preferences, where tests deliberately write with an older token.
+        if (current != token.context) throw OwnerTransitionException()
         val now = prefs.operationSnapshot()
         if (now.owner != token.context.owner || now.session != token.session ||
             now.consentGeneration != token.consentGeneration) throw OwnerTransitionException()
