@@ -92,37 +92,45 @@ pub fn compute_anchor_state(
 }
 
 /// Countdown block of CycleCareViewModel.updateCalculations (:491-508).
-/// QUIRK (ported 1:1, labeled): ovulationCycleDay here uses the RAW
-/// settings.lutealPhaseDays and settings.periodDuration, NOT the 10..16 /
-/// 2..10 clamps that CycleRepository.calculateDayPrediction applies; only
-/// averageCycleLength is clamped (21..45). Both behaviors are source-faithful
-/// at their own call sites.
+/// QUIRKS (ported 1:1, labeled):
+///  - RAW settings.lutealPhaseDays / periodDuration (not the 10..16 / 2..10
+///    clamps calculateDayPrediction applies); only averageCycleLength is
+///    clamped (21..45).
+///  - KOTLIN INT ARITHMETIC: subtraction/addition wrap on overflow and
+///    ChronoUnit.DAYS.between(...).toInt() truncates to the low 32 bits, so
+///    malformed persisted/synced settings (or absurd dates) can yield
+///    NEGATIVE daysUntilOvulation and a wrapped-then-clamped-to-0
+///    daysUntilNextPeriod. Probe-locked against JVM Int semantics
+///    (tests/fixtures/countdowns/adv_jvm_expected.txt); UI bounds alone do
+///    not exclude malformed stored values - inputs are NOT assumed clean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnchorCountdowns {
-    pub days_until_next_period: i64,
-    pub ovulation_cycle_day: i64,
-    pub days_until_ovulation: i64,
+    pub days_until_next_period: i32,
+    pub ovulation_cycle_day: i32,
+    pub days_until_ovulation: i32,
 }
 
 pub fn compute_countdowns(
     today: NaiveDate,
     next_period_date: Option<NaiveDate>,
-    today_day_of_cycle: Option<i64>,
-    average_cycle_length: i64,
-    luteal_phase_days: i64,
-    period_duration: i64,
+    today_day_of_cycle: Option<i32>,
+    average_cycle_length: i32,
+    luteal_phase_days: i32,
+    period_duration: i32,
 ) -> AnchorCountdowns {
     let cycle_length = average_cycle_length.clamp(21, 45);
     let days_until_next_period = next_period_date
-        .map(|d| (d - today).num_days().max(0))
+        .map(|d| ((d - today).num_days() as i32).max(0)) // Kotlin toInt() truncation
         .unwrap_or(0);
-    let ovulation_cycle_day = (cycle_length - luteal_phase_days).max(period_duration + 2);
+    let ovulation_cycle_day = cycle_length
+        .wrapping_sub(luteal_phase_days)
+        .max(period_duration.wrapping_add(2));
     let days_until_ovulation = today_day_of_cycle
         .map(|day| {
             if day <= ovulation_cycle_day {
-                ovulation_cycle_day - day
+                ovulation_cycle_day.wrapping_sub(day)
             } else {
-                cycle_length - day + ovulation_cycle_day
+                cycle_length.wrapping_sub(day).wrapping_add(ovulation_cycle_day)
             }
         })
         .unwrap_or(0);

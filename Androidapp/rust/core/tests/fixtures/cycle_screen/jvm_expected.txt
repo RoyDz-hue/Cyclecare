@@ -1,0 +1,16 @@
+0
+18
+0
+0
+5
+5
+---
+Follicular
+No estimate for this date
+Add a start date for estimates
+---
+5
+6, period estimate, has a saved log, today
+7, ovulation estimate
+8, fertile window estimate, has a saved log
+9, today
