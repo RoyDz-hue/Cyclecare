@@ -763,7 +763,9 @@ class CycleCareViewModel(
     }
 
     fun parseNaturalLanguageInput(rawText: String) {
-        val interpretation = NaturalLanguageLogParser.parse(rawText.take(1200))
+        val interpretation = if (com.cyclecare.bridge.RustLogParserConfig.ENABLED)
+            com.cyclecare.bridge.RustLogParser.parse(rawText.take(1200))
+        else NaturalLanguageLogParser.parse(rawText.take(1200))
         pendingQuickLogOwner = authPreferences.effectiveUserId
         _uiState.value = _uiState.value.copy(currentInterpretation = interpretation)
     }
