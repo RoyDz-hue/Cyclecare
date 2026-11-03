@@ -157,9 +157,7 @@ fn bound_runner_refuses_blank_owners_and_binds_store_to_operation_owner() {
         b.run_pull(&mut bob_page, "tok", LOCAL, SERVER, &mut || true, &mut || 6_000)
     }).unwrap().unwrap();
     let notes = |p: &mut OwnerScopedStores, owner: &'static str| -> Option<String> {
-        p.run_for_owner(owner, |b| {
-            b.inspect(|s| s.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok())
-        }).unwrap()
+        p.run_for_owner(owner, |b| b.read_domain_log("2026-11-06").unwrap().map(|l| l.notes)).unwrap()
     };
     assert_eq!(notes(&mut p, "alice").as_deref(), Some("alice-remote"));
     assert_eq!(notes(&mut p, "bob").as_deref(), Some("bob-remote"));
@@ -183,10 +181,7 @@ fn bound_dispatch_never_touches_another_owners_file() {
     p.run_for_owner("alice", |b| b.run_pull(&mut alice_page, "tok", LOCAL, SERVER, &mut || true, &mut || 5_000)).unwrap().unwrap();
     let alice_counts = |p: &mut OwnerScopedStores| -> (i64, i64, i64) {
         p.run_for_owner("alice", |b| {
-            b.inspect(|s| {
-                let c = |t: &str| s.conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap();
-                (c("cycle_day_logs"), c("health_sync_revisions"), c("health_sync_outbox"))
-            })
+            (b.read_domain_log_count().unwrap(), b.read_revision_count().unwrap(), b.read_pending_count().unwrap())
         }).unwrap()
     };
     let before = alice_counts(&mut p);
@@ -202,5 +197,31 @@ fn bound_dispatch_never_touches_another_owners_file() {
     assert_eq!(alice_counts(&mut p), before, "alice's file byte-identical counts after the whole bob cycle - zero wrong-file writes");
     // And the binding reports the owner it actually resolved.
     p.run_for_owner("bob", |b| assert_eq!(b.owner(), "bob")).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn scoped_reads_derive_the_owner_and_cannot_cross_files() {
+    // Negative coverage for the enforced boundary: the wrapper exposes no
+    // borrowed store or connection handle at all, and every read derives
+    // the owner from the binding - bob's revision written under bob's
+    // binding is invisible to alice's binding even when asked for by the
+    // same record id.
+    let d = tmpdir("scoped");
+    let mut p = OwnerScopedStores::new(&d);
+    let mut bob_page = OnePage(vec![vec![remote_log_change("bob", "2026-11-10", 4, 1, "bob-only")]].into());
+    p.run_for_owner("bob", |b| b.run_pull(&mut bob_page, "tok", LOCAL, SERVER, &mut || true, &mut || 7_000)).unwrap().unwrap();
+    p.run_for_owner("bob", |b| {
+        assert_eq!(b.read_revision("2026-11-10").unwrap().map(|r| r.revision), Some(1));
+        assert_eq!(b.read_cursor().unwrap(), Some(1));
+        assert_eq!(b.read_domain_log("2026-11-10").unwrap().map(|l| l.notes).as_deref(), Some("bob-only"));
+    }).unwrap();
+    p.run_for_owner("alice", |b| {
+        assert_eq!(b.read_revision("2026-11-10").unwrap(), None, "alice's binding cannot see bob's revision");
+        assert_eq!(b.read_cursor().unwrap(), None, "alice's binding cannot see bob's cursor");
+        assert_eq!(b.read_domain_log("2026-11-10").unwrap(), None, "alice's FILE holds no such domain row");
+        assert_eq!(b.read_revision_count().unwrap(), 0);
+        assert_eq!(b.read_pending_count().unwrap(), 0);
+    }).unwrap();
     let _ = std::fs::remove_dir_all(&d);
 }

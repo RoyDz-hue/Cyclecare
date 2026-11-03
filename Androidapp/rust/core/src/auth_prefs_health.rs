@@ -26,6 +26,14 @@ pub struct HealthAuthPrefs<'a> {
     pub device_fallback_owner: String,
     /// OwnerDataGate.isWiped(context, owner) seam (:118, :189).
     pub owner_wiped: bool,
+    /// LIVE identity provider: AuthPreferences reads the secure store on
+    /// every access, so when this is attached, user_id()/
+    /// effective_user_id() (and every identity-keyed getter built on them)
+    /// consult it per call instead of the construction-time field.
+    pub live_user_id: Option<Box<dyn Fn() -> Option<String>>>,
+    /// LIVE OwnerDataGate.isWiped seam: consulted per call when attached,
+    /// falling back to the construction-time field otherwise.
+    pub live_owner_wiped: Option<Box<dyn Fn() -> bool>>,
 }
 
 const KEY_CLOUD_SYNC_ALLOWED: &str = "cloud_sync_allowed";
@@ -33,13 +41,22 @@ const KEY_HEALTH_CONSENT_GENERATION: &str = "health_consent_generation";
 
 impl HealthAuthPrefs<'_> {
     /// :356-358 (read side only; the setter lives in the auth slice and bumps
-    /// session_generation_v3 via addExact on change).
-    pub fn user_id(&self) -> Option<String> { self.secure_user_id.clone() }
+    /// session_generation_v3 via addExact on change). Provider-backed when
+    /// live_user_id is attached - per-call, like the secure-store read.
+    pub fn user_id(&self) -> Option<String> {
+        if let Some(p) = &self.live_user_id { p() } else { self.secure_user_id.clone() }
+    }
+
+    /// OwnerDataGate.isWiped seam: provider-backed when live_owner_wiped is
+    /// attached, the construction-time field otherwise.
+    pub fn is_owner_wiped(&self) -> bool {
+        if let Some(w) = &self.live_owner_wiped { w() } else { self.owner_wiped }
+    }
 
     /// :522-531: signed-in id, else the host-computed device fallback.
     pub fn effective_user_id(&self) -> String {
-        match &self.secure_user_id {
-            Some(uid) if !uid.is_empty() => uid.clone(),
+        match self.user_id() {
+            Some(uid) if !uid.is_empty() => uid,
             _ => self.device_fallback_owner.clone(),
         }
     }
@@ -156,7 +173,7 @@ impl HealthAuthPrefs<'_> {
             || self.session_generation() != session
             || self.health_consent_generation() != local_generation
             || server_generation <= 0
-            || (enabled && (!self.is_cloud_sync_allowed() || self.has_pending_health_sync_revoke() || self.owner_wiped))
+            || (enabled && (!self.is_cloud_sync_allowed() || self.has_pending_health_sync_revoke() || self.is_owner_wiped()))
         {
             return false;
         }
@@ -208,12 +225,11 @@ impl ConsentPrefs for HealthAuthPrefs<'_> {
     }
 }
 
-/// SupabaseSyncService.kt:27 - current(owner, session, local, server).
-/// NARROWED CLAIM: the scratch-pref terms (session, local/server
-/// generation, cloud-allowed) are re-read live per evaluation, but the
-/// identity and wipe terms come from HealthAuthPrefs' construction-time
-/// fields (secure_user_id, owner_wiped) - staleness there is unmodeled at
-/// this layer. Use current_gate_live where provider liveness matters.
+/// SupabaseSyncService.kt:27 - current(owner, session, local, server),
+/// verbatim: every term is re-read per evaluation. Identity and wipe are
+/// live when the providers are attached to HealthAuthPrefs (the secure
+/// store and OwnerDataGate are per-call reads in Kotlin); without them the
+/// construction-time fields apply, and staleness there is unmodeled.
 /// serverHealthConsentGeneration is nullable (:182-187); the Kotlin
 /// `== server` is true only when a receipt exists and matches.
 pub fn current_gate(
@@ -228,32 +244,5 @@ pub fn current_gate(
         && prefs.health_consent_generation() == local
         && prefs.server_health_consent_generation() == Some(server)
         && prefs.is_cloud_sync_allowed()
-        && !prefs.owner_wiped
-}
-
-/// :27 with the identity and wipe terms as LIVE providers, matching the
-/// Kotlin reads (authPreferences.userId hits the secure store and
-/// OwnerDataGate.isWiped(context, owner) runs on every current() call).
-/// Both providers are invoked on every evaluation, so a sign-out, account
-/// switch or wipe between two checks - including between the gate reads
-/// inside one outbox run, before a commit - is honored immediately.
-/// Remaining modeled gap, explicit: the prefs-internal receipt/session
-/// getters still key off HealthAuthPrefs' construction-time identity; full
-/// live-identity parity inside those getters awaits a provider-backed
-/// HealthAuthPrefs (not yet ported).
-pub fn current_gate_live(
-    prefs: &HealthAuthPrefs,
-    user_id: &mut dyn FnMut() -> Option<String>,
-    owner_wiped: &mut dyn FnMut() -> bool,
-    owner: &str,
-    session: i64,
-    local: i64,
-    server: i64,
-) -> bool {
-    user_id().as_deref() == Some(owner)
-        && prefs.session_generation() == session
-        && prefs.health_consent_generation() == local
-        && prefs.server_health_consent_generation() == Some(server)
-        && prefs.is_cloud_sync_allowed()
-        && !owner_wiped()
+        && !prefs.is_owner_wiped()
 }

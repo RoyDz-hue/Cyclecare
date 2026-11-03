@@ -2,7 +2,9 @@
 //! every term verified live, nullability of serverHealthConsentGeneration
 //! (:182-187) exact, and the gate slotted into an actual transaction body.
 //! Synthetic scratch data only.
-use cyclecare_core::auth_prefs_health::{current_gate, current_gate_live, HealthAuthPrefs};
+use cyclecare_core::auth_prefs_health::{current_gate, HealthAuthPrefs};
+use std::cell::RefCell;
+use std::rc::Rc;
 use cyclecare_core::prefs_scratch::ScratchPrefs;
 
 const OWNER: &str = "owner-uid";
@@ -23,12 +25,14 @@ struct Rig {
     user: Option<String>,
     wiped: bool,
     secure: bool,
+    live_user: Option<Rc<RefCell<Option<String>>>>,
+    live_wiped: Option<Rc<RefCell<bool>>>,
 }
 impl Rig {
     fn enrolled(tag: &str) -> Rig {
         let path = file(tag);
         cleanup(&path);
-        let mut r = Rig { p: ScratchPrefs::open_file(&path).unwrap(), user: Some(OWNER.into()), wiped: false, secure: true };
+        let mut r = Rig { p: ScratchPrefs::open_file(&path).unwrap(), user: Some(OWNER.into()), wiped: false, secure: true, live_user: None, live_wiped: None };
         {
             let mut h = r.prefs_handle();
             h.prefs.edit().put_long("session_generation_v3", SESSION).commit();
@@ -43,6 +47,14 @@ impl Rig {
             prefs: &mut self.p, secure_available: self.secure,
             secure_user_id: self.user.clone(),
             device_fallback_owner: "dev-fallback".into(), owner_wiped: self.wiped,
+            live_user_id: self.live_user.as_ref().map(|c| {
+                let c = Rc::clone(c);
+                Box::new(move || c.borrow().clone()) as Box<dyn Fn() -> Option<String>>
+            }),
+            live_owner_wiped: self.live_wiped.as_ref().map(|c| {
+                let c = Rc::clone(c);
+                Box::new(move || *c.borrow()) as Box<dyn Fn() -> bool>
+            }),
         }
     }
     fn gate(&mut self) -> bool {
@@ -58,9 +70,9 @@ fn enrolled_owner_passes_and_every_term_is_load_bearing() {
     // Wrong owner argument (gate called for someone else).
     assert!(!current_gate(&r.prefs_handle(), "other", SESSION, LOCAL, SERVER));
     // Signed out.
-    let mut signed_out = Rig { p: r.p, user: None, wiped: r.wiped, secure: r.secure };
+    let mut signed_out = Rig { p: r.p, user: None, wiped: r.wiped, secure: r.secure, live_user: None, live_wiped: None };
     assert!(!signed_out.gate());
-    let mut r = Rig { p: signed_out.p, user: signed_out.user, wiped: signed_out.wiped, secure: signed_out.secure };
+    let mut r = Rig { p: signed_out.p, user: signed_out.user, wiped: signed_out.wiped, secure: signed_out.secure, live_user: None, live_wiped: None };
 
     // Session mismatch.
     assert!(!current_gate(&r.prefs_handle(), OWNER, SESSION + 1, LOCAL, SERVER));
@@ -161,21 +173,20 @@ fn gate_slots_into_the_real_snapshot_transaction() {
 #[test]
 fn live_providers_honor_identity_and_wipe_changes_between_evaluations() {
     let mut r = Rig::enrolled("liveprov");
-    let mut user = Some(OWNER.to_string());
-    let mut wiped = false;
-    let g = |r: &mut Rig, user: &mut Option<String>, wiped: &mut bool| {
-        current_gate_live(&r.prefs_handle(), &mut || user.clone(), &mut || *wiped, OWNER, SESSION, LOCAL, SERVER)
-    };
-    assert!(g(&mut r, &mut user, &mut wiped));
-    user = None; // sign-out through the provider, fields untouched
-    assert!(!g(&mut r, &mut user, &mut wiped), "live sign-out honored without rebuilding the prefs");
-    user = Some("intruder".to_string()); // account switch to someone else
-    assert!(!g(&mut r, &mut user, &mut wiped));
-    user = Some(OWNER.to_string());
-    wiped = true; // OwnerDataGate wipe flips live
-    assert!(!g(&mut r, &mut user, &mut wiped));
-    wiped = false;
-    assert!(g(&mut r, &mut user, &mut wiped));
+    let user = Rc::new(RefCell::new(Some(OWNER.to_string())));
+    let wiped = Rc::new(RefCell::new(false));
+    r.live_user = Some(Rc::clone(&user));
+    r.live_wiped = Some(Rc::clone(&wiped));
+    assert!(r.gate());
+    *user.borrow_mut() = None; // sign-out through the provider, fields untouched
+    assert!(!r.gate(), "live sign-out honored without rebuilding the prefs");
+    *user.borrow_mut() = Some("intruder".to_string()); // account switch to someone else
+    assert!(!r.gate());
+    *user.borrow_mut() = Some(OWNER.to_string());
+    *wiped.borrow_mut() = true; // OwnerDataGate wipe flips live
+    assert!(!r.gate());
+    *wiped.borrow_mut() = false;
+    assert!(r.gate());
     cleanup(&file("liveprov"));
 }
 
@@ -200,8 +211,6 @@ fn live_provider_flip_during_outbox_blocks_commit_inside_the_transaction() {
     // Transport acks op-1, then flips the live user provider while op-2's
     // ack is in flight - after the loop-top gate read, before commit_applied
     // re-reads the gate INSIDE the transaction.
-    use std::cell::RefCell;
-    use std::rc::Rc;
     struct FlipOnSecond(Rc<RefCell<Option<String>>>);
     impl V3Transport for FlipOnSecond {
         fn apply(&mut self, op: &V3WireOperation, _t: &str) -> Result<V3WireReceipt, ()> {
@@ -218,13 +227,12 @@ fn live_provider_flip_during_outbox_blocks_commit_inside_the_transaction() {
     }
     let live_user = Rc::new(RefCell::new(Some(OWNER.to_string())));
     let mut transport = FlipOnSecond(Rc::clone(&live_user));
-    let mut wiped = false;
+    r.live_user = Some(Rc::clone(&live_user));
     let sent = {
         let h = r.prefs_handle();
-        let user_cell = Rc::clone(&live_user);
         run_v3_outbox(
             &mut transport, "tok", &mut store, OWNER, SESSION, LOCAL, SERVER,
-            &mut || current_gate_live(&h, &mut || user_cell.borrow().clone(), &mut || wiped, OWNER, SESSION, LOCAL, SERVER),
+            &mut || current_gate(&h, OWNER, SESSION, LOCAL, SERVER),
             &mut || 1_000,
         ).unwrap()
     };

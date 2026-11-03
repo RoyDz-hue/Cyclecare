@@ -32,6 +32,7 @@ impl Harness {
                 prefs: &mut p, secure_available: true,
                 secure_user_id: Some(OWNER.into()), device_fallback_owner: "dev-fallback".into(),
                 owner_wiped: false,
+                        live_user_id: None, live_owner_wiped: None,
             };
             h.prefs.edit().put_long("session_generation_v3", 11).commit();
             h.set_is_cloud_sync_allowed(true).unwrap(); // generation 0 -> 1
@@ -47,6 +48,7 @@ impl Harness {
             prefs: &mut p, secure_available: true,
             secure_user_id: Some(OWNER.into()), device_fallback_owner: "dev-fallback".into(),
             owner_wiped: false,
+                    live_user_id: None, live_owner_wiped: None,
         };
         f(&mut h)
     }

@@ -68,7 +68,7 @@ pub fn sync_all(
         return result(now_ms(), false, "Please sign in to back up your records.");
     };
     // :118
-    if prefs.owner_wiped && !prefs.has_pending_health_sync_revoke() {
+    if prefs.is_owner_wiped() && !prefs.has_pending_health_sync_revoke() {
         return result(now_ms(), true, "This device's records were erased; online backup stays paused.");
     }
     // :120-121

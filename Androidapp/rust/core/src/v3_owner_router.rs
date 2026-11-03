@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 use crate::v3_consent::{journal_explicit_snapshot, V3ConsentError};
 use crate::v3_dao_sqlite::SqliteV3Store;
 use crate::v3_outbox::{run_v3_outbox, V3DaoError, V3Transport};
-use crate::v3_pull::{run_v3_pull, V3PullError, V3ReadTransport};
+use crate::sync_codec::CycleDayLog;
+use crate::v3_pull::{run_v3_pull, RevisionRow, V3PullError, V3ReadTransport};
+use rusqlite::OptionalExtension;
 
 /// CycleCareDatabase.kt:25 — the deliberately unassigned guest database
 /// (null/blank identity), verbatim.
@@ -153,11 +155,81 @@ impl OwnerBoundStore<'_> {
         &self.owner
     }
 
-    /// Read-only inspection (assertions, diagnostics). Hands out & only:
-    /// the mutable store never leaves the wrapper, so no owner-carrying
-    /// write can be dispatched around the binding.
-    pub fn inspect<R>(&self, f: impl FnOnce(&SqliteV3Store) -> R) -> R {
-        f(self.store)
+    // NO raw store or connection access: &SqliteV3Store is not read-only
+    // (Connection::execute and enqueue take &self and write), so no store
+    // handle of any kind leaves this wrapper. Reads are purpose-specific,
+    // derive the owner internally, and return copied data only.
+
+    /// dao.revision(boundOwner, recordId) (HealthSyncLocal.kt:60-61).
+    pub fn read_revision(&self, record_id: &str) -> Result<Option<RevisionRow>, String> {
+        self.store
+            .conn
+            .query_row(
+                "SELECT revision, serverRevision FROM health_sync_revisions WHERE ownerId = ?1 AND recordId = ?2 LIMIT 1",
+                rusqlite::params![self.owner, record_id],
+                |r| Ok(RevisionRow { revision: r.get(0)?, server_revision: r.get(1)? }),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// dao.cursor(boundOwner) (:113-114).
+    pub fn read_cursor(&self) -> Result<Option<i64>, String> {
+        self.store
+            .conn
+            .query_row(
+                "SELECT changeSeq FROM health_sync_cursors WHERE ownerId = ?1 LIMIT 1",
+                rusqlite::params![self.owner],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Pending outbox entries for the bound owner only.
+    pub fn read_pending_count(&self) -> Result<i64, String> {
+        self.store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM health_sync_outbox WHERE ownerId = ?1",
+                rusqlite::params![self.owner],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    /// Revision rows for the bound owner only.
+    pub fn read_revision_count(&self) -> Result<i64, String> {
+        self.store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM health_sync_revisions WHERE ownerId = ?1",
+                rusqlite::params![self.owner],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    /// cycleDao read: the domain tables carry no ownerId - scoping IS the
+    /// per-owner file this binding resolved. Returns a copied row.
+    pub fn read_domain_log(&self, date: &str) -> Result<Option<CycleDayLog>, String> {
+        self.store
+            .conn
+            .query_row(
+                "SELECT * FROM cycle_day_logs WHERE dateString = ?1 LIMIT 1",
+                rusqlite::params![date],
+                log_row,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Domain log count in the bound file (owner-scoped by construction).
+    pub fn read_domain_log_count(&self) -> Result<i64, String> {
+        self.store
+            .conn
+            .query_row("SELECT COUNT(*) FROM cycle_day_logs", [], |r| r.get(0))
+            .map_err(|e| e.to_string())
     }
 
     /// run_v3_pull with the bound owner (SupabaseSyncService.kt:150-187).
@@ -203,4 +275,16 @@ impl OwnerBoundStore<'_> {
     ) -> Result<(), V3ConsentError> {
         journal_explicit_snapshot(&self.owner, session, local, server, self.store, current, uuid, now_ms)
     }
+}
+
+fn log_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CycleDayLog> {
+    Ok(CycleDayLog {
+        date: r.get("dateString")?, flow: r.get("flowLevel")?, energy: r.get("energyLevel")?,
+        mood: r.get("moodLevel")?, symptoms: r.get("symptomsCsv")?,
+        vaginal_health: r.get("vaginalHealthCsv")?, urinary_health: r.get("urinaryHealthCsv")?,
+        cervical_mucus: r.get("cervicalMucus")?, ovulation_test: r.get("ovulationTest")?,
+        bbt_celsius: r.get("bbtCelsius")?, sleep_hours: r.get("sleepHours")?,
+        sleep_quality: r.get("sleepQuality")?, water_glasses: r.get("waterGlasses")?,
+        notes: r.get("notes")?, pain_intensity: r.get("painIntensity")?,
+    })
 }

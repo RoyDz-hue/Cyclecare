@@ -20,6 +20,7 @@ macro_rules! with_prefs {
             prefs: &mut p, secure_available: true,
             secure_user_id: $user.map(|s: &str| s.to_string()),
             device_fallback_owner: "dev-fallback".into(), owner_wiped: $wiped,
+            live_user_id: None, live_owner_wiped: None,
         };
         let r = ($body)(&mut h);
         drop(h);
