@@ -5,10 +5,22 @@
   "runtimeFlags": "unchanged false; baseline disabled",
   "native": {
     "path": "Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so",
-    "sha256": "dcb37aa43dc2931be81de10090be3fdd2967bbc58f8285cef60ba21e6de48521",
-    "bytes": 1363624,
-    "coreArchiveSha256": "e83fada64b001171d7e58e78402e8c12acd1862955753b9b8091f529d61c814f",
-    "ffiArchiveSha256": "4bdf8f70f53ca29f93233c6d261198aef68fb42f56299f8fb6bb5e1ae8f76ddd"
+    "sha256": "5c1c72d4631cd38f7a866fb3950cbbac375b910494d103dbddd2537bcb5f7691",
+    "bytes": 3598312,
+    "builtFromCommit": "0cf66c76e491bacab67a7843979ee040154759f3",
+    "buildCommand": "ANDROID_NDK_HOME=<NDK r27c> rust/build-android.sh aarch64-linux-android",
+    "reproducible": "two independent clean local builds produced identical sha256",
+    "pageAlign": "all PT_LOAD Align 0x4000 (llvm-readelf -lW)",
+    "jniExports": [
+      "Java_com_cyclecare_app_rust_CycleCareCoreBridge_nativeCall",
+      "Java_com_cyclecare_app_rust_CycleCareCoreBridge_nativeCoreHandshake"
+    ],
+    "sqliteAmalgamation": "absent (storage_db unreachable from FFI exports; linker-gc'd)",
+    "sizeCause": "new parse_log_entry dispatch arm makes log_parser reachable, linking the regex engine for the first time: 1366 of 5022 added symbols are regex-automata/regex-syntax/aho-corasick/regex (.text 0x81900->0x12a5a4, .rodata 0x24ba0->0x6c160). Same rustc 1.99.1/LLD 18.0.3/NDK clang 18.0.3 as the previous .so; not a debug/profile change.",
+    "coreArchiveSha256": "ce5c2a468ef937478c16e4b35bd5dd8146b48da80ef58dc682f81d93514719ae",
+    "coreArchiveCommand": "git archive 0cf66c7 Androidapp/rust/core | sha256sum",
+    "ffiArchiveSha256": "474018beddad20867e467b382af341d7429354211392d405aed01b21af73558b",
+    "ffiArchiveCommand": "git archive 0cf66c7 Androidapp/rust/core-ffi | sha256sum"
   },
   "sourcePin": "Externally supplied expected_source_sha input after commit creation; assert HEAD",
   "acceptance": "Explicit ACCEPTANCE.txt and verification-exit-code.txt, not green CI",
@@ -29,9 +41,10 @@
   },
   "offlineVerifierV2": {
     "status": "OFFLINE_PACKAGING_EVIDENCE_ONLY",
-    "packagedNativeSha256": "8a5b90c0381302de4d3e1c874f3c5c591cb534e9bb73373d677d11f084b7adb1",
-    "transform": "llvm-strip --strip-unneeded (NDK r27c reproduces packaged bytes from the committed native)",
-    "apksigner": "build-tools 34 and 36: DOES NOT VERIFY / Missing META-INF/MANIFEST.MF",
+    "packagedNativeSha256": "7d9b58f07e1fdf21acb396e4f27c7c8381babd7bf63055080e9d4cd3fa9b7947",
+    "packagedNativeBytes": 2469184,
+    "transform": "llvm-strip --strip-unneeded (NDK r27c); equivalence PROVEN on the previous generation: strip-unneeded of dcb37aa4 reproduces AGP-packaged 8a5b90c0/908984 byte-for-byte; matches reviewer independent derivation; AGP confirmation still pending on next diagnostic run",
+    "apksigner": "build-tools 34 and 36: DOES NOT VERIFY / Missing META-INF/MANIFEST.MF (previous generation; new APK not yet built)",
     "notProven": [
       "device/ART load or JNI call",
       "APK install",

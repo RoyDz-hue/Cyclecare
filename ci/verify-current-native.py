@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """Strict diagnostic assertions. No credentials, network, signing or deployment."""
 import hashlib,json,pathlib,sys,zipfile,subprocess,os,struct,re
-EXPECTED='dcb37aa43dc2931be81de10090be3fdd2967bbc58f8285cef60ba21e6de48521'
+# 0cf66c7 rebuild (parser + phase FFI contracts): reproducible across two clean
+# local builds, NDK r27c, API 24, 16 KB LOAD alignment (see commit message).
+EXPECTED='5c1c72d4631cd38f7a866fb3950cbbac375b910494d103dbddd2537bcb5f7691'
 # Packaged form: AGP stripSlimDebugSymbols ran `llvm-strip --strip-unneeded`. Offline, NDK r27c
 # `llvm-strip --strip-unneeded` on the committed input reproduces these exact bytes.
-STRIPPED='8a5b90c0381302de4d3e1c874f3c5c591cb534e9bb73373d677d11f084b7adb1'
-STRIPPED_LEN=908984
+# Offline-derived packaged prediction: llvm-strip --strip-unneeded (NDK r27c)
+# of the 0cf66c7 rebuild. Transform equivalence is PROVEN on the previous
+# generation: strip-unneeded of dcb37aa4 reproduces the AGP-packaged 8a5b90c0/
+# 908984 byte-for-byte. Matches the reviewer's independent derivation. AGP
+# still confirms on the next diagnostic run; assert_strip_only bounds any
+# difference to .symtab/.strtab.
+STRIPPED='7d9b58f07e1fdf21acb396e4f27c7c8381babd7bf63055080e9d4cd3fa9b7947'
+STRIPPED_LEN=2469184
 REMOVED={'.symtab','.strtab'}
 SO=pathlib.Path('Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so')
 BRIDGE='Lcom/cyclecare/app/rust/CycleCareCoreBridge;'
 METHODS={'nativeCall','nativeCoreHandshake'}
 def verify(data,packaged=False):
     actual=hashlib.sha256(data).hexdigest()
-    want,length=(STRIPPED,STRIPPED_LEN) if packaged else (EXPECTED,1363624)
+    want,length=(STRIPPED,STRIPPED_LEN) if packaged else (EXPECTED,3598312)
     assert actual==want,(actual,want)
     assert len(data)==length,len(data)
     # ELF64 little-endian AArch64 dynamic exports, not arbitrary byte strings.
