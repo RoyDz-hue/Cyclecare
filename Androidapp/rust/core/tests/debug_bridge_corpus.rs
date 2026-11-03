@@ -63,12 +63,42 @@ fn jdk17_differential_boundary() {
     ] {
         assert_eq!(base_url(true, bad), None, "JDK17 differential false-accept: {bad}");
     }
-    // Empty port: Java ACCEPTS with port -1 (differential evidence).
-    assert_eq!(base_url(true, "https://host:"), Some("https://host".into()));
+    // Empty port: Java ACCEPTS with port -1 AND preserves the colon in
+    // toASCIIString (reviewer JDK17 probe output: "https://host:").
+    assert_eq!(base_url(true, "https://host:"), Some("https://host:".into()));
     // Still-accepted neighbors that must not regress.
     assert_eq!(base_url(true, "https://a-b.example-1.com"), Some("https://a-b.example-1.com".into()));
     assert_eq!(base_url(true, "https://bad-.com"), None, "label ending in dash");
-    // Narrowing deviation, documented on the module: IPv4 literals are
-    // REJECTED here although Java accepts them.
-    assert_eq!(base_url(true, "https://1.2.3.4"), None, "labeled narrowing: IPv4 literal rejected");
+    // IPv4 literals follow the JDK parser shape (4 labels, 1-3 digits,
+    // range unchecked) - modeled, pending differential execution.
+    assert_eq!(base_url(true, "https://1.2.3.4"), Some("https://1.2.3.4".into()));
+    assert_eq!(base_url(true, "https://999.1.1.1"), Some("https://999.1.1.1".into()), "URI does not range-check octets (InetAddress would)");
+    assert_eq!(base_url(true, "https://1.2.3.4567"), None, "4-digit label fails IPv4 shape and the alpha-top-label rule");
+    assert_eq!(base_url(true, "https://1.2.3"), None, "3 numeric labels: not IPv4, top label not alpha-starting");
+}
+
+#[test]
+fn jdk17_differential_round3() {
+    // Trailing colon retained after removeSuffix (v76 shape, pinned again):
+    assert_eq!(base_url(true, "https://host:/"), Some("https://host:".into()), "host:/ strips slash, keeps colon");
+    // Trailing dot FQDN form - Java accepts (differential evidence).
+    assert_eq!(base_url(true, "https://host."), Some("https://host.".into()));
+    assert_eq!(base_url(true, "https://host.:80"), Some("https://host.:80".into()));
+    assert_eq!(base_url(true, "https://host.:"), Some("https://host.:".into()), "trailing dot + empty port");
+    assert_eq!(base_url(true, "https://."), None, "bare dot: no labels");
+    assert_eq!(base_url(true, "https://a..b."), None, "interior empty label still fails with trailing dot");
+    // IPv6 literals - v74 accepted, v75 regressed, Java accepts [::1]:8443.
+    assert_eq!(base_url(true, "https://[::1]:8443"), Some("https://[::1]:8443".into()));
+    assert_eq!(base_url(true, "https://[::1]"), Some("https://[::1]".into()));
+    assert_eq!(base_url(true, "https://[2001:db8:85a3:0:0:8a2e:370:7334]"), Some("https://[2001:db8:85a3:0:0:8a2e:370:7334]".into()));
+    assert_eq!(base_url(true, "https://[2001:db8::192.0.2.1]"), Some("https://[2001:db8::192.0.2.1]".into()), "embedded IPv4");
+    assert_eq!(base_url(true, "https://[:::]"), None, "empty group is not a literal");
+    assert_eq!(base_url(true, "https://[1:2:3:4:5:6:7:8:9]"), None, "9 groups uncompressed");
+    assert_eq!(base_url(true, "https://[1:2:3:4:5:6:7]"), None, "7 groups without :: compression");
+    assert_eq!(base_url(true, "https://[gggg::1]"), None, "non-hex group");
+    assert_eq!(base_url(true, "https://[::1]x"), None, "junk after bracket");
+    assert_eq!(base_url(true, "https://[::1"), None, "unterminated bracket");
+    // IPv4 with trailing dot: not IPv4-shaped (5th empty label), hostname
+    // rule then sees top label "4" numeric -> reject.
+    assert_eq!(base_url(true, "https://1.2.3.4."), None);
 }
