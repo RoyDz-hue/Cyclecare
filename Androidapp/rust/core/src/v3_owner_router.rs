@@ -137,13 +137,12 @@ impl OwnerScopedStores {
 }
 
 /// A store bound to one owner at dispatch time (OwnerScopedStores::
-/// run_for_owner). The owner is private and set only from the verified
-/// binding; every dispatch derives it internally.
+/// run_for_owner). Both fields are private and set only from the verified
+/// binding; every dispatch derives the owner internally, and no mutable
+/// store reference ever escapes - so the ported primitives cannot be
+/// re-invoked through this wrapper with a different owner.
 pub struct OwnerBoundStore<'a> {
-    /// Raw store access for reads/assertions; writes that carry an owner go
-    /// through the dispatch methods so the owner can never be supplied
-    /// inconsistently.
-    pub store: &'a mut SqliteV3Store,
+    store: &'a mut SqliteV3Store,
     owner: String,
 }
 
@@ -152,6 +151,13 @@ impl OwnerBoundStore<'_> {
     /// underlying file).
     pub fn owner(&self) -> &str {
         &self.owner
+    }
+
+    /// Read-only inspection (assertions, diagnostics). Hands out & only:
+    /// the mutable store never leaves the wrapper, so no owner-carrying
+    /// write can be dispatched around the binding.
+    pub fn inspect<R>(&self, f: impl FnOnce(&SqliteV3Store) -> R) -> R {
+        f(self.store)
     }
 
     /// run_v3_pull with the bound owner (SupabaseSyncService.kt:150-187).

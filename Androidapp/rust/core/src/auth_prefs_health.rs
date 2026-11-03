@@ -208,11 +208,12 @@ impl ConsentPrefs for HealthAuthPrefs<'_> {
     }
 }
 
-/// SupabaseSyncService.kt:27 - current(owner, session, local, server),
-/// verbatim and COMPLETE: every term is re-read live from the preferences
-/// on each evaluation, exactly like the Kotlin property getters. This is
-/// the real gate the injected `current` closures stand in for; wire it at
-/// the call site as `|| current_gate(&prefs, owner, session, local, server)`.
+/// SupabaseSyncService.kt:27 - current(owner, session, local, server).
+/// NARROWED CLAIM: the scratch-pref terms (session, local/server
+/// generation, cloud-allowed) are re-read live per evaluation, but the
+/// identity and wipe terms come from HealthAuthPrefs' construction-time
+/// fields (secure_user_id, owner_wiped) - staleness there is unmodeled at
+/// this layer. Use current_gate_live where provider liveness matters.
 /// serverHealthConsentGeneration is nullable (:182-187); the Kotlin
 /// `== server` is true only when a receipt exists and matches.
 pub fn current_gate(
@@ -228,4 +229,31 @@ pub fn current_gate(
         && prefs.server_health_consent_generation() == Some(server)
         && prefs.is_cloud_sync_allowed()
         && !prefs.owner_wiped
+}
+
+/// :27 with the identity and wipe terms as LIVE providers, matching the
+/// Kotlin reads (authPreferences.userId hits the secure store and
+/// OwnerDataGate.isWiped(context, owner) runs on every current() call).
+/// Both providers are invoked on every evaluation, so a sign-out, account
+/// switch or wipe between two checks - including between the gate reads
+/// inside one outbox run, before a commit - is honored immediately.
+/// Remaining modeled gap, explicit: the prefs-internal receipt/session
+/// getters still key off HealthAuthPrefs' construction-time identity; full
+/// live-identity parity inside those getters awaits a provider-backed
+/// HealthAuthPrefs (not yet ported).
+pub fn current_gate_live(
+    prefs: &HealthAuthPrefs,
+    user_id: &mut dyn FnMut() -> Option<String>,
+    owner_wiped: &mut dyn FnMut() -> bool,
+    owner: &str,
+    session: i64,
+    local: i64,
+    server: i64,
+) -> bool {
+    user_id().as_deref() == Some(owner)
+        && prefs.session_generation() == session
+        && prefs.health_consent_generation() == local
+        && prefs.server_health_consent_generation() == Some(server)
+        && prefs.is_cloud_sync_allowed()
+        && !owner_wiped()
 }

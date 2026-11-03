@@ -2,7 +2,7 @@
 //! every term verified live, nullability of serverHealthConsentGeneration
 //! (:182-187) exact, and the gate slotted into an actual transaction body.
 //! Synthetic scratch data only.
-use cyclecare_core::auth_prefs_health::{current_gate, HealthAuthPrefs};
+use cyclecare_core::auth_prefs_health::{current_gate, current_gate_live, HealthAuthPrefs};
 use cyclecare_core::prefs_scratch::ScratchPrefs;
 
 const OWNER: &str = "owner-uid";
@@ -156,4 +156,88 @@ fn gate_slots_into_the_real_snapshot_transaction() {
         assert!(matches!(err, V3ConsentError::ConsentChanged));
     }
     cleanup(&file("txn"));
+}
+
+#[test]
+fn live_providers_honor_identity_and_wipe_changes_between_evaluations() {
+    let mut r = Rig::enrolled("liveprov");
+    let mut user = Some(OWNER.to_string());
+    let mut wiped = false;
+    let g = |r: &mut Rig, user: &mut Option<String>, wiped: &mut bool| {
+        current_gate_live(&r.prefs_handle(), &mut || user.clone(), &mut || *wiped, OWNER, SESSION, LOCAL, SERVER)
+    };
+    assert!(g(&mut r, &mut user, &mut wiped));
+    user = None; // sign-out through the provider, fields untouched
+    assert!(!g(&mut r, &mut user, &mut wiped), "live sign-out honored without rebuilding the prefs");
+    user = Some("intruder".to_string()); // account switch to someone else
+    assert!(!g(&mut r, &mut user, &mut wiped));
+    user = Some(OWNER.to_string());
+    wiped = true; // OwnerDataGate wipe flips live
+    assert!(!g(&mut r, &mut user, &mut wiped));
+    wiped = false;
+    assert!(g(&mut r, &mut user, &mut wiped));
+    cleanup(&file("liveprov"));
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn live_provider_flip_during_outbox_blocks_commit_inside_the_transaction() {
+    use cyclecare_core::v3_outbox::{run_v3_outbox, V3Transport};
+    use cyclecare_core::v3_dao_sqlite::SqliteV3Store;
+    use cyclecare_core::v3_sync::{wire_record_id, V3WireOperation, V3WireReceipt};
+
+    let mut r = Rig::enrolled("intx");
+    let mut store = SqliteV3Store::open_in_memory().unwrap();
+    // Two pending ops for alice.
+    for (op, rec) in [("op-1", "2026-11-01"), ("op-2", "2026-11-02")] {
+        store.conn.execute(
+            "INSERT OR REPLACE INTO health_sync_outbox
+             (ownerId, operationId, recordId, kind, baseRevision, revision, payloadJson,
+              payloadHash, consentGeneration, attempts, nextAttemptAt)
+             VALUES (?1, ?2, ?3, 'UPSERT', 0, 1, '{}', ?4, ?5, 0, 0)",
+            rusqlite::params![OWNER, op, rec, "a".repeat(64), LOCAL]).unwrap();
+    }
+    // Transport acks op-1, then flips the live user provider while op-2's
+    // ack is in flight - after the loop-top gate read, before commit_applied
+    // re-reads the gate INSIDE the transaction.
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    struct FlipOnSecond(Rc<RefCell<Option<String>>>);
+    impl V3Transport for FlipOnSecond {
+        fn apply(&mut self, op: &V3WireOperation, _t: &str) -> Result<V3WireReceipt, ()> {
+            if op.operation_id == "op-2" {
+                *self.0.borrow_mut() = Some("intruder".to_string()); // sign-out/switch mid-run
+            }
+            Ok(V3WireReceipt {
+                status: "applied".into(), revision: Some(op.revision), change_seq: None,
+                payload_hash: Some("a".repeat(64)), reason: None,
+                record_id: Some(op.record_id.clone()), operation_id: Some(op.operation_id.clone()),
+                logical_record_id: op.logical_record_id.clone(), remote_payload: None, remote_tombstone: false,
+            })
+        }
+    }
+    let live_user = Rc::new(RefCell::new(Some(OWNER.to_string())));
+    let mut transport = FlipOnSecond(Rc::clone(&live_user));
+    let mut wiped = false;
+    let sent = {
+        let h = r.prefs_handle();
+        let user_cell = Rc::clone(&live_user);
+        run_v3_outbox(
+            &mut transport, "tok", &mut store, OWNER, SESSION, LOCAL, SERVER,
+            &mut || current_gate_live(&h, &mut || user_cell.borrow().clone(), &mut || wiped, OWNER, SESSION, LOCAL, SERVER),
+            &mut || 1_000,
+        ).unwrap()
+    };
+    assert_eq!(sent, 1, "only op-1 committed");
+    let pending: i64 = store.conn.query_row(
+        "SELECT COUNT(*) FROM health_sync_outbox WHERE operationId = 'op-2'", [], |r| r.get(0)).unwrap();
+    assert_eq!(pending, 1, "op-2 NOT committed: gate drift inside the transaction left it pending");
+    let backoff: i64 = store.conn.query_row(
+        "SELECT nextAttemptAt FROM health_sync_outbox WHERE operationId = 'op-2'", [], |r| r.get(0)).unwrap();
+    assert_eq!(backoff, 0, "GateDrift is no-retry parity (withTransaction returned false)");
+    let rev: i64 = store.conn.query_row(
+        "SELECT COUNT(*) FROM health_sync_revisions WHERE recordId = '2026-11-02'", [], |r| r.get(0)).unwrap();
+    assert_eq!(rev, 0, "no revision written for the drifted op");
+    let _ = wire_record_id;
+    cleanup(&file("intx"));
 }

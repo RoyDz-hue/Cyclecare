@@ -158,7 +158,7 @@ fn bound_runner_refuses_blank_owners_and_binds_store_to_operation_owner() {
     }).unwrap().unwrap();
     let notes = |p: &mut OwnerScopedStores, owner: &'static str| -> Option<String> {
         p.run_for_owner(owner, |b| {
-            b.store.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok()
+            b.inspect(|s| s.conn.query_row("SELECT notes FROM cycle_day_logs WHERE dateString='2026-11-06'", [], |r| r.get(0)).ok())
         }).unwrap()
     };
     assert_eq!(notes(&mut p, "alice").as_deref(), Some("alice-remote"));
@@ -183,8 +183,10 @@ fn bound_dispatch_never_touches_another_owners_file() {
     p.run_for_owner("alice", |b| b.run_pull(&mut alice_page, "tok", LOCAL, SERVER, &mut || true, &mut || 5_000)).unwrap().unwrap();
     let alice_counts = |p: &mut OwnerScopedStores| -> (i64, i64, i64) {
         p.run_for_owner("alice", |b| {
-            let c = |t: &str| b.store.conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap();
-            (c("cycle_day_logs"), c("health_sync_revisions"), c("health_sync_outbox"))
+            b.inspect(|s| {
+                let c = |t: &str| s.conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap();
+                (c("cycle_day_logs"), c("health_sync_revisions"), c("health_sync_outbox"))
+            })
         }).unwrap()
     };
     let before = alice_counts(&mut p);
