@@ -121,10 +121,32 @@ struct Factory {
     encrypted: Result<Prefs, ()>,
     legacy: Prefs,
     committed: Vec<Prefs>,
+    /// When true, migration "throws" mid-way (Throwable swallowed by the
+    /// source's own catch): legacy is left uncleared, secure keeps what a
+    /// partial copy added, and the selection is still secure=true.
+    migration_throws: bool,
+}
+impl Factory {
+    fn ok(legacy: Prefs) -> Self {
+        Factory { encrypted: Ok(Prefs::new()), legacy, committed: vec![], migration_throws: false }
+    }
+    fn fallback(legacy: Prefs) -> Self {
+        Factory { encrypted: Err(()), legacy, committed: vec![], migration_throws: false }
+    }
 }
 impl SecureStoreFactory for Factory {
     fn create_encrypted(&mut self) -> Result<Prefs, ()> { self.encrypted.clone() }
     fn open_legacy(&mut self) -> Prefs { self.legacy.clone() }
+    fn migrate_legacy_into(&mut self, secure: &mut Prefs) -> Result<(), ()> {
+        if self.migration_throws {
+            // partial copy happened (one key), then clear() never ran
+            if let Some(v) = self.legacy.get("user_id").cloned() {
+                secure.insert("user_id".into(), v);
+            }
+            return Err(());
+        }
+        cyclecare_core::host_adapter::staging_migrate_legacy(&mut self.legacy, secure)
+    }
     fn commit_legacy(&mut self, l: &Prefs) { self.legacy = l.clone(); self.committed.push(l.clone()); }
 }
 
@@ -141,7 +163,7 @@ fn legacy_with_state() -> Prefs {
 
 #[test]
 fn secure_path_migrates_and_preserves_identity_session_onboarding() {
-    let mut fx = Factory { encrypted: Ok(Prefs::new()), legacy: legacy_with_state(), committed: vec![] };
+    let mut fx = Factory::ok(legacy_with_state());
     let sel = select_preference_store(&mut fx);
     assert!(sel.secure);
     // identity/session/onboarding rows survived the migration
@@ -160,7 +182,7 @@ fn secure_path_migrates_and_preserves_identity_session_onboarding() {
 fn secure_path_never_clobbers_existing_secure_values() {
     let mut secure = Prefs::new();
     secure.insert("user_id".into(), PrefsValue::Str("u-secure".into()));
-    let mut fx = Factory { encrypted: Ok(secure), legacy: legacy_with_state(), committed: vec![] };
+    let mut fx = Factory { encrypted: Ok(secure), ..Factory::ok(legacy_with_state()) };
     let sel = select_preference_store(&mut fx);
     assert_eq!(sel.prefs.get("user_id"), Some(&PrefsValue::Str("u-secure".into())), "secure wins");
     assert_eq!(sel.prefs.get("access_token"), Some(&PrefsValue::Str("tok".into())), "absent keys still migrate");
@@ -169,7 +191,7 @@ fn secure_path_never_clobbers_existing_secure_values() {
 
 #[test]
 fn fallback_scrubs_exactly_14_credentials_but_keeps_non_credentials() {
-    let mut fx = Factory { encrypted: Err(()), legacy: legacy_with_state(), committed: vec![] };
+    let mut fx = Factory::fallback(legacy_with_state());
     let sel = select_preference_store(&mut fx);
     assert!(!sel.secure, "secure=false: isSecureStorageAvailable false");
     for k in FALLBACK_SANITIZE_KEYS {
@@ -192,11 +214,27 @@ fn fallback_keeps_user_id_pairing_consistent_with_db_passphrase_seam() {
     // device-derived UUID. Document the composition: identity loss in the
     // fallback also re-scopes every effectiveUserId-keyed row. Parity with
     // source (AuthPreferences.kt :83-100 + :438-449), not a port choice.
-    let mut fx = Factory { encrypted: Err(()), legacy: legacy_with_state(), committed: vec![] };
+    let mut fx = Factory::fallback(legacy_with_state());
     let sel = select_preference_store(&mut fx);
     let uid = sel.prefs.get("user_id").and_then(|v| match v {
         PrefsValue::Str(s) => Some(s.as_str()), _ => None,
     });
     let effective = cyclecare_core::lifecycle::effective_user_id(uid, "dev-1");
     assert_eq!(effective, cyclecare_core::lifecycle::name_uuid_from_bytes(b"dev-1"));
+}
+
+#[test]
+fn migration_throw_midway_is_swallowed_secure_stays_true_legacy_uncleared() {
+    // AuthPreferences.kt :105-127: migrateLegacyPrefs catches Throwable
+    // internally. A failure AFTER a partial copy but BEFORE legacy clear()
+    // leaves: secure store returned (secure=true), the partially-copied key
+    // present in secure, and the legacy store NOT cleared.
+    let mut fx = Factory { migration_throws: true, ..Factory::ok(legacy_with_state()) };
+    let sel = select_preference_store(&mut fx);
+    assert!(sel.secure, "selection is still the secure store");
+    assert_eq!(sel.prefs.get("user_id"), Some(&PrefsValue::Str("u-1".into())),
+               "partial migration result is visible");
+    assert_eq!(sel.prefs.get("access_token"), None, "keys after the throw never migrated");
+    assert!(!fx.legacy.is_empty(), "legacy NOT cleared when clear() was never reached");
+    assert_eq!(fx.legacy.get("access_token"), Some(&PrefsValue::Str("tok".into())));
 }

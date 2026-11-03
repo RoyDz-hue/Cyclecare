@@ -147,7 +147,15 @@ pub trait SecureStoreFactory {
     fn create_encrypted(&mut self) -> Result<Prefs, ()>;
     /// getSharedPreferences(PREFS_LEGACY_NAME, MODE_PRIVATE), live singleton.
     fn open_legacy(&mut self) -> Prefs;
-    /// Persist legacy mutations (migration clear / fallback sanitize).
+    /// migrateLegacyPrefs (:105-127) as the host runs it, INCLUDING its
+    /// catch(_: Throwable) swallow. Err = a Throwable escaped mid-migration
+    /// and was swallowed by the source's own catch: the selection still
+    /// returns the SECURE store and the legacy store is whatever the
+    /// partial migration left (NOT cleared when clear() was never reached).
+    /// Staging impls delegate to secure_store::migrate_legacy (Ok path).
+    fn migrate_legacy_into(&mut self, secure: &mut Prefs) -> Result<(), ()>;
+    /// Persist legacy mutations (fallback sanitize; the migration path
+    /// persists through the host's own editors).
     fn commit_legacy(&mut self, legacy: &Prefs);
 }
 
@@ -157,16 +165,17 @@ pub struct StoreSelection {
     pub secure: bool,
 }
 
-/// :68-104 composed. Success: migrate legacy (swallow, best-effort :105-127
-/// - the pure map model cannot throw; a host IO failure inside migration is
-/// the host's swallow to implement), secure=true. Failure: sanitize the
-/// legacy store (exactly the 14 credential keys, corpus-locked), secure=false.
+/// :68-104 composed. Success: run the host migration (:105-127). Its
+/// Throwable swallow is EXECUTED here as control flow: a mid-migration
+/// failure (Err) is swallowed exactly like the source's catch - the
+/// selection still returns the SECURE store and the legacy store is left as
+/// the partial migration had it (cleared ONLY when the host ran clear()).
+/// Failure: sanitize the legacy store (exactly the 14 credential keys,
+/// corpus-locked), secure=false.
 pub fn select_preference_store<F: SecureStoreFactory>(fx: &mut F) -> StoreSelection {
     match fx.create_encrypted() {
         Ok(mut secure) => {
-            let mut legacy = fx.open_legacy();
-            migrate_legacy(&mut legacy, &mut secure);
-            fx.commit_legacy(&legacy);
+            let _ = fx.migrate_legacy_into(&mut secure); // catch (_: Throwable) {}
             StoreSelection { prefs: secure, secure: true }
         }
         Err(()) => {
@@ -176,4 +185,11 @@ pub fn select_preference_store<F: SecureStoreFactory>(fx: &mut F) -> StoreSelect
             StoreSelection { prefs: legacy, secure: false }
         }
     }
+}
+
+/// Staging migration: the corpus-locked pure port, cannot fail. Hosts with
+/// real editors implement the Throwable surface themselves.
+pub fn staging_migrate_legacy(legacy: &mut Prefs, secure: &mut Prefs) -> Result<(), ()> {
+    migrate_legacy(legacy, secure);
+    Ok(())
 }
