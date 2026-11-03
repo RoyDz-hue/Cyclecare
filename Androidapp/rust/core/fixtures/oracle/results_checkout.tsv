@@ -61,3 +61,11 @@ z1	Mpesa
 z2	Paypal
 z3	Omitted
 z4	Omitted
+n10	Do not retry a charge until its status and your wallet have been verified.
+n11	Do not retry a charge until its status and your wallet have been verified.
+n12	Do not retry a charge until its status and your wallet have been verified.
+n13	Do not retry a charge until its status and your wallet have been verified.
+c3	-9223372036854775808 coins · includes 1 bonus
+c4	-2 coins · includes 9223372036854775807 bonus
+u3	-9223372036854775804 coins are ready to use.
+u4	9223372036854775807 coins are ready to use.

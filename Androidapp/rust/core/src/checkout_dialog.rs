@@ -11,7 +11,7 @@
 //!
 //! Line citations verified by grep against the fetched source.
 
-use crate::kotlin_text::kotlin_is_blank;
+use crate::kotlin_text::{kotlin_contains_ignore_case, kotlin_is_blank};
 use crate::payment_models::PaymentOptionType;
 use crate::payment_safety::{PaymentOperation, PaymentProvider};
 use crate::payment_validation::validate_kenyan_phone_number;
@@ -55,8 +55,9 @@ pub fn initial_selected_option(options: &[PaymentOptionType]) -> Option<PaymentO
 }
 
 /// :138-149 the `nextStep` when-chain, arms in source order. Kotlin
-/// `contains("timeout", ignoreCase = true)` is matched on the lowercased
-/// status (ASCII case fold matches Kotlin's invariant lowercase here).
+/// `contains("timeout", ignoreCase = true)` uses Java-style per-char
+/// ignoreCase (kotlin_contains_ignore_case): dotless-U+0131 and dotted-
+/// U+0130 spellings of "timeout" also select the do-not-retry arm.
 pub fn next_step(
     is_online: bool,
     is_processing: bool,
@@ -71,7 +72,7 @@ pub fn next_step(
     } else if is_processing {
         "Approve the payment in PayPal, then return here."
     } else if status_message
-        .map(|m| m.to_lowercase().contains("timeout"))
+        .map(|m| kotlin_contains_ignore_case(m, "timeout"))
         .unwrap_or(false)
     {
         "Do not retry a charge until its status and your wallet have been verified."
@@ -113,9 +114,10 @@ pub fn summary_amount(
     }
 }
 
-/// :434-437 coin count line with optional bonus suffix (Long arithmetic).
+/// :434-437 coin count line with optional bonus suffix. Kotlin Long+Long
+/// wraps on overflow; wrapping_add preserves that (no debug-panic).
 pub fn coins_line(coins: i64, bonus_coins: i64) -> String {
-    let mut s = format!("{} coins", coins + bonus_coins);
+    let mut s = format!("{} coins", coins.wrapping_add(bonus_coins));
     if bonus_coins > 0 {
         s.push_str(&format!(" \u{b7} includes {bonus_coins} bonus"));
     }
@@ -233,11 +235,12 @@ pub fn processing_body(
 }
 
 /// :724-728 success panel body: the live status message when present, else
-/// the credited-coin count.
+/// the credited-coin count. Kotlin Long+Long wraps on overflow; wrapping_add
+/// preserves that (no debug-panic).
 pub fn success_body(coins: i64, bonus_coins: i64, status_message: Option<&str>) -> String {
     status_message
         .map(|m| m.to_string())
-        .unwrap_or_else(|| format!("{} coins are ready to use.", coins + bonus_coins))
+        .unwrap_or_else(|| format!("{} coins are ready to use.", coins.wrapping_add(bonus_coins)))
 }
 
 /// :148, :156 both the dialog-dismiss request and the backdrop click are

@@ -126,6 +126,31 @@ fn java_simple_lower(c: char) -> char {
     if it.next().is_none() { first } else { c }
 }
 
+/// Kotlin `CharSequence.contains(other, ignoreCase = true)`: Java-style
+/// regionMatches ignoreCase per alignment window — the same per-char fold
+/// as equalsIgnoreCase (toUpperCase then toLowerCase), NOT a lowercase of
+/// the whole haystack. This matters for safety-relevant arms: "tımeout"
+/// (dotless U+0131) and "TİMEOUT" (dotted U+0130) both match "timeout"
+/// under Java/Kotlin ignoreCase, while a plain lowercase-contains misses
+/// them (Rust to_lowercase leaves U+0131 unchanged).
+pub fn kotlin_contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    let h: Vec<char> = haystack.chars().collect();
+    let n: Vec<char> = needle.chars().collect();
+    if n.is_empty() {
+        return true;
+    }
+    if n.len() > h.len() {
+        return false;
+    }
+    (0..=h.len() - n.len()).any(|i| {
+        h[i..i + n.len()].iter().zip(n.iter()).all(|(&x, &y)| {
+            x == y
+                || java_simple_upper(x) == java_simple_upper(y)
+                || java_simple_lower(x) == java_simple_lower(y)
+        })
+    })
+}
+
 pub fn kotlin_equals_ignore_case(a: &str, b: &str) -> bool {
     let ca: Vec<char> = a.chars().collect();
     let cb: Vec<char> = b.chars().collect();

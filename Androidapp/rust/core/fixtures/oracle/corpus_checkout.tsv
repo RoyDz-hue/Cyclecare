@@ -61,3 +61,11 @@ z1	form	MPESA
 z2	form	PAYPAL
 z3	form	DEBIT_CREDIT_CARD
 z4	form	CRYPTO
+n10	nextstep	true	false	PAYPAL	tımeout waiting	false
+n11	nextstep	true	false	PAYPAL	TİMEOUT	false
+n12	nextstep	true	false	PAYPAL	tİmeout	false
+n13	nextstep	true	false	PAYPAL	TimeOut occurred	false
+c3	coins	9223372036854775807	1
+c4	coins	9223372036854775807	9223372036854775807
+u3	sbody	9223372036854775807	5	-
+u4	sbody	-9223372036854775808	-1	-
