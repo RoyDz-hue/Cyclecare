@@ -35,6 +35,7 @@ pub mod care_screen;
 pub mod money_dialogs;
 pub mod something_sheet;
 pub mod bigdecimal_tostring;
+pub mod checkout_dialog;
 pub mod pin_verify;
 pub mod app_lock;
 pub mod supabase_config;
@@ -65,6 +66,7 @@ pub mod economy_catalog;
 pub mod payment_validation;
 pub mod coin_format;
 pub mod payment_safety;
+pub mod payment_models;
 pub mod economy_rules;
 #[cfg(any(feature = "sqlite", feature = "sqlcipher-host"))]
 pub mod storage_schema;

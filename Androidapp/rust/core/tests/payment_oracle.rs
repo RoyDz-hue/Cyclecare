@@ -136,3 +136,98 @@ fn url_matches_kotlin_outputs() {
         assert_eq!(&actual, expected, "url case {case} diverged from Kotlin");
     }
 }
+
+fn opt(s: &str) -> Option<String> {
+    if s == "-" {
+        None
+    } else {
+        Some(decode(s))
+    }
+}
+
+#[test]
+fn checkout_matches_kotlin_outputs() {
+    use cyclecare_core::checkout_dialog as cd;
+    use cyclecare_core::payment_models::PaymentOptionType as O;
+    use cyclecare_core::payment_safety::{PaymentOperation, PaymentProvider};
+    let Some(rs) = results("results_checkout.tsv") else { return };
+    let parse_opt = |s: &str| match s {
+        "MPESA" => O::Mpesa,
+        "PAYPAL" => O::Paypal,
+        "DEBIT_CREDIT_CARD" => O::DebitCreditCard,
+        "CRYPTO" => O::Crypto,
+        other => panic!("option {other}"),
+    };
+    for ((case, args), (_, expected)) in corpus("corpus_checkout.tsv").iter().zip(rs.iter()) {
+        let actual: Vec<String> = match args[0].as_str() {
+            "gate" => {
+                let allows: Box<dyn Fn(PaymentProvider, PaymentOperation) -> bool> = match args[3].as_str() {
+                    "disabled" => Box::new(|_, _| false),
+                    "all" => Box::new(|_, _| true),
+                    "mpesa" => Box::new(|p, _| p == PaymentProvider::Payhero),
+                    "paypal" => Box::new(|p, _| p == PaymentProvider::PaypalStandard),
+                    other => panic!("policy {other}"),
+                };
+                let opts = cd::released_checkout_options(args[1].parse().unwrap(), args[2].parse().unwrap(), allows);
+                vec![if opts.is_empty() {
+                    "EMPTY".to_string()
+                } else {
+                    opts.iter().map(|o| o.kotlin_name()).collect::<Vec<_>>().join(",")
+                }]
+            }
+            "nextstep" => vec![cd::next_step(
+                args[1].parse().unwrap(),
+                args[2].parse().unwrap(),
+                parse_opt(&args[3]),
+                opt(&args[4]).as_deref(),
+                args[5].parse().unwrap(),
+            )
+            .to_string()],
+            "amount" => vec![cd::summary_amount(parse_opt(&args[1]), args[2].parse().unwrap(), &decode(&args[3]))],
+            "coins" => {
+                let c: i64 = args[1].parse().unwrap();
+                let b: i64 = args[2].parse().unwrap();
+                vec![cd::coins_line(c, b)]
+            }
+            "alt" => {
+                let show = cd::show_mpesa_alt_line(parse_opt(&args[1]), args[2].parse().unwrap(), args[3].parse().unwrap());
+                vec![
+                    show.to_string(),
+                    if show { cd::mpesa_alt_line(args[3].parse().unwrap()) } else { "-".to_string() },
+                ]
+            }
+            "desc" => vec![cd::payment_method_description(parse_opt(&args[1])).to_string()],
+            "icon" => vec![cd::method_icon_content_description(args[1].parse().unwrap(), parse_opt(&args[2]))],
+            "tag" => vec![cd::payment_method_test_tag(parse_opt(&args[1]))],
+            "submit" => vec![cd::mpesa_submit_enabled(
+                args[1].parse().unwrap(),
+                args[2].parse().unwrap(),
+                opt(&args[3]).as_deref(),
+                &decode(&args[4]),
+            )
+            .to_string()],
+            "mpesabtn" => vec![cd::mpesa_button_label(args[1].parse().unwrap())],
+            "paypalbtn" => vec![cd::paypal_button_label(&decode(&args[1]))],
+            "footer" => vec![cd::secure_footer(parse_opt(&args[1])).to_string()],
+            "ptitle" => vec![cd::processing_title(parse_opt(&args[1])).to_string()],
+            "pbody" => vec![cd::processing_body(parse_opt(&args[1]), opt(&args[2]).as_deref())],
+            "sbody" => vec![cd::success_body(
+                args[1].parse().unwrap(),
+                args[2].parse().unwrap(),
+                opt(&args[3]).as_deref(),
+            )],
+            "count" => vec![cd::option_count_label(args[1].parse().unwrap()).to_string()],
+            "dismiss" => vec![cd::dialog_can_dismiss(args[1].parse().unwrap()).to_string()],
+            "panel" => {
+                let p = cd::active_panel(args[1].parse().unwrap(), args[2].parse().unwrap());
+                vec![format!("{p:?}")]
+            }
+            "form" => {
+                let f = cd::active_form(parse_opt(&args[1]));
+                vec![format!("{f:?}")]
+            }
+            other => panic!("kind {other}"),
+        };
+        assert_eq!(&actual, expected, "checkout case {case} diverged from Kotlin");
+    }
+}
