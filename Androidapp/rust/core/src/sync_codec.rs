@@ -496,6 +496,13 @@ impl<'a> JsonParser<'a> {
             // Fall through: integral overflow, exponent form, or unquoted string.
         }
         if let Ok(d) = literal.parse::<f64>() {
+            // AOSP rejects non-finite numbers on the JSONObject path
+            // (probe-locked: {"x":NaN}/{"x":Infinity}/{"x":-Infinity} all
+            // throw out of the constructor; see
+            // tests/fixtures/settings_core/adv_jvm_expected.txt).
+            if !d.is_finite() {
+                return self.syntax_error("Forbidden numeric value: non-finite");
+            }
             return Ok(JsonValue::Double(d));
         }
         Ok(JsonValue::Str(literal))

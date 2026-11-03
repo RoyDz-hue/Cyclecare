@@ -86,11 +86,19 @@ fn replace_first_char_upper(s: &str) -> String {
     }
 }
 
-/// org.json opt(key).toString() semantics.
+/// org.json opt(key).toString() semantics: the raw object's own toString -
+/// Double.toString for doubles (1.0 stays "1.0", 1e10 -> "1.0E10"; probe-
+/// locked against AOSP, NOT JSONObject.numberToString's integer collapse,
+/// which only applies on the JSONStringer render path), Long/Int toString,
+/// nested containers' JSON text.
 fn opt_to_string(v: &JsonValue) -> String {
     match v {
         JsonValue::Str(s) => s.clone(),
         JsonValue::Null => "null".to_string(),
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Int(i) => i.to_string(),
+        JsonValue::Long(l) => l.to_string(),
+        JsonValue::Double(d) => crate::sync_codec::java_double_to_string(*d),
         other => json_value_to_string(other),
     }
 }
