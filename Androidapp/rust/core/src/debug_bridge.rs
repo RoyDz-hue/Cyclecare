@@ -117,6 +117,7 @@ fn jdk_server_host(host: &str) -> bool {
 }
 
 
+
 /// IPv6 literal validation. JDK17 differential evidence: scope/zone ids
 /// are accepted ("%eth0", "%en0", "%25eth0", "%zone") but must be
 /// non-empty and free of spaces (and of authority delimiters); the IPv4
@@ -126,11 +127,16 @@ fn valid_ipv6_literal(inner: &str) -> bool {
     if inner.is_empty() {
         return false;
     }
-    // Zone id: '%' then 1+ chars, none whitespace or URL delimiters.
+    // Zone id: '%' then 1+ chars, each ASCII alphanumeric, '_' or '.'.
+    // JDK17 differential evidence: %eth0 %en0 %zone %a.b %a_b %25eth0
+    // %AZaz09 %0 accepted; %a-b %a-b_c.d %~ %+ %! %a:b %a@b %é %É, bare
+    // %, %e th, %%, %a%20b, %25%25 rejected - a '%' NEVER appears inside
+    // an accepted zone (no escape form observed). Possible over-rejection
+    // of escape-containing zones is UNVERIFIED, not source-proven.
     let addr = match inner.split_once('%') {
         Some((a, zone)) => {
             if zone.is_empty()
-                || zone.chars().any(|c| (c as u32) <= 0x20 || matches!(c, '[' | ']' | '/' | '?' | '#'))
+                || !zone.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
             {
                 return false;
             }
@@ -176,8 +182,17 @@ fn valid_ipv6_literal(inner: &str) -> bool {
         }
         Some(count)
     }
-    let lc = match groups(left, false) { Some(v) => v, None => return false };
-    let rc = match groups(right, true) { Some(v) => v, None => return false };
+    // The IPv4 tail is allowed only at the END of the literal: the right
+    // side when compressed, the whole thing when not (differential:
+    // [1:2:3:4:5:6:1.2.3.4] accepted, [1.2.3.4::] rejected).
+    let (lc, rc) = if compressed {
+        (
+            match groups(left, false) { Some(v) => v, None => return false },
+            match groups(right, true) { Some(v) => v, None => return false },
+        )
+    } else {
+        (match groups(left, true) { Some(v) => v, None => return false }, 0)
+    };
     let total = lc + rc;
     if compressed { total < 8 } else { total == 8 }
 }
