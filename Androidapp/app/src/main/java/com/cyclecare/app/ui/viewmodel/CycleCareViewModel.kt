@@ -258,24 +258,54 @@ class CycleCareViewModel(
     }
 
     private var localReadEpoch = 0L
+    /** Bumped whenever resetIdentityUiIfNeeded actually switches identity. */
+    private var identityResetEpoch = 0L
 
     /**
-     * Start-decision read shared by startup, local-only start and deep link. Each call is
-     * tagged; only the newest call may publish. A superseded call returns null and publishes
-     * nothing. A failure sets localReadFailed only if the owner it started under is still
-     * current; a success clears it. Not proven by an executed VM test.
+     * Immutable scope of ONE start decision. The snapshot, owner/session and repository
+     * context were all captured together in the same synchronous step; the epochs say which
+     * start call and which identity generation it belongs to. A continuation that suspends
+     * must call isStartScopeCurrent before every publish.
      */
-    private suspend fun readStartSnapshotTagged(): com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot? {
-        val epoch = ++localReadEpoch
-        val owner = captureConflictOwnerSnapshot()
-        val stored = readStableLocalSnapshotWithBackoff(resetFirst = true)
-        if (epoch != localReadEpoch) return null
-        if (stored == null) {
-            if (isCurrentConflictSnapshot(owner)) _uiState.value = _uiState.value.copy(localReadFailed = true)
-            return null
+    private class StartScope(
+        val startEpoch: Long,
+        val resetEpoch: Long,
+        val owner: ConflictOwnerSnapshot,
+        val snapshot: com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot
+    )
+
+    private fun isStartScopeCurrent(scope: StartScope): Boolean =
+        scope.startEpoch == localReadEpoch && scope.resetEpoch == identityResetEpoch &&
+            isCurrentConflictSnapshot(scope.owner) && repository.isCurrentContext(scope.snapshot.context)
+
+    /**
+     * Start-decision read shared by startup, local-only start and deep link. Up to 40
+     * attempts, 250 ms apart. Each attempt captures the owner, then reads, and accepts the
+     * read only if that SAME capture is still current, so owner and snapshot always belong
+     * together; an owner change mid-read retargets the whole attempt, never a mix. Only the
+     * newest call may publish (superseded: null, silently). On exhaustion localReadFailed is
+     * set only if the call is still newest. A success clears it. Unexecuted.
+     */
+    private suspend fun readStartScope(): StartScope? {
+        val startEpoch = ++localReadEpoch
+        repeat(40) {
+            if (startEpoch != localReadEpoch) return null
+            // capture, resetEpoch and the read of both happen with no suspension between them
+            val owner = captureConflictOwnerSnapshot()
+            val resetEpoch = identityResetEpoch
+            val stored = try { repository.getStoredSnapshot() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
+            if (startEpoch != localReadEpoch) return null
+            if (stored != null && isCurrentConflictSnapshot(owner) && resetEpoch == identityResetEpoch &&
+                repository.isCurrentContext(stored.context)) {
+                _uiState.value = _uiState.value.copy(localReadFailed = false)
+                return StartScope(startEpoch, resetEpoch, owner, stored)
+            }
+            kotlinx.coroutines.delay(250L)
         }
-        _uiState.value = _uiState.value.copy(localReadFailed = false)
-        return stored
+        if (startEpoch == localReadEpoch) _uiState.value = _uiState.value.copy(localReadFailed = true)
+        return null
     }
 
     /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
@@ -340,6 +370,7 @@ class CycleCareViewModel(
         if (activeUiOwner == owner && activeUiSession == session) return
         activeUiOwner = owner
         activeUiSession = session
+        identityResetEpoch++
         walletRealtime.stop()
         accountRefreshJob?.cancel()
         walletRefreshJob?.cancel()
@@ -399,7 +430,8 @@ class CycleCareViewModel(
         startupJob = viewModelScope.launch {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val stored = readStartSnapshotTagged() ?: return@launch
+            val scope = readStartScope() ?: return@launch
+            val stored = scope.snapshot
             val settings = stored.settings
             val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
@@ -452,7 +484,10 @@ class CycleCareViewModel(
             if (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.accountMode == "ANONYMOUS" &&
                 com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)
             ) {
-                when (val session = authService.continueAsGuest()) {
+                val session = authService.continueAsGuest()
+                // Suspended above: publish only if this start is still the current one.
+                if (!isStartScopeCurrent(scope)) return@launch
+                when (session) {
                     is com.cyclecare.app.data.supabase.AuthResult.Error -> _uiState.value = _uiState.value.copy(
                         lastSyncMessage = session.errorMessage,
                         lastSyncSuccess = false
@@ -461,6 +496,7 @@ class CycleCareViewModel(
                 }
             }
 
+            if (!isStartScopeCurrent(scope)) return@launch
             updateCalculations(settings, LocalDate.now(), LocalDate.now())
 
             if (hasCompletedInitialAuth) autoSyncSilently()
@@ -469,6 +505,7 @@ class CycleCareViewModel(
             val fetchWallet = gate?.fetchWallet ?: (hasCompletedInitialAuth && !authPreferences.isLocalOnlyMode && authPreferences.userId != null)
             val verifiedEconomy = if (fetchWallet)
                 economyService.fetchVerifiedProfile(initOwner) else null
+            if (!isStartScopeCurrent(scope)) return@launch
             if (authPreferences.effectiveUserId == initOwner && authPreferences.sessionGeneration == initSession &&
                 verifiedEconomy is com.cyclecare.app.data.economy.EconomyResult.Success) {
                 val econ = verifiedEconomy.data
@@ -486,6 +523,7 @@ class CycleCareViewModel(
 
             if (!authPreferences.isLocalOnlyMode && authPreferences.userId != null && com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)) {
                 val reconciled = miningUseCase.reconcilePendingOfflineClaims(_uiState.value.economyProfile)
+                if (!isStartScopeCurrent(scope)) return@launch
                 if (reconciled is com.cyclecare.app.data.economy.EconomyResult.Success) {
                     _uiState.value = _uiState.value.copy(economyProfile = reconciled.data, walletStatus = WalletStatus.READY)
                 }
@@ -1678,7 +1716,8 @@ class CycleCareViewModel(
         authPreferences.isAiSharingAllowed = false
         resetIdentityUiIfNeeded()
         viewModelScope.launch {
-            val stored = readStartSnapshotTagged() ?: return@launch
+            val scope = readStartScope() ?: return@launch
+            val stored = scope.snapshot
             val settings = stored.settings
             val profile = stored.profile
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
@@ -1713,7 +1752,8 @@ class CycleCareViewModel(
                 is com.cyclecare.app.data.supabase.AuthResult.Success -> {
                     authPreferences.hasCompletedInitialAuth = true
                     resetIdentityUiIfNeeded()
-                    val stored = readStartSnapshotTagged() ?: return@launch
+                    val scope = readStartScope() ?: return@launch
+                    val stored = scope.snapshot
                     val settings = stored.settings
                     val profile = stored.profile
                     _uiState.value = _uiState.value.copy(
