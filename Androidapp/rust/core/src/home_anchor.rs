@@ -90,3 +90,45 @@ pub fn compute_anchor_state(
         next_period_date: next,
     }
 }
+
+/// Countdown block of CycleCareViewModel.updateCalculations (:491-508).
+/// QUIRK (ported 1:1, labeled): ovulationCycleDay here uses the RAW
+/// settings.lutealPhaseDays and settings.periodDuration, NOT the 10..16 /
+/// 2..10 clamps that CycleRepository.calculateDayPrediction applies; only
+/// averageCycleLength is clamped (21..45). Both behaviors are source-faithful
+/// at their own call sites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorCountdowns {
+    pub days_until_next_period: i64,
+    pub ovulation_cycle_day: i64,
+    pub days_until_ovulation: i64,
+}
+
+pub fn compute_countdowns(
+    today: NaiveDate,
+    next_period_date: Option<NaiveDate>,
+    today_day_of_cycle: Option<i64>,
+    average_cycle_length: i64,
+    luteal_phase_days: i64,
+    period_duration: i64,
+) -> AnchorCountdowns {
+    let cycle_length = average_cycle_length.clamp(21, 45);
+    let days_until_next_period = next_period_date
+        .map(|d| (d - today).num_days().max(0))
+        .unwrap_or(0);
+    let ovulation_cycle_day = (cycle_length - luteal_phase_days).max(period_duration + 2);
+    let days_until_ovulation = today_day_of_cycle
+        .map(|day| {
+            if day <= ovulation_cycle_day {
+                ovulation_cycle_day - day
+            } else {
+                cycle_length - day + ovulation_cycle_day
+            }
+        })
+        .unwrap_or(0);
+    AnchorCountdowns {
+        days_until_next_period,
+        ovulation_cycle_day,
+        days_until_ovulation,
+    }
+}

@@ -29,6 +29,7 @@ pub mod log_parser;
 pub mod reconnect_policy;
 pub mod pin;
 pub mod settings_core;
+pub mod insights_core;
 pub mod pin_verify;
 pub mod app_lock;
 pub mod supabase_config;
