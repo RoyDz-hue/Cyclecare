@@ -96,33 +96,50 @@ class CycleRepository(database: CycleCareDatabase) {
 
     private fun captureContext(): StoredContext = current
 
-    /** A write context: database, owner, epoch and the consent generation of THAT owner. */
-    data class WriteContext(val context: StoredContext, val consentGeneration: Long)
+    /**
+     * Intent-time operation token: database, owner, switch epoch, preferences
+     * session and the consent generation of THAT owner, captured as one coherent
+     * set when the user acts. Mutations take the token, so a delayed coroutine can
+     * only write to the database and owner the user acted under, never to
+     * whichever owner is active when it finally runs.
+     */
+    data class OperationToken(val context: StoredContext, val session: Long, val consentGeneration: Long)
+
+    /** Kept as the internal name used by the write paths. */
+    private fun captureWriteContext(): OperationToken = beginOperation()
 
     /**
-     * The consent generation is stored per account by the preferences object, which
-     * switches owner before this repository does. Accept the pair only when the
-     * preferences owner equals the captured database owner on both sides of the
-     * generation read and the context did not change; otherwise an owner transition
-     * is in progress and the write is refused rather than mixing owner A's database
-     * with owner B's generation.
+     * Coherent capture: the preferences owner, session generation, effective owner
+     * (which keys the consent generation) and the repository context must be equal on
+     * both sides of the generation read. A switch away and back bumps the session
+     * generation, so it fails this check. The null guest owner maps to the
+     * legacy_guest database key while its generation is keyed by the derived
+     * effective id; that mapping is deliberate and unchanged.
      */
-    /** Non-throwing probe of the same alignment captureWriteContext enforces. */
-    fun isWriteContextStable(): Boolean = try { captureWriteContext(); true } catch (_: OwnerTransitionException) { false }
-
-    private fun captureWriteContext(): WriteContext {
-        val prefs = lifecyclePreferences ?: return WriteContext(current, 0L)
+    fun beginOperation(): OperationToken {
+        val prefs = lifecyclePreferences ?: return OperationToken(current, 0L, 0L)
         repeat(5) {
             val before = current
-            val ownerBefore = prefs.userId
+            val owner1 = prefs.userId
+            val session1 = prefs.sessionGeneration
+            val effective1 = prefs.effectiveUserId
             val generation = prefs.healthConsentGeneration
-            val ownerAfter = prefs.userId
-            if (ownerBefore == before.owner && ownerAfter == before.owner && current === before) {
-                return WriteContext(before, generation)
+            val owner2 = prefs.userId
+            val session2 = prefs.sessionGeneration
+            val effective2 = prefs.effectiveUserId
+            if (owner1 == before.owner && owner2 == owner1 && session2 == session1 &&
+                effective2 == effective1 && current === before) {
+                return OperationToken(before, session1, generation)
             }
         }
         throw OwnerTransitionException()
     }
+
+    fun currentContext(): StoredContext = current
+
+    /** Non-throwing probe of the same alignment captureWriteContext enforces. */
+    fun isWriteContextStable(): Boolean = try { captureWriteContext(); true } catch (_: OwnerTransitionException) { false }
+
     private fun ownerKey(owner: String?) = owner?.takeIf { it.isNotBlank() } ?: "legacy_guest"
 
     /** True only while the database, owner and switch epoch are exactly the captured ones. */
@@ -160,9 +177,21 @@ class CycleRepository(database: CycleCareDatabase) {
     fun activateCurrentOwner() {
         val context = lifecycleContext ?: return
         val preferences = lifecyclePreferences ?: return
-        val owner = preferences.userId
-        if (lifecycleIdentity == owner) return
-        publishContext(CycleCareDatabase.getDatabase(context, owner), owner)
+        repeat(5) {
+            val owner = preferences.userId
+            val session = preferences.sessionGeneration
+            if (current.owner == owner) return
+            val database = CycleCareDatabase.getDatabase(context, owner)
+            // The slow lookup above can finish after a newer switch. Publish only if
+            // the preferences still name this owner and session; otherwise retry with
+            // the newest identity instead of rolling the repository back.
+            synchronized(this) {
+                if (preferences.userId == owner && preferences.sessionGeneration == session) {
+                    publishContext(database, owner)
+                    return
+                }
+            }
+        }
     }
 
     internal fun activateDatabaseForTest(database: CycleCareDatabase, owner: String?) {
@@ -256,8 +285,15 @@ class CycleRepository(database: CycleCareDatabase) {
                 lutealPhaseDays = 14,
                 remindFertile = profile?.remindFertileWindow ?: false
             )
-            journalMutation(selectedDatabase, "settings", HealthSyncPayloadCodec.settingsPayload(settings), ownerKey = ownerKey(context.owner)) {
-                dao.saveSettings(settings)
+            // Persist the default row only under a coherent token for THIS context. During
+            // an owner transition (or if the context moved) return the in-memory default
+            // without writing, rather than journaling another owner's consent generation.
+            val token = try { beginOperation() } catch (_: OwnerTransitionException) { null }
+            if (token != null && token.context.epoch == context.epoch && token.context.database === context.database) {
+                journalMutation(selectedDatabase, "settings", HealthSyncPayloadCodec.settingsPayload(settings),
+                    ownerKey = ownerKey(context.owner), consentGeneration = token.consentGeneration) {
+                    dao.saveSettings(settings)
+                }
             }
         }
         return settings
@@ -266,12 +302,13 @@ class CycleRepository(database: CycleCareDatabase) {
     suspend fun completeOnboardingWithProfile(
         profile: OnboardingProfile,
         pin: String = "",
-        enableLock: Boolean = false
+        enableLock: Boolean = false,
+        token: OperationToken? = null
     ): OnboardingCompletion {
-        // Database, owner and switch epoch are captured together BEFORE the
-        // first suspension, so the transaction and its journal keys can never
-        // straddle an owner switch.
-        val writeContext = captureWriteContext()
+        // Uses the caller's intent-time token when given; otherwise captures one now,
+        // before the first suspension. Either way the transaction and journal keys use
+        // that token's database, owner and consent generation only.
+        val writeContext = token ?: captureWriteContext()
         val capturedContext = writeContext.context
         afterContextCaptured?.invoke(capturedContext)
         val selectedDatabase = capturedContext.database
@@ -328,9 +365,10 @@ class CycleRepository(database: CycleCareDatabase) {
     data class SettingsUpdate(val context: StoredContext, val profile: OnboardingProfile?)
     suspend fun updateSettingsBound(
         newSettings: CycleSettings,
-        previousAverageCycleLength: Int
+        previousAverageCycleLength: Int,
+        token: OperationToken? = null
     ): SettingsUpdate {
-        val write = captureWriteContext()
+        val write = token ?: captureWriteContext()
         val captured = write.context
         afterContextCaptured?.invoke(captured)
         val db = captured.database

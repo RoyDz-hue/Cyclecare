@@ -1,3 +1,7 @@
+            val completion = try {
+                repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock, token = token)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) { failAttempt(); return@launch }
 package com.cyclecare.app.ui.viewmodel
 
 import android.net.Uri
@@ -48,6 +52,7 @@ enum class AppNavTab(val title: String) {
     SPACE("Space");
 
     companion object {
+        private const val ONBOARDING_RETRY_MESSAGE = "We couldn't save your answers just now. Nothing was lost, so please tap Finish again."
         val HOME get() = TODAY
     }
 }
@@ -112,6 +117,10 @@ data class CycleUiState(
     val showOnboarding: Boolean = true,
     val isCheckingCloudProfile: Boolean = true,
     val cloudProfileCheckFailed: Boolean = false,
+    /** Local data could not be read steadily at start; shows a neutral retry that re-reads it. */
+    val localReadFailed: Boolean = false,
+    val isCompletingOnboarding: Boolean = false,
+    val onboardingCompletionMessage: String? = null,
     val isSomethingDifferentSheetOpen: Boolean = false,
     val currentInterpretation: ParsedLogInterpretation? = null,
     val monthlyTimeline: List<com.cyclecare.app.data.model.MonthlyTimelineEntry> = emptyList(),
@@ -326,6 +335,7 @@ class CycleCareViewModel(
             notifications = emptyList(), activeGiftDialogItem = null, giftedModalArtifact = null,
             isBanned = false, isSuspended = false, accountNoticeMessage = null,
             onboardingProfile = null, settings = CycleSettings(), hasCycleAnchor = false,
+            localReadFailed = false, isCompletingOnboarding = false, onboardingCompletionMessage = null,
             todayPrediction = null, selectedDatePrediction = null, patterns = emptyList(),
             learnedObservations = emptyList(), clinicianReportText = "", explainMyBodyResult = null,
             isCloudSyncAllowed = authPreferences.isCloudSyncAllowed,
@@ -351,18 +361,20 @@ class CycleCareViewModel(
 
     private val reconnectWorkState = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.State()
 
-    init {
-        viewModelScope.launch {
-            repository.scopedLogs.collect { snapshot ->
-                _logsMap.value = if (repository.isCurrentSnapshot(snapshot)) snapshot.logs.associateBy { it.dateString } else emptyMap()
-            }
-        }
-        SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
+    private var startupJob: kotlinx.coroutines.Job? = null
 
-        viewModelScope.launch {
+    /** Re-runs the startup read after a failed steady read. Real re-read, not a cloud refresh. */
+    fun retryLocalRead() {
+        if (startupJob?.isActive == true) return
+        _uiState.value = _uiState.value.copy(localReadFailed = false)
+        runStartup()
+    }
+
+    private fun runStartup() {
+        startupJob = viewModelScope.launch {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
             val settings = stored.settings
             val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
@@ -459,6 +471,17 @@ class CycleCareViewModel(
             // wallet refresh.
             refreshAiProcessorManifest()
         }
+    }
+
+    init {
+        viewModelScope.launch {
+            repository.scopedLogs.collect { snapshot ->
+                _logsMap.value = if (repository.isCurrentSnapshot(snapshot)) snapshot.logs.associateBy { it.dateString } else emptyMap()
+            }
+        }
+        SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
+
+        runStartup()
 
         // Reactive network connectivity observer. Reconnect work runs only on
         // an offline -> online transition, throttled per owner, so flappy
@@ -741,13 +764,13 @@ class CycleCareViewModel(
 
     fun updateSettings(newSettings: CycleSettings) {
         val owner = captureConflictOwnerSnapshot()
+        // Intent-time token; during an owner transition nothing is saved (no message: the
+        // settings screen has no failure surface, so the change is simply not applied).
+        val token = try { repository.beginOperation() } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return }
+        val previousSettings = _uiState.value.settings
         viewModelScope.launch {
-            val previousSettings = _uiState.value.settings
-            // Profile read and both writes use the one database/owner/consent capture made by the repository.
-            // During an owner transition the repository refuses the write; nothing is saved or published.
-            val update = try {
-                repository.updateSettingsBound(newSettings, previousSettings.averageCycleLength)
-            } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return@launch }
+            // Profile read and both writes use the token's database, owner and consent generation.
+            val update = repository.updateSettingsBound(newSettings, previousSettings.averageCycleLength, token)
             // The write stays with its own owner; only the current owner's UI is updated.
             if (!isCurrentConflictSnapshot(owner) || !repository.isCurrentContext(update.context)) return@launch
             _uiState.value = _uiState.value.copy(onboardingProfile = update.profile)
@@ -1627,7 +1650,7 @@ class CycleCareViewModel(
         authPreferences.isAiSharingAllowed = false
         resetIdentityUiIfNeeded()
         viewModelScope.launch {
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
             val settings = stored.settings
             val profile = stored.profile
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
@@ -1662,7 +1685,7 @@ class CycleCareViewModel(
                 is com.cyclecare.app.data.supabase.AuthResult.Success -> {
                     authPreferences.hasCompletedInitialAuth = true
                     resetIdentityUiIfNeeded()
-                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
+                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { _uiState.value = _uiState.value.copy(localReadFailed = true); return@launch }
                     val settings = stored.settings
                     val profile = stored.profile
                     _uiState.value = _uiState.value.copy(
@@ -1954,26 +1977,42 @@ class CycleCareViewModel(
         isCloudSyncAllowed: Boolean = false,
         dynamicAnswers: Map<String, Set<String>> = emptyMap()
     ) {
+        if (_uiState.value.isCompletingOnboarding) return
         val onboardingOwner = captureConflictOwnerSnapshot()
+        // Intent-time token: database, owner, session and that owner's consent generation,
+        // captured when the user taps Finish. Everything below uses it, never a later lookup.
+        val token = try { repository.beginOperation() } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) {
+            _uiState.value = _uiState.value.copy(onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
+            return
+        }
+        _uiState.value = _uiState.value.copy(isCompletingOnboarding = true, onboardingCompletionMessage = null)
         viewModelScope.launch {
-            // Stale-operation guard, NOT an atomic fix: if the owner/session already
-            // changed, or the repository is mid owner transition, skip the whole
-            // completion (including the preference writes below). A switch after
-            // this check can still interleave with the writes that follow.
-            if (!isCurrentConflictSnapshot(onboardingOwner) || !repository.isWriteContextStable()) return@launch
-            authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
-            if (dynamicAnswers.isNotEmpty()) {
-                // Personalization context gathered by the dynamic onboarding
-                // questions; local-only, feeds future insight personalization.
-                authPreferences.onboardingDynamicInsightsJson = org.json.JSONObject().apply {
-                    dynamicAnswers.forEach { (id, answers) -> put(id, org.json.JSONArray(answers.toList())) }
-                }.toString()
+            fun failAttempt() {
+                if (isCurrentConflictSnapshot(onboardingOwner)) {
+                    _uiState.value = _uiState.value.copy(isCompletingOnboarding = false, onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
+                }
             }
-            if (pin.isNotBlank()) {
-                authPreferences.pin = pin
-                authPreferences.isPinEnabled = enableLock
-                authPreferences.isQuickUnlockAsked = true
+            // The preference writes run under the same lock the account setter uses, only
+            // while the account and session are still the ones the user acted under. This is
+            // atomic with account changes, NOT with the database write that follows; if that
+            // write later fails the user's own choices stay saved and Finish can be tapped again.
+            val accountMode = authPreferences.runIfIdentityUnchanged(token.context.owner, token.session) {
+                authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
+                if (dynamicAnswers.isNotEmpty()) {
+                    // Personalization context gathered by the dynamic onboarding
+                    // questions; local-only, feeds future insight personalization.
+                    authPreferences.onboardingDynamicInsightsJson = org.json.JSONObject().apply {
+                        dynamicAnswers.forEach { (id, answers) -> put(id, org.json.JSONArray(answers.toList())) }
+                    }.toString()
+                }
+                if (pin.isNotBlank()) {
+                    authPreferences.pin = pin
+                    authPreferences.isPinEnabled = enableLock
+                    authPreferences.isQuickUnlockAsked = true
+                }
+                authPreferences.accountMode
             }
+            if (accountMode == null) { failAttempt(); return@launch }
 
             val profile = OnboardingProfile(
                 id = 1,
@@ -1981,7 +2020,7 @@ class CycleCareViewModel(
                 completedAtTimestamp = System.currentTimeMillis(),
                 isAgeVerified = true,
                 isTermsAgreed = true,
-                accountMode = authPreferences.accountMode,
+                accountMode = accountMode,
                 selectedGoalsCsv = goals.joinToString(","),
                 lastPeriodDateString = if (periodStartChoice == "UNKNOWN") "" else lastPeriodDate.toString(),
                 // Raw episode record: the end date exactly as entered and
@@ -2010,6 +2049,8 @@ class CycleCareViewModel(
             val updated = completion.settings
             _uiState.value = _uiState.value.copy(
                 showOnboarding = false,
+                isCompletingOnboarding = false,
+                onboardingCompletionMessage = null,
                 isAppLocked = false,
                 settings = updated,
                 onboardingProfile = profile,

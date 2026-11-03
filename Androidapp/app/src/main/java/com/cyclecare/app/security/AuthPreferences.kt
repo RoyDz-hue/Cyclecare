@@ -263,6 +263,17 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     data class ConsentMutationSnapshot(val owner: String, val session: Long, val decision: Long, val healthGeneration: Long)
     val sessionGeneration: Long get() = prefs.getLong("session_generation_v3", 0L)
 
+    /**
+     * Runs [block] only if the account and session are still exactly [owner] and
+     * [session], holding the same lock the userId setter uses, so an identity change
+     * cannot land in the middle of [block]. Returns null (block not run) when stale.
+     * This makes the preference writes atomic with identity changes only; it is not
+     * atomic with any database write.
+     */
+    fun <T> runIfIdentityUnchanged(owner: String?, session: Long, block: () -> T): T? = synchronized(prefs) {
+        if (userId == owner && sessionGeneration == session) block() else null
+    }
+
     /** Execute an owner-bound mutation only while the captured login session is current. */
     internal inline fun <T> withCurrentSession(owner: String, session: Long, block: () -> T): T? =
         synchronized(prefs) {

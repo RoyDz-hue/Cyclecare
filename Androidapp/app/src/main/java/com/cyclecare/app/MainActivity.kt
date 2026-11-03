@@ -175,6 +175,16 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
 
     CycleCareTheme {
         when {
+            uiState.localReadFailed -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("We couldn't open your data on this device just yet.")
+                        Text("Nothing has been changed or erased.")
+                        TextButton(onClick = { viewModel.retryLocalRead() }) { Text("Try again") }
+                    }
+                }
+            }
+
             // First Launch Auth Flow (Account Creation / Sign In / Guest) BEFORE Onboarding
             !uiState.hasCompletedInitialAuth -> {
                 WelcomeAuthScreen(
@@ -249,6 +259,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
 
             // Onboarding Flow
             uiState.showOnboarding -> {
+              Box(modifier = Modifier.fillMaxSize()) {
                 OnboardingScreen(
                     onComplete = { goals, lastPeriod, periodEndDate, periodStartChoice, cycleLength, cycleLengthOption, periodDuration, pin, enableLock, remindFertile, typicalSymptoms, typicalEnergy, typicalSleep, hasCompletedDeepBaseline, isCloudSyncAllowed, dynamicAnswers ->
                         viewModel.completeOnboarding(
@@ -271,6 +282,22 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         )
                     }
                 )
+                if (uiState.isCompletingOnboarding) {
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f))
+                            .pointerInput(Unit) { detectTapGestures { } },
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+                }
+                uiState.onboardingCompletionMessage?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+              }
             }
 
             // Account restrictions apply to cloud privileges, never the private health shell.

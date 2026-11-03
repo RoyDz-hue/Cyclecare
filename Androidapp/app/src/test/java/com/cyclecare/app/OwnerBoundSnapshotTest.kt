@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.cyclecare.app.data.local.*
 import com.cyclecare.app.data.repository.CycleRepository
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -87,16 +88,45 @@ class OwnerBoundSnapshotTest {
     @Test fun concurrentSwitchesNeverYieldADatabaseOwnerMismatchInACapturedContext() = runBlocking {
         val a = open(); val b = open()
         val repo = CycleRepository(a).apply { activateDatabaseForTest(a, "A") }
-        @Volatile var stop = false
+        val stop = AtomicBoolean(false)
         val flipper = thread {
             var toB = true
-            while (!stop) { if (toB) repo.activateDatabaseForTest(b, "B") else repo.activateDatabaseForTest(a, "A"); toB = !toB }
+            while (!stop.get()) { if (toB) repo.activateDatabaseForTest(b, "B") else repo.activateDatabaseForTest(a, "A"); toB = !toB }
         }
         try {
             repeat(2000) {
                 val ctx = repo.getStoredSnapshot().context
                 assertTrue("database/owner paired", (ctx.database === a && ctx.owner == "A") || (ctx.database === b && ctx.owner == "B"))
             }
-        } finally { stop = true; flipper.join() }
+        } finally { stop.set(true); flipper.join() }
+    }
+
+    @Test fun delayedCompletionWithAnIntentTimeTokenWritesOnlyToTheOwnerThatActed() = runBlocking {
+        val a = open(); val b = open()
+        val repo = CycleRepository(a).apply { activateDatabaseForTest(a, "A") }
+        val tokenA = repo.beginOperation()
+        // The coroutine runs only after B is fully active.
+        repo.activateDatabaseForTest(b, "B")
+        val completion = repo.completeOnboardingWithProfile(profile("submitted-under-a"), token = tokenA)
+        assertEquals("submitted-under-a", a.onboardingDao().getProfile()?.selectedGoalsCsv)
+        assertNotNull(a.healthSyncDao().revision("A", "profile"))
+        assertNull(b.onboardingDao().getProfile())
+        assertNull(b.healthSyncDao().revision("B", "profile"))
+        assertNull(b.healthSyncDao().revision("A", "profile"))
+        assertFalse(repo.isCurrentContext(completion.context))
+    }
+
+    @Test fun delayedSettingsUpdateWithAnIntentTimeTokenNeverTouchesTheNewOwner() = runBlocking {
+        val a = open(); val b = open()
+        a.onboardingDao().insertOrUpdateProfile(profile("from-a"))
+        b.onboardingDao().insertOrUpdateProfile(profile("from-b"))
+        val repo = CycleRepository(a).apply { activateDatabaseForTest(a, "A") }
+        val tokenA = repo.beginOperation()
+        repo.activateDatabaseForTest(b, "B")
+        repo.updateSettingsBound(CycleSettings(id = 1, averageCycleLength = 33), 28, tokenA)
+        assertEquals(33, a.cycleDao().getSettings()?.averageCycleLength)
+        assertEquals(33, a.onboardingDao().getProfile()?.cycleLengthDays)
+        assertNull(b.cycleDao().getSettings())
+        assertEquals(28, b.onboardingDao().getProfile()?.cycleLengthDays)
     }
 }
