@@ -5,9 +5,14 @@
 //! message; p* rows: Base64 NO_WRAP passphrase derivation.
 
 use cyclecare_core::db_key_manager::{
-    gcm_decrypt_blob, gcm_encrypt_blob, get_or_create_passphrase, passphrase_from_secret,
-    DbKeyEffects, DbKeyError, ERR_INVALID_STORED, ERR_PERSIST, WRAPPED_PASSPHRASE,
+    decode_base64_android, gcm_decrypt_blob, gcm_encrypt_blob, get_or_create_passphrase,
+    passphrase_from_secret, DbKeyEffects, DbKeyError, ERR_INVALID_STORED, ERR_PERSIST,
+    WRAPPED_PASSPHRASE,
 };
+
+fn unescape(s: &str) -> String {
+    s.replace("\\t", "\t").replace("\\r", "\r").replace("\\n", "\n").replace("\\\\", "\\")
+}
 
 fn from_hex(s: &str) -> String {
     String::from_utf8(unhex(s)).unwrap()
@@ -23,7 +28,7 @@ fn unhex(s: &str) -> Vec<u8> {
 #[test]
 fn gcm_blob_cross_implementation_corpus() {
     let data = std::fs::read_to_string("fixtures/oracle/results_dbkey.tsv").unwrap();
-    let (mut nk, mut nt, mut ns, mut np, mut nu, mut nl) = (0, 0, 0, 0, 0, 0);
+    let (mut nk, mut nt, mut ns, mut np, mut nu, mut nl, mut na) = (0, 0, 0, 0, 0, 0, 0);
     for line in data.lines() {
         let c: Vec<&str> = line.split('\t').collect();
         match c[0].chars().next().unwrap() {
@@ -69,10 +74,25 @@ fn gcm_blob_cross_implementation_corpus() {
                 assert_eq!(gcm_decrypt_blob(&key, &dirty).unwrap(), c[3], "{}: lenient decode diverged", c[0]);
                 nl += 1;
             }
+            // AOSP Decoder boundary rows run against the REAL
+            // android.util.Base64 class (android14-release Base64.java
+            // compiled from AOSP source), not a stand-in.
+            'a' => {
+                let input = unescape(c[1]);
+                let got = decode_base64_android(&input);
+                if let Some(hex) = c[2].strip_prefix("OK:") {
+                    let expect = if hex.is_empty() { vec![] } else { unhex(hex) };
+                    assert_eq!(got.unwrap(), expect, "{}: AOSP decode diverged", c[0]);
+                } else {
+                    assert_eq!(c[2], "IAE:bad base-64", "{}: oracle message changed", c[0]);
+                    assert_eq!(got, Err(DbKeyError::MalformedBase64), "{}: bad input accepted", c[0]);
+                }
+                na += 1;
+            }
             other => panic!("bad row kind {other}"),
         }
     }
-    assert_eq!((nk, nt, ns, np, nu, nl), (9, 9, 9, 3, 1, 1));
+    assert_eq!((nk, nt, ns, np, nu, nl, na), (9, 9, 9, 3, 1, 1, 13));
 }
 
 struct KeyFx {

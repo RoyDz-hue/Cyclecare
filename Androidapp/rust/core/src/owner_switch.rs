@@ -130,7 +130,10 @@ pub fn build_database<E: DbKeyEffects + EncryptionFs + BuildEffects>(
 ) -> Result<u64, BuildError> {
     fx.load_sqlcipher();
     let passphrase = get_or_create_passphrase(fx).map_err(BuildError::Key)?;
-    ensure_encrypted(fx).map_err(BuildError::Encryption)?;
+    // The SAME passphrase value feeds both the conversion probes/export
+    // (:163) and the SupportOpenHelperFactory bytes (:164) - the driver
+    // proves they cannot drift apart.
+    ensure_encrypted(fx, &passphrase).map_err(BuildError::Encryption)?;
     Ok(fx.room_build(database_name, passphrase.as_bytes()))
 }
 
@@ -236,8 +239,10 @@ fn promote_encrypted_file<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static st
 }
 
 /// ensureEncrypted (:11-58): the branch structure and messages, ported.
-/// The name/passphrase live in the host's probe state.
-pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static str> {
+/// The name lives in the host's probe state; `passphrase` is threaded
+/// through for the host's key probes and export (source passes it
+/// explicitly); the driver itself never inspects it.
+pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F, _passphrase: &str) -> Result<(), &'static str> {
     if !fs.dir_available() {
         return Err(ERR_DIR_UNAVAILABLE);
     }
@@ -270,6 +275,10 @@ pub fn ensure_encrypted<F: EncryptionFs>(fs: &mut F) -> Result<(), &'static str>
             return Err(ERR_UNREADABLE);
         }
     }
+    // exportPlaintextToEncrypted (:61) runs its OWN removeOrThrow
+    // (destinationFile) BEFORE the try block - observable under races and
+    // its failure is NOT wrapped by the export catch (it precedes it).
+    remove_or_throw(fs, DbFile::Temp)?;
     if fs.export().is_err() {
         // Source: catch { removeOrThrow(temp); throw ISE(ERR_EXPORT, cause) }.
         // A removeOrThrow failure inside the catch MASKS ERR_EXPORT.

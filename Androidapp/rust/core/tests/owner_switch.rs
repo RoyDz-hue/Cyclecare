@@ -174,7 +174,8 @@ struct VirtFs {
     dir_ok: bool,
     dir_there: bool,
     mkdirs_ok: bool,
-    fail_remove: HashSet<&'static str>,
+    fail_remove: HashMap<&'static str, usize>,
+    rm_counts: HashMap<&'static str, usize>,
     fail_rename: HashSet<(&'static str, &'static str)>,
     export_ok: bool,
     log: Vec<String>,
@@ -208,7 +209,9 @@ impl VirtFs {
     fn remove(&mut self, f: DbFile) -> bool {
         let k = key_of(f);
         self.log.push(format!("rm:{k}"));
-        if self.fail_remove.contains(k) {
+        let n = self.rm_counts.entry(k).or_insert(0);
+        *n += 1;
+        if self.fail_remove.get(k) == Some(n) {
             return false;
         }
         if let Some(v) = self.files.get_mut(k) {
@@ -263,11 +266,11 @@ impl EncryptionFs for VirtFs {
 fn dir_unavailable_and_mkdirs_failure_messages() {
     let mut fs = fs_base();
     fs.dir_ok = false;
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_DIR_UNAVAILABLE));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_DIR_UNAVAILABLE));
     let mut fs = fs_base();
     fs.dir_there = false;
     fs.mkdirs_ok = false;
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_DIR_CREATE));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_DIR_CREATE));
 }
 
 #[test]
@@ -279,7 +282,7 @@ fn already_encrypted_cleans_temp_backup_sidecars() {
     fs.put("wal", false, false);
     fs.put("shm", false, false);
     fs.put("jrnl", false, false);
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     assert_eq!(fs.log, vec!["rm:tmp", "rm:bak", "rm:wal", "rm:shm", "rm:jrnl"]);
     assert!(fs.exists(DbFile::Database));
 }
@@ -289,7 +292,7 @@ fn interrupted_conversion_resumes_from_temp() {
     let mut fs = fs_base();
     fs.put("db", false, true); // old plaintext still present
     fs.put("tmp", true, false); // verified encrypted export left behind
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     // promote: db->bak, tmp->db, verify ok, rm bak + sidecars (none exist)
     // promote: bak absent (no rm), db->bak, tmp->db, verify ok, rm bak
     assert_eq!(fs.log, vec!["mv:db->bak", "mv:tmp->db", "rm:bak"]);
@@ -301,7 +304,7 @@ fn interrupted_conversion_resumes_from_temp() {
 #[test]
 fn fresh_install_returns_without_effects() {
     let mut fs = fs_base();
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     // removeOrThrow(tmp) probes but tmp is absent -> delete() never runs
     assert_eq!(fs.log, Vec::<String>::new());
 }
@@ -311,7 +314,7 @@ fn backup_restored_then_converted_in_same_call() {
     // Process died after moving db aside: db missing, plaintext backup left.
     let mut fs = fs_base();
     fs.put("bak", false, true);
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     // tmp absent (no rm), restore bak->db, plaintext-ok, export, promote:
     // bak absent (moved), db->bak, tmp->db, rm bak, sidecars absent
     assert_eq!(
@@ -325,7 +328,7 @@ fn backup_restored_then_converted_in_same_call() {
 fn full_plaintext_to_encrypted_conversion() {
     let mut fs = fs_base();
     fs.put("db", false, true); // legacy plaintext
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     assert_eq!(fs.log, vec!["export", "mv:db->bak", "mv:tmp->db", "rm:bak"]);
     assert!(fs.readable_key(DbFile::Database));
     assert!(!fs.exists(DbFile::Backup), "backup removed after final verification");
@@ -335,7 +338,7 @@ fn full_plaintext_to_encrypted_conversion() {
 fn unreadable_db_with_no_usable_backup_throws_and_preserves() {
     let mut fs = fs_base();
     fs.put("db", false, false); // neither key- nor plaintext-readable
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_UNREADABLE));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_UNREADABLE));
     assert!(fs.exists(DbFile::Database), "original preserved");
     assert_eq!(fs.log, Vec::<String>::new(), "no mutation of the unreadable file");
 }
@@ -345,7 +348,7 @@ fn unreadable_db_falls_back_to_plaintext_backup() {
     let mut fs = fs_base();
     fs.put("db", false, false);
     fs.put("bak", false, true);
-    assert_eq!(ensure_encrypted(&mut fs), Ok(()));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Ok(()));
     assert_eq!(
         fs.log,
         vec!["rm:db", "mv:bak->db", "export", "mv:db->bak", "mv:tmp->db", "rm:bak"]
@@ -357,7 +360,7 @@ fn export_failure_preserves_plaintext_source() {
     let mut fs = fs_base();
     fs.put("db", false, true);
     fs.export_ok = false;
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_EXPORT));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_EXPORT));
     assert!(fs.readable_plain(DbFile::Database), "plaintext source preserved");
     assert!(!fs.exists(DbFile::Temp));
     // catch { removeOrThrow(temp); throw } - tmp absent, delete never runs
@@ -366,14 +369,77 @@ fn export_failure_preserves_plaintext_source() {
 
 #[test]
 fn export_cleanup_failure_masks_the_export_message() {
-    // Source quirk: removeOrThrow inside the catch throws ERR_REMOVE and
-    // the original ERR_EXPORT is replaced by the in-flight throw.
-    let mut fs = fs_base();
-    fs.put("db", false, true);
-    fs.put("tmp", false, false); // leftover temp so the delete is attempted
-    fs.export_ok = false;
-    fs.fail_remove.insert("tmp");
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_REMOVE));
+    // Source quirk: the catch's removeOrThrow(temp) throws ERR_REMOVE and
+    // the original ERR_EXPORT is replaced by the in-flight throw. Reachable
+    // when the failed export LEFT a partial temp behind.
+    struct PartialExport(VirtFs);
+    impl EncryptionFs for PartialExport {
+        fn dir_available(&self) -> bool { true }
+        fn dir_exists(&self) -> bool { true }
+        fn mkdirs(&mut self) -> bool { true }
+        fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
+        fn readable_with_key(&self, f: DbFile) -> bool { self.0.readable_key(f) }
+        fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
+        fn remove(&mut self, f: DbFile) -> bool { self.0.remove(f) }
+        fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
+        fn export(&mut self) -> Result<(), ()> {
+            self.0.log.push("export".into());
+            self.0.put("tmp", false, false); // partial output left behind
+            Err(())
+        }
+    }
+    let mut fx = PartialExport({
+        let mut v = fs_base();
+        v.put("db", false, true);
+        v.fail_remove.insert("tmp", 1);
+        v
+    });
+    assert_eq!(ensure_encrypted(&mut fx, "pw"), Err(ERR_REMOVE));
+    assert_eq!(fx.0.log, vec!["export", "rm:tmp"]);
+}
+
+#[test]
+fn export_pre_remove_failure_is_not_wrapped() {
+    // The export helper's OWN removeOrThrow(destination) precedes its try:
+    // a failure there surfaces as ERR_REMOVE, never as ERR_EXPORT. Race
+    // model: the flow's removeOrThrow(temp) succeeds but a new temp file
+    // appears before the export helper runs its own delete, which fails.
+    struct RaceFs(VirtFs, bool);
+    impl EncryptionFs for RaceFs {
+        fn dir_available(&self) -> bool { true }
+        fn dir_exists(&self) -> bool { true }
+        fn mkdirs(&mut self) -> bool { true }
+        fn exists(&self, f: DbFile) -> bool { self.0.exists(f) }
+        fn readable_with_key(&self, f: DbFile) -> bool { self.0.readable_key(f) }
+        fn readable_plaintext(&self, f: DbFile) -> bool { self.0.readable_plain(f) }
+        fn remove(&mut self, f: DbFile) -> bool {
+            let ok = self.0.remove(f);
+            if ok && matches!(f, DbFile::Temp) && !self.1 {
+                self.1 = true; // arm once
+                self.0.put("tmp", false, false); // concurrent recreation
+            }
+            ok
+        }
+        fn rename(&mut self, from: DbFile, to: DbFile) -> bool { self.0.rename(from, to) }
+        fn export(&mut self) -> Result<(), ()> {
+            self.0.log.push("export".into());
+            Ok(())
+        }
+    }
+    let mut fx = RaceFs(
+        {
+            let mut v = fs_base();
+            v.put("db", false, true);
+            v.put("tmp", false, false);
+            v.fail_remove.insert("tmp", 2); // the SECOND rm (export helper) fails
+            v
+        },
+        false,
+    );
+    // First rm:tmp succeeds (concurrent recreation), the export helper's
+    // own rm:tmp fails -> ERR_REMOVE, export pipeline never ran.
+    assert_eq!(ensure_encrypted(&mut fx, "pw"), Err(ERR_REMOVE));
+    assert_eq!(fx.0.log, vec!["rm:tmp", "rm:tmp"], "helper remove fired before export");
 }
 
 #[test]
@@ -400,7 +466,7 @@ fn temp_verification_failure_removes_temp_and_throws() {
         v.put("db", false, true);
         v
     });
-    assert_eq!(ensure_encrypted(&mut fx), Err(ERR_VERIFY_TEMP));
+    assert_eq!(ensure_encrypted(&mut fx, "pw"), Err(ERR_VERIFY_TEMP));
     assert_eq!(fx.0.log, vec!["export", "rm:tmp"]);
     assert!(fx.0.readable_plain(DbFile::Database), "original preserved");
 }
@@ -410,7 +476,7 @@ fn promote_rename_failure_best_effort_restores_backup() {
     let mut fs = fs_base();
     fs.put("db", false, true);
     fs.fail_rename.insert(("tmp", "db"));
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_PROMOTE));
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_PROMOTE));
     // db moved to bak first, tmp->db failed, best-effort bak->db restored it
     assert!(fs.readable_plain(DbFile::Database), "original restored best-effort");
     assert_eq!(fs.log, vec!["export", "mv:db->bak", "mv:tmp->db", "mv:bak->db"]);
@@ -450,7 +516,7 @@ fn final_verification_failure_restores_backup_and_throws() {
         v.put("db", false, true);
         v
     });
-    assert_eq!(ensure_encrypted(&mut fx), Err(ERR_VERIFY_FINAL));
+    assert_eq!(ensure_encrypted(&mut fx, "pw"), Err(ERR_VERIFY_FINAL));
     assert_eq!(
         fx.0.log,
         vec!["export", "mv:db->bak", "mv:tmp->db", "rm:db", "mv:bak->db"]
@@ -463,8 +529,8 @@ fn remove_sidecar_failure_stops_the_list() {
     let mut fs = fs_base();
     fs.put("db", true, false);
     fs.put("shm", false, false);
-    fs.fail_remove.insert("shm");
-    assert_eq!(ensure_encrypted(&mut fs), Err(ERR_REMOVE));
+    fs.fail_remove.insert("shm", 1);
+    assert_eq!(ensure_encrypted(&mut fs, "pw"), Err(ERR_REMOVE));
     // wal attempted (absent -> no rm call logged? exists=false so remove()
     // not invoked), shm fails, jrnl never attempted
     assert_eq!(fs.log, vec!["rm:shm"]);
