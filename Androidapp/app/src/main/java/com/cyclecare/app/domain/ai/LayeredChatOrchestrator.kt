@@ -170,7 +170,9 @@ object LayeredChatOrchestrator {
         }
 
         // Check for Health Symptoms via NaturalLanguageLogParser
-        val healthParse = NaturalLanguageLogParser.parse(input)
+        val healthParse = if (com.cyclecare.bridge.RustLogParserConfig.ENABLED)
+            com.cyclecare.bridge.RustLogParser.parse(input)
+        else NaturalLanguageLogParser.parse(input)
         val hasRecognizedHealth = healthParse.symptomsResult.isNotEmpty() ||
                 healthParse.flowLevelResult != null ||
                 healthParse.energyResult != null ||

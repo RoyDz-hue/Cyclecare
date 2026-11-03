@@ -177,6 +177,22 @@ fn dispatch(contract: &str, payload: &str) -> String {
             };
             serde_json::json!({"ok": body}).to_string()
         }
+        "parse_log_entry" => {
+            let text = v["text"].as_str().unwrap_or("");
+            let r = corelib::log_parser::parse(text);
+            let items: Vec<serde_json::Value> = r.items.iter().map(|i| serde_json::json!({
+                "category": i.category, "label": i.label, "detail": i.detail,
+                "iconEmoji": i.icon_emoji})).collect();
+            serde_json::json!({"ok": {
+                "rawText": r.raw_text,
+                "items": items,
+                "followUpQuestion": r.follow_up_question,
+                "flowLevelResult": r.flow_level_result,
+                "energyResult": r.energy_result,
+                "moodResult": r.mood_result,
+                "symptomsResult": r.symptoms_result,
+                "painIntensityResult": r.pain_intensity_result}}).to_string()
+        }
         "decide_reconnect" => reconnect(v, false),
         "decide_reconnect_trailing" => reconnect(v, true),
         "evaluate_safety" => {

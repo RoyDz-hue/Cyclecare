@@ -49,7 +49,9 @@ object CareConversationPolicy {
 
     fun proposal(ownerId: String, date: String, input: String): ProposedCareLog? {
         if (!isLoggingIntent(input)) return null
-        val parsed = NaturalLanguageLogParser.parse(input.take(MAX_QUESTION_LENGTH))
+        val parsed = if (com.cyclecare.bridge.RustLogParserConfig.ENABLED)
+            com.cyclecare.bridge.RustLogParser.parse(input.take(MAX_QUESTION_LENGTH))
+        else NaturalLanguageLogParser.parse(input.take(MAX_QUESTION_LENGTH))
         if (parsed.symptomsResult.isEmpty() && parsed.flowLevelResult == null &&
             parsed.energyResult == null && parsed.moodResult == null && parsed.painIntensityResult <= 0) return null
         return ProposedCareLog(ownerId = ownerId, date = date, interpretation = parsed)
