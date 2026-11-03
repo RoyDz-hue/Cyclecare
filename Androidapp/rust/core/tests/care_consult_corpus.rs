@@ -6,6 +6,7 @@
 //! (coroutine, CarePrivacyService, LayeredChatOrchestrator) is not ported.
 
 use cyclecare_core::care_consult::*;
+use cyclecare_core::cloud_health_delete as chd;
 use std::path::PathBuf;
 
 fn rows(name: &str) -> Vec<Vec<String>> {
@@ -133,6 +134,62 @@ fn care_consult_matches_jvm_outputs() {
                 }
             }
             "fail" => CARE_FAILURE_MESSAGE.to_string(),
+            "dentry" => {
+                let uid = if c[4] == "-" { None } else { Some(dec(&c[4])) };
+                let e = chd::delete_entry(
+                    c[2].parse().unwrap(),
+                    c[3].parse().unwrap(),
+                    uid.as_deref(),
+                );
+                format!("{e:?}")
+            }
+            "dpause" => {
+                if chd::pause_must_precede_rpc(c[2].parse().unwrap()) {
+                    "proceed".to_string()
+                } else {
+                    chd::MSG_SAVE_FAILED.to_string()
+                }
+            }
+            "dstate" => {
+                let st = chd::in_flight_state();
+                format!(
+                    "{},{},{},{}",
+                    st.is_deleting_cloud_health, st.is_cloud_sync_allowed, st.is_ai_sharing_allowed, st.message
+                )
+            }
+            "dcurrent" => chd::still_current(
+                "o1",
+                7,
+                if c[2].parse().unwrap() { "o1" } else { "o2" },
+                if c[3].parse().unwrap() { 7 } else { 8 },
+            )
+            .to_string(),
+            "dfinal" => chd::final_message(c[2].parse().unwrap()).to_string(),
+            "cigate" => {
+                let tok = if c[5] == "-" { None } else { Some(dec(&c[5])) };
+                let g = cyclecare_core::care_image_gen::care_image_entry_gate(
+                    c[2].parse().unwrap(),
+                    c[3].parse().unwrap(),
+                    c[4].parse().unwrap(),
+                    tok.as_deref(),
+                    &dec(&c[6]),
+                );
+                use cyclecare_core::care_image_gen::CareImageGate as G;
+                match g {
+                    G::Busy => "Busy".to_string(),
+                    G::Proceed => "Proceed".to_string(),
+                    other => cyclecare_core::care_image_gen::care_image_gate_message(other)
+                        .unwrap()
+                        .to_string(),
+                }
+            }
+            "toff" => {
+                if cyclecare_core::economy_rules::transfer_may_proceed(c[2].parse().unwrap()) {
+                    "proceed".to_string()
+                } else {
+                    cyclecare_core::economy_rules::TRANSFER_OFFLINE_TOAST.to_string()
+                }
+            }
             other => panic!("kind {other}"),
         };
         assert_eq!(&actual, &r[1], "care_consult case {case} diverged from JVM");

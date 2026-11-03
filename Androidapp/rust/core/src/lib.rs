@@ -24,6 +24,7 @@ pub mod data_export_pdf;
 pub mod sound_feedback;
 pub mod network_helper;
 pub mod conflict_resolve;
+pub mod cloud_health_delete;
 pub mod coin_amount;
 pub mod log_parser;
 pub mod reconnect_policy;

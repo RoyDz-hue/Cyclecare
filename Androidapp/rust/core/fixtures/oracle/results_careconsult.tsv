@@ -44,3 +44,29 @@ i1	cramps · fatigue · low mood
 i2	single
 i3	null
 z1	This explanation couldn't finish. Your health log has not changed.
+d1	Proceed
+d2	Busy
+d3	NoOnlineAccount
+d4	NoOnlineAccount
+d5	NoOnlineAccount
+d6	NoOnlineAccount
+d7	NoOnlineAccount
+p1	proceed
+p2	Your choice couldn't be saved, so nothing was erased online. Please try again.
+s1	true,false,false,Erasing your online copy…
+w1	true
+w2	false
+w3	false
+g1	Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept.
+g2	The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.
+m1	Proceed
+m2	Busy
+m3	Image creation is available with CycleCare Premium.
+m4	Proceed
+m5	Please sign in again before creating an image.
+m6	Please sign in again before creating an image.
+m7	Keep your decorative prompt under 500 characters.
+m8	Proceed
+m9	Proceed
+q1	proceed
+q2	Sending coins needs an internet connection. Please reconnect and try again.

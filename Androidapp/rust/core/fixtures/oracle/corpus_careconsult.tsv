@@ -44,3 +44,29 @@ i1	items	cramps|fatigue|low mood
 i2	items	single
 i3	items	-
 z1	fail
+d1	dentry	false	false	user123
+d2	dentry	true	false	user123
+d3	dentry	false	true	user123
+d4	dentry	false	false	-
+d5	dentry	false	false	<EMPTY>
+d6	dentry	false	false	<SPACES>
+d7	dentry	false	false	<NBSP>
+p1	dpause	true
+p2	dpause	false
+s1	dstate	x
+w1	dcurrent	true	true
+w2	dcurrent	false	true
+w3	dcurrent	true	false
+g1	dfinal	true
+g2	dfinal	false
+m1	cigate	false	true	false	tok	
+m2	cigate	true	true	false	tok	
+m3	cigate	false	false	false	tok	
+m4	cigate	false	false	true	tok	
+m5	cigate	false	true	false	-	
+m6	cigate	false	true	false	<SPACES>	
+m7	cigate	false	true	false	tok	<A700>
+m8	cigate	false	true	false	tok	short prompt
+m9	cigate	false	true	false	tok	<EMOJI>
+q1	toff	true
+q2	toff	false

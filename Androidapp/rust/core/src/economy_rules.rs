@@ -182,3 +182,14 @@ pub fn missing_coins_for_unlock(price: i64, balance: &BigDecimal) -> BigDecimal 
     let floor = BigDecimal::from_str("0.001").unwrap();
     if raw > floor { raw } else { floor }
 }
+
+/// Offline gate for `CycleCareViewModel.transferCoins` (:1702-1708, main
+/// 31b88f5): when offline the source sets this exact toast and returns
+/// before touching the transfer use case.
+pub const TRANSFER_OFFLINE_TOAST: &str =
+    "Sending coins needs an internet connection. Please reconnect and try again.";
+
+/// true = proceed to the transfer use case; false = show the offline toast.
+pub fn transfer_may_proceed(is_online: bool) -> bool {
+    is_online
+}

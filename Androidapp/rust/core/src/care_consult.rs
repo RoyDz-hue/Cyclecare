@@ -4,8 +4,13 @@
 //! stays host glue; this module locks the gates, windows and literals.
 //! Line citations grep-verified against main 31b88f5.
 //!
-//! JVM corpus: pending next bundle (verbatim-copy harness, owner-executed);
-//! until then the functions carry source-read evidence only, no parity claim.
+//! JVM-locked by the owner-executed verbatim-copy harness
+//! /downloads/parity/vm/VmConsultParity.kt (71-case corpus in
+//! fixtures/oracle/corpus_careconsult.tsv, replayed zero-diff by
+//! tests/care_consult_corpus.rs). Explicitly NOT ported (host composition):
+//! resetIdentityUiIfNeeded/pre-gate safety ordering, updateConsents + token
+//! fetch, careLogConsentGate.propose / pendingCareProposal, and
+//! cancellation/coroutine dispatch.
 
 use crate::care_ai::is_remote_care_response;
 use crate::kotlin_text::{kotlin_trim, take_utf16};

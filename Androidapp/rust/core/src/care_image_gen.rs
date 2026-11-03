@@ -347,3 +347,55 @@ pub fn generate_using(
         Ok(response) => handle_response(response),
     }
 }
+
+/// Entry-gate chain for `CycleCareViewModel.generateCareImage` (:952-971,
+/// main 31b88f5), in source order: busy guard, premium gate
+/// (isAdmin || tier == PREMIUM), token gate, prompt-length gate
+/// (UTF-16 length > 500). The image job itself stays host glue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CareImageGate {
+    /// :954 already generating; source returns silently.
+    Busy,
+    /// :956-961 not admin and not PREMIUM.
+    NeedsPremium,
+    /// :963-967 access token missing/blank.
+    NeedsSignIn,
+    /// :969-972 custom prompt over 500 UTF-16 units.
+    PromptTooLong,
+    Proceed,
+}
+
+pub const ERR_NEEDS_PREMIUM: &str = "Image creation is available with CycleCare Premium.";
+pub const ERR_NEEDS_SIGN_IN: &str = "Please sign in again before creating an image.";
+pub const ERR_PROMPT_TOO_LONG: &str = "Keep your decorative prompt under 500 characters.";
+
+pub fn care_image_entry_gate(
+    is_generating: bool,
+    is_admin: bool,
+    tier_is_premium: bool,
+    access_token: Option<&str>,
+    custom_prompt: &str,
+) -> CareImageGate {
+    if is_generating {
+        return CareImageGate::Busy;
+    }
+    if !(is_admin || tier_is_premium) {
+        return CareImageGate::NeedsPremium;
+    }
+    if access_token.map(|t| crate::kotlin_text::kotlin_is_blank(t)).unwrap_or(true) {
+        return CareImageGate::NeedsSignIn;
+    }
+    if custom_prompt.chars().map(|c| c.len_utf16()).sum::<usize>() > 500 {
+        return CareImageGate::PromptTooLong;
+    }
+    CareImageGate::Proceed
+}
+
+pub fn care_image_gate_message(gate: CareImageGate) -> Option<&'static str> {
+    match gate {
+        CareImageGate::Busy | CareImageGate::Proceed => None,
+        CareImageGate::NeedsPremium => Some(ERR_NEEDS_PREMIUM),
+        CareImageGate::NeedsSignIn => Some(ERR_NEEDS_SIGN_IN),
+        CareImageGate::PromptTooLong => Some(ERR_PROMPT_TOO_LONG),
+    }
+}
