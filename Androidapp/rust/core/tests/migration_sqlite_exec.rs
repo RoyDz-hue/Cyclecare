@@ -8,6 +8,19 @@
 //! Source-parity quirks stay labeled (failed secureprefs sweep still drops
 //! the plaintext PIN; fault between setPIN/enabling leaves disabled) -
 //! parity is not safety approval and nothing here runs against a user db.
+//!
+//! SCHEMA PROVENANCE (reviewer history check 2026-11-03, reviewer-executed,
+//! NOT independently re-verified here - the github surface cannot list
+//! commits): NO v4 commit exists in repo history; versions went v3 -> v5.
+//! The v4-shaped fixture below is therefore INFERRED (current entities
+//! minus later-migration effects), not a historical schema match. Known
+//! historical deltas per reviewer: v3 appLockPin was TEXT NOT NULL
+//! (fixture follows that shape); the v3 profile lacked 4 of the current
+//! fields. And the CURRENT source has no 3->4 migration at all: a v3
+//! install upgrading to current has NO Room migration path and
+//! buildDatabase shows no destructive fallback - a pre-existing
+//! compatibility concern in the source, NOT a port regression. Parity
+//! claim stays: the ported SQL/decisions match the current source text.
 #![cfg(feature = "sqlite")]
 
 use rusqlite::Connection;
@@ -49,7 +62,7 @@ fn build_v4(conn: &Connection) {
             `remindPeriod` INTEGER NOT NULL,
             `remindFertile` INTEGER NOT NULL,
             `remindDailyLog` INTEGER NOT NULL,
-            `appLockPin` TEXT
+            `appLockPin` TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE `onboarding_profiles` (
             `id` INTEGER NOT NULL PRIMARY KEY,
@@ -135,9 +148,44 @@ fn run_migration_4_to_9_sql(conn: &Connection) {
     conn.execute_batch(SQL_4_TO_5_DROP).unwrap();
     conn.execute_batch(SQL_4_TO_5_RENAME).unwrap();
     for s in SQL_5_TO_6 { conn.execute_batch(s).unwrap(); }
+    // A revisions row written BETWEEN 5->6 and 7->8 must read back
+    // serverRevision = 0 (the 7->8 ALTER default) afterwards.
+    conn.execute(
+        "INSERT INTO `health_sync_revisions` VALUES ('owner1','rec1',7,'hash7',0,1730000000123)",
+        [],
+    )
+    .unwrap();
     for s in SQL_6_TO_7 { conn.execute_batch(s).unwrap(); }
     for s in SQL_7_TO_8 { conn.execute_batch(s).unwrap(); }
     for s in SQL_8_TO_9 { conn.execute_batch(s).unwrap(); }
+}
+
+/// Full PRAGMA table_info tuples: (name, type, notnull, dflt_value, pk).
+fn table_info(conn: &Connection, table: &str) -> Vec<(String, String, bool, Option<String>, i64)> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info(`{table}`)")).unwrap();
+    stmt.query_map([], |r| {
+        Ok((r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0, r.get(4)?, r.get(5)?))
+    })
+    .unwrap()
+    .collect::<Result<_, _>>()
+    .unwrap()
+}
+
+/// Key columns of an index in declaration order (PRAGMA index_xinfo; the
+/// trailing rowid row has key=0 and NULL name - filtered via column 5).
+fn index_columns(conn: &Connection, index: &str) -> Vec<String> {
+    let mut stmt = conn.prepare(&format!("PRAGMA index_xinfo(`{index}`)")).unwrap();
+    let mut rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(2)?, r.get::<_, i64>(5)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .filter(|(_, _, key)| *key == 1)
+        .map(|(seqno, name, _)| (seqno, name.unwrap()))
+        .collect();
+    rows.sort_by_key(|(seqno, _)| *seqno);
+    rows.into_iter().map(|(_, name)| name).collect()
 }
 
 #[test]
@@ -167,40 +215,111 @@ fn full_4_to_9_chain_executes_and_preserves_data() {
         .unwrap();
     assert_eq!(row, (1, "goal_a,goal_b".into(), "2026-10-01".into(), 29, 5, "2027-01-01".into(), 1));
 
-    // 5->6 tables + index exist.
-    for t in ["health_sync_revisions", "health_sync_outbox", "health_sync_cursors", "index_health_sync_outbox_ownerId_nextAttemptAt"] {
-        assert!(table_exists(&conn, t), "{t} missing after 5->6");
-    }
-    // 6->7: outbox columns + conflicts table + index.
-    let outbox_cols = table_columns(&conn, "health_sync_outbox");
-    assert!(outbox_cols.contains(&"serverReceipt".to_string()));
-    assert!(outbox_cols.contains(&"serverRevision".to_string()));
-    assert!(table_exists(&conn, "health_sync_conflicts"));
-    assert!(table_exists(&conn, "index_health_sync_conflicts_ownerId_resolvedAt"));
-    // 7->8: revisions gained serverRevision with default 0.
-    assert!(table_columns(&conn, "health_sync_revisions").contains(&"serverRevision".to_string()));
-    // 8->9: onboarding_profiles gained lastPeriodEndDateString; existing
-    // row got the DEFAULT '' (data preservation through ALTER).
-    let end_date: String = conn
-        .query_row("SELECT lastPeriodEndDateString FROM `onboarding_profiles` WHERE id = 1", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(end_date, "");
-    // Pre-existing rows across every table preserved.
-    let (n_settings, n_profiles, n_logs): (i64, i64, i64) = (
-        conn.query_row("SELECT COUNT(*) FROM `cycle_settings`", [], |r| r.get(0)).unwrap(),
-        conn.query_row("SELECT COUNT(*) FROM `onboarding_profiles`", [], |r| r.get(0)).unwrap(),
-        conn.query_row("SELECT COUNT(*) FROM `cycle_day_logs`", [], |r| r.get(0)).unwrap(),
+    // --- Full schema tuples (name, type, notnull, default, pk) ---
+    let revisions = table_info(&conn, "health_sync_revisions");
+    assert_eq!(
+        revisions,
+        vec![
+            ("ownerId".into(), "TEXT".into(), true, None, 1),
+            ("recordId".into(), "TEXT".into(), true, None, 2),
+            ("revision".into(), "INTEGER".into(), true, None, 0),
+            ("payloadHash".into(), "TEXT".into(), false, None, 0),
+            ("tombstone".into(), "INTEGER".into(), true, None, 0),
+            ("updatedAt".into(), "INTEGER".into(), true, None, 0),
+            ("serverRevision".into(), "INTEGER".into(), true, Some("0".into()), 0),
+        ],
+        "health_sync_revisions full tuple (incl. 7->8 serverRevision default)"
     );
-    assert_eq!((n_settings, n_profiles, n_logs), (1, 1, 2));
-    let log_notes: String = conn
-        .query_row("SELECT notes FROM `cycle_day_logs` WHERE dateString = '2026-10-02'", [], |r| r.get(0))
+    let outbox = table_info(&conn, "health_sync_outbox");
+    assert_eq!(outbox.len(), 14, "12 cols from 5->6 + 2 from 6->7");
+    assert_eq!(outbox[0], ("ownerId".into(), "TEXT".into(), true, None, 1));
+    assert_eq!(outbox[1], ("operationId".into(), "TEXT".into(), true, None, 2));
+    assert!(outbox.contains(&("payloadJson".into(), "TEXT".into(), false, None, 0)));
+    assert!(outbox.contains(&("lastError".into(), "TEXT".into(), false, None, 0)));
+    assert!(outbox.contains(&("serverReceipt".into(), "TEXT".into(), false, None, 0)));
+    assert!(outbox.contains(&("serverRevision".into(), "INTEGER".into(), false, None, 0)));
+    let cursors = table_info(&conn, "health_sync_cursors");
+    assert_eq!(
+        cursors,
+        vec![
+            ("ownerId".into(), "TEXT".into(), true, None, 1),
+            ("changeSeq".into(), "INTEGER".into(), true, None, 0),
+        ]
+    );
+    let conflicts = table_info(&conn, "health_sync_conflicts");
+    assert_eq!(conflicts.len(), 12);
+    assert_eq!(conflicts[0], ("ownerId".into(), "TEXT".into(), true, None, 1));
+    assert_eq!(conflicts[1], ("recordId".into(), "TEXT".into(), true, None, 2));
+    assert!(conflicts.contains(&("resolvedAt".into(), "INTEGER".into(), false, None, 0)));
+    assert!(conflicts.contains(&("resolution".into(), "TEXT".into(), false, None, 0)));
+    assert!(conflicts.contains(&("remoteTombstone".into(), "INTEGER".into(), true, None, 0)));
+
+    // --- Index key columns in declaration order ---
+    assert_eq!(
+        index_columns(&conn, "index_health_sync_outbox_ownerId_nextAttemptAt"),
+        vec!["ownerId".to_string(), "nextAttemptAt".to_string()]
+    );
+    assert_eq!(
+        index_columns(&conn, "index_health_sync_conflicts_ownerId_resolvedAt"),
+        vec!["ownerId".to_string(), "resolvedAt".to_string()]
+    );
+
+    // --- The pre-7->8 revisions row reads serverRevision = 0 ---
+    let srv_rev: i64 = conn
+        .query_row("SELECT serverRevision FROM `health_sync_revisions` WHERE ownerId='owner1' AND recordId='rec1'", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(log_notes, "second log");
-    // onboarding row content preserved through 8->9.
-    let mode: String = conn
-        .query_row("SELECT accountMode FROM `onboarding_profiles` WHERE id = 1", [], |r| r.get(0))
+    assert_eq!(srv_rev, 0, "7->8 ALTER default applied to pre-existing row");
+
+    // --- FULL settings row comparison (all 15 post-4->5 columns) ---
+    let settings: Vec<rusqlite::types::Value> = conn
+        .query_row("SELECT * FROM `cycle_settings` WHERE id = 1", [], |r| {
+            Ok((0..15).map(|i| r.get::<_, rusqlite::types::Value>(i).unwrap()).collect())
+        })
         .unwrap();
-    assert_eq!(mode, "SYNC_ACCOUNT");
+    fn v(x: impl Into<rusqlite::types::Value>) -> rusqlite::types::Value { x.into() }
+    fn t(x: &str) -> rusqlite::types::Value { rusqlite::types::Value::Text(x.to_string()) }
+    let expect_settings: Vec<rusqlite::types::Value> = vec![
+        v(1i64), v(1i64), t("goal_a,goal_b"), t("2026-10-01"), v(29i64), v(6i64),
+        v(13i64), v(1i64), v(5i64), v(0i64), v(0i64), t("2027-01-01"), v(1i64),
+        v(0i64), v(1i64),
+    ];
+    assert_eq!(settings, expect_settings, "full settings row diverged");
+
+    // --- FULL profile row comparison (18 cols post-8->9) ---
+    let profile: Vec<rusqlite::types::Value> = conn
+        .query_row("SELECT * FROM `onboarding_profiles` WHERE id = 1", [], |r| {
+            Ok((0..18).map(|i| r.get::<_, rusqlite::types::Value>(i).unwrap()).collect())
+        })
+        .unwrap();
+    let expect_profile: Vec<rusqlite::types::Value> = vec![
+        v(1i64), v(1i64), v(1730000000000i64), v(1i64), v(1i64), t("SYNC_ACCOUNT"),
+        t("goal_a"), t("2026-09-28"), t(""), t("EXACT"), t(""), v(31i64),
+        v(4i64), v(1i64), t("cramps"), t("LOW"), t("POOR"), v(1i64),
+    ];
+    // Column ORDER after 8->9: ALTER ADD COLUMN appends
+    // lastPeriodEndDateString at the END (position 18), despite the entity
+    // listing it mid-class - SQLite ALTER appends, entity order is Room's.
+    let mut expect_profile_ordered = expect_profile.clone();
+    expect_profile_ordered.remove(8);
+    expect_profile_ordered.push(t(""));
+    assert_eq!(profile, expect_profile_ordered, "full profile row diverged");
+
+    // --- FULL log rows (15 cols x 2) ---
+    let logs: Vec<Vec<rusqlite::types::Value>> = {
+        let mut stmt = conn.prepare("SELECT * FROM `cycle_day_logs` ORDER BY dateString").unwrap();
+        stmt.query_map([], |r| Ok((0..15).map(|i| r.get::<_, rusqlite::types::Value>(i).unwrap()).collect()))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let expect_log = |d: &str, notes: &str| -> Vec<rusqlite::types::Value> {
+        vec![
+            t(d), t("MEDIUM"), t("HIGH"), t("CALM"), t("cramps,acne"),
+            t(""), t(""), t(""), t("POSITIVE"), v(36.7f64), v(7.5f64),
+            t("GOOD"), v(8i64), t(notes), v(3i64),
+        ]
+    };
+    assert_eq!(logs, vec![expect_log("2026-10-01", "first log"), expect_log("2026-10-02", "second log")]);
 
     drop(conn);
     let _ = std::fs::remove_file(path);
