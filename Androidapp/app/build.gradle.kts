@@ -234,9 +234,9 @@ dependencies {
   // every androidTest dependency overlapping the app's runtime classpath is
   // subtracted from the test APK's packaged classes (app-provided model),
   // so the lab test classpath stays minimal on purpose.
-  debugAndroidTestImplementation(platform(libs.androidx.compose.bom))
-  debugAndroidTestImplementation(libs.androidx.compose.ui.test.junit4)
-  debugAndroidTestImplementation(libs.androidx.espresso.core)
+  "debugAndroidTestImplementation"(platform(libs.androidx.compose.bom))
+  "debugAndroidTestImplementation"(libs.androidx.compose.ui.test.junit4)
+  "debugAndroidTestImplementation"(libs.androidx.espresso.core)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
