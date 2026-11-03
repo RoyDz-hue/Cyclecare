@@ -63,20 +63,26 @@ struct UriSubset {
 }
 
 
+/// 1-3 ASCII digits, value 0-255 (JDK17 differential: range IS checked).
+fn is_ipv4_octet(l: &str) -> bool {
+    !l.is_empty()
+        && l.len() <= 3
+        && l.bytes().all(|b| b.is_ascii_digit())
+        && l.parse::<u16>().map(|v| v <= 255).unwrap_or(false)
+}
+
 /// JDK17-observed getHost() hostname shape: dot-separated labels of
 /// ASCII alphanumerics, interior '-' allowed, no empty labels, top label
 /// starts with a letter. Evidence: rejects my_host, exa!mple.com,
 /// -bad.com, a..b, host.123, ho%73t.com, héllo.com.
 fn jdk_server_host(host: &str) -> bool {
-    // JDK matchIPv4Reference shape: exactly 4 labels of 1-3 ASCII digits,
-    // octet RANGE unchecked by java.net.URI (InetAddress checks range, URI
-    // does not). MODELED from the JDK parser, NOT yet differential-
-    // executed by the reviewer - flagged for the next differential round.
+    // JDK matchIPv4Reference: exactly 4 labels of 1-3 ASCII digits, octet
+    // value 0-255 - the JDK17 differential proves URI DOES range-check
+    // (999.1.1.1 and 256.256.256.256 rejected; 01.2.3.4 and 1.2.3.04
+    // accepted, so leading zeros are fine).
     {
         let v4: Vec<&str> = host.split('.').collect();
-        if v4.len() == 4
-            && v4.iter().all(|l| !l.is_empty() && l.len() <= 3 && l.bytes().all(|b| b.is_ascii_digit()))
-        {
+        if v4.len() == 4 && v4.iter().all(|l| is_ipv4_octet(l)) {
             return true;
         }
     }
@@ -99,34 +105,55 @@ fn jdk_server_host(host: &str) -> bool {
         if !bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-') {
             return false; // my_host, exa!mple, ho%73t, héllo (non-ASCII bytes)
         }
-        if i == labels.len() - 1 && !bytes[0].is_ascii_alphabetic() {
-            return false; // host.123 - top label must start alpha
+        // The alpha-starting TOPLABEL rule only applies to a DOTTED name:
+        // a single-label numeric host ("https://1") is a valid domainlabel
+        // and Java accepts it (differential evidence); "host.123" and
+        // "123.45" are rejected.
+        if labels.len() > 1 && i == labels.len() - 1 && !bytes[0].is_ascii_alphabetic() {
+            return false; // host.123 - dotted top label must start alpha
         }
     }
     true
 }
 
 
-/// IPv6 literal validation, modeled on JDK scanIPv6Address: hex groups of
-/// 1-4 digits, at most one "::" compression (required when fewer than 8
-/// groups), an embedded dotted-IPv4 counts as two groups and must be the
-/// last group. Pending reviewer differential execution.
+/// IPv6 literal validation. JDK17 differential evidence: scope/zone ids
+/// are accepted ("%eth0", "%en0", "%25eth0", "%zone") but must be
+/// non-empty and free of spaces (and of authority delimiters); the IPv4
+/// tail must be the LAST group of the whole literal ("[1.2.3.4::]"
+/// rejected) with octets range-checked 0-255 ("[::1.2.3.999]" rejected).
 fn valid_ipv6_literal(inner: &str) -> bool {
-    if inner.is_empty() || inner.contains('%') {
-        return false; // zone ids unported
+    if inner.is_empty() {
+        return false;
     }
-    let (left, right, compressed) = match inner.split_once("::") {
+    // Zone id: '%' then 1+ chars, none whitespace or URL delimiters.
+    let addr = match inner.split_once('%') {
+        Some((a, zone)) => {
+            if zone.is_empty()
+                || zone.chars().any(|c| (c as u32) <= 0x20 || matches!(c, '[' | ']' | '/' | '?' | '#'))
+            {
+                return false;
+            }
+            a
+        }
+        None => inner,
+    };
+    if addr.is_empty() {
+        return false;
+    }
+    let (left, right, compressed) = match addr.split_once("::") {
         Some((l, r)) => {
             if r.contains("::") {
                 return false; // at most one "::"
             }
             (l, r, true)
         }
-        None => (inner, "", false),
+        None => (addr, "", false),
     };
-    fn groups(side: &str) -> Option<(usize, bool)> {
+    // allow_ipv4 only on the side that ends the literal.
+    fn groups(side: &str, allow_ipv4: bool) -> Option<usize> {
         if side.is_empty() {
-            return Some((0, false));
+            return Some(0);
         }
         let gs: Vec<&str> = side.split(':').collect();
         let mut count = 0;
@@ -136,41 +163,24 @@ fn valid_ipv6_literal(inner: &str) -> bool {
             }
             let is_last = i == gs.len() - 1;
             if g.contains('.') {
-                // embedded IPv4: last group, 4 labels of 1-3 digits
                 let v4: Vec<&str> = g.split('.').collect();
-                if !is_last
-                    || v4.len() != 4
-                    || !v4.iter().all(|l| !l.is_empty() && l.len() <= 3 && l.bytes().all(|b| b.is_ascii_digit()))
-                {
+                if !allow_ipv4 || !is_last || v4.len() != 4 || !v4.iter().all(|l| is_ipv4_octet(l)) {
                     return None;
                 }
-                count += 2;
-                return Some((count, true));
+                return Some(count + 2);
             }
             if g.len() > 4 || !g.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return None;
             }
             count += 1;
         }
-        Some((count, false))
+        Some(count)
     }
-    let (lc, lv4) = match groups(left) { Some(v) => v, None => return false };
-    let (rc, rv4) = match groups(right) { Some(v) => v, None => return false };
+    let lc = match groups(left, false) { Some(v) => v, None => return false };
+    let rc = match groups(right, true) { Some(v) => v, None => return false };
     let total = lc + rc;
-    if lv4 || rv4 {
-        // IPv4 tail counts as 2 groups
-        if compressed {
-            total < 8
-        } else {
-            total == 8
-        }
-    } else if compressed {
-        total < 8
-    } else {
-        total == 8
-    }
+    if compressed { total < 8 } else { total == 8 }
 }
-
 /// Returns None exactly where `new URI(value)` throws URISyntaxException or
 /// yields a shape whose getHost() is null in the subset.
 fn parse_uri_subset(value: &str) -> Option<UriSubset> {

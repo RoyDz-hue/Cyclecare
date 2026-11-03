@@ -72,7 +72,7 @@ fn jdk17_differential_boundary() {
     // IPv4 literals follow the JDK parser shape (4 labels, 1-3 digits,
     // range unchecked) - modeled, pending differential execution.
     assert_eq!(base_url(true, "https://1.2.3.4"), Some("https://1.2.3.4".into()));
-    assert_eq!(base_url(true, "https://999.1.1.1"), Some("https://999.1.1.1".into()), "URI does not range-check octets (InetAddress would)");
+    assert_eq!(base_url(true, "https://999.1.1.1"), None, "URI DOES range-check octets (JDK17 differential, 41-input + 649-input rounds)");
     assert_eq!(base_url(true, "https://1.2.3.4567"), None, "4-digit label fails IPv4 shape and the alpha-top-label rule");
     assert_eq!(base_url(true, "https://1.2.3"), None, "3 numeric labels: not IPv4, top label not alpha-starting");
 }
@@ -101,4 +101,19 @@ fn jdk17_differential_round3() {
     // IPv4 with trailing dot: not IPv4-shaped (5th empty label), hostname
     // rule then sees top label "4" numeric -> reject.
     assert_eq!(base_url(true, "https://1.2.3.4."), None);
+}
+
+#[test]
+fn jdk17_executed_oracle_649_boundary_inputs() {
+    // Executed JDK17 differential (fixtures/debug_bridge/): every input
+    // must agree exactly - acceptance AND output string.
+    let inputs = std::fs::read_to_string("tests/fixtures/debug_bridge/inputs.txt").unwrap();
+    let expected = std::fs::read_to_string("tests/fixtures/debug_bridge/expected.txt").unwrap();
+    let mut checked = 0;
+    for (inp, exp) in inputs.lines().zip(expected.lines()) {
+        let got = base_url(true, inp).unwrap_or("NULL".to_string());
+        assert_eq!(got, exp, "differential mismatch for input {:?}", inp);
+        checked += 1;
+    }
+    assert_eq!(checked, 649, "corpus size changed - regenerate expected.txt with the JDK17 harness");
 }
