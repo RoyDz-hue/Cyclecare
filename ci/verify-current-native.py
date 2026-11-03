@@ -138,7 +138,8 @@ elif sys.argv[1]=='apk':
             if re.fullmatch(r'classes(?:\d+)?\.dex',name):found|=dex_native_methods(z.read(name))
         assert METHODS<=found,('JNI names missing from actual DEX',found)
     # Structural checks above are mandatory even if SDK tooling is unavailable.
-    print(json.dumps({'structuralNativeChecks':'PASS','packagedNativeSha256':digest,'stripOnlyVsCommitted':'PASS','nativeDexNames':sorted(found),'unsignedStructure':'PASS - no v1 files or APK Signing Block'}),flush=True)
+    struct_msg='signed lab APK: mandatory structure checks passed (signature expected)' if os.environ.get('APK_SIGNED')=='1' else 'PASS - no v1 files or APK Signing Block'
+    print(json.dumps({'structuralNativeChecks':'PASS','packagedNativeSha256':digest,'stripOnlyVsCommitted':'PASS','nativeDexNames':sorted(found),'unsignedStructure':struct_msg}),flush=True)
     sdkpath=os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT')
     assert sdkpath,'SDK location missing: ANDROID_HOME/ANDROID_SDK_ROOT'
     sdk=pathlib.Path(sdkpath)
@@ -148,9 +149,18 @@ elif sys.argv[1]=='apk':
     tool=max(tools,key=version)
     result=subprocess.run([str(tool),'verify','--verbose',str(apk)],capture_output=True,text=True)
     print('apksigner:',tool,'returncode:',result.returncode);print(result.stdout+result.stderr)
-    assert result.returncode==1,('unexpected apksigner failure, cannot accept',result.returncode)
     output=result.stdout+result.stderr
-    assert 'DOES NOT VERIFY' in output and 'Missing META-INF/MANIFEST.MF' in output,('unclassified apksigner failure, not unsigned proof',output)
-    # Unsigned classification is structural, NOT inferred from tool failure.
-    print(json.dumps({'apk':str(apk),'packagedNativeSha256':digest,'committedNativeSha256':EXPECTED,'nativeTransform':'strip-only (.symtab/.strtab removed; all other sections and segments identical)','apkSha256':hashlib.sha256(raw).hexdigest(),'unsignedStructure':'no v1 signature files and no APK signing block','nativeDexNames':sorted(found),'apksignerReturnCode':result.returncode}))
+    if os.environ.get('APK_SIGNED')=='1':
+        # Lab APKs carry the AGP ephemeral debug cert: require a VALID
+        # signature with exactly one signer. The workflow separately proves
+        # the signer cert DN is Android Debug via --print-certs.
+        assert result.returncode==0,('signed lab APK must verify',result.returncode,output)
+        assert 'Verified using v2 scheme (APK Signature Scheme v2): true' in output,('expected valid v2 signature',output)
+        assert 'Number of signers: 1' in output,('expected exactly one (debug) signer',output)
+        print(json.dumps({'apk':str(apk),'packagedNativeSha256':digest,'committedNativeSha256':EXPECTED,'nativeTransform':'strip-only (.symtab/.strtab removed; all other sections and segments identical)','apkSha256':hashlib.sha256(raw).hexdigest(),'signature':'valid v2, exactly 1 signer (AGP debug cert; DN verified in workflow)','nativeDexNames':sorted(found),'apksignerReturnCode':result.returncode}))
+    else:
+        assert result.returncode==1,('unexpected apksigner failure, cannot accept',result.returncode)
+        assert 'DOES NOT VERIFY' in output and 'Missing META-INF/MANIFEST.MF' in output,('unclassified apksigner failure, not unsigned proof',output)
+        # Unsigned classification is structural, NOT inferred from tool failure.
+        print(json.dumps({'apk':str(apk),'packagedNativeSha256':digest,'committedNativeSha256':EXPECTED,'nativeTransform':'strip-only (.symtab/.strtab removed; all other sections and segments identical)','apkSha256':hashlib.sha256(raw).hexdigest(),'unsignedStructure':'no v1 signature files and no APK signing block','nativeDexNames':sorted(found),'apksignerReturnCode':result.returncode}))
 else:raise SystemExit('usage: verify-current-native.py input|apk')

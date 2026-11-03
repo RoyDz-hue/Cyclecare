@@ -649,14 +649,40 @@ workflows:
             python3 ci/verify-current-native.py apk | tee build-logs/lab-packaged-native.txt
           BT=$(ls -d "$ANDROID_HOME/build-tools/"*/ | sort -V | tail -1)
           test -x "$BT/apksigner" && test -x "$BT/aapt2"
-          LABAPK=$(ls Androidapp/app/build/outputs/apk/lab/*.apk | head -1)
-          TESTAPK=$(ls Androidapp/app/build/outputs/androidTest/apk/lab/*.apk | head -1)
+          # Discover actual APK paths from the build output; no hardcoded
+          # AGP output layout is assumed (layout differs across AGP versions).
+          LABAPK=$(find Androidapp/app/build/outputs -name '*.apk' ! -name '*androidTest*' | tee build-logs/lab-find.txt)
+          TESTAPK=$(find Androidapp/app/build/outputs -name '*androidTest*.apk' | tee -a build-logs/lab-find.txt)
+          test "$(printf '%s\n' "$LABAPK" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$TESTAPK" | grep -c .)" -eq 1
           echo "lab apk: $LABAPK"; echo "test apk: $TESTAPK"
-          for A in "$LABAPK" "$TESTAPK"; do
+          sha256sum "$LABAPK" "$TESTAPK" | tee build-logs/lab-apk-sha256.txt
+          # Deterministic publish directory for both APKs.
+          rm -rf lab-artifacts && mkdir -p lab-artifacts
+          cp "$LABAPK" lab-artifacts/app-arm64-v8a-lab.apk
+          cp "$TESTAPK" lab-artifacts/app-arm64-v8a-lab-androidTest.apk
+          : > build-logs/lab-signing.txt
+          for A in lab-artifacts/app-arm64-v8a-lab.apk lab-artifacts/app-arm64-v8a-lab-androidTest.apk; do
             "$BT/apksigner" verify --print-certs "$A" | tee -a build-logs/lab-signing.txt
           done
-          grep -q 'Android Debug' build-logs/lab-signing.txt
-          "$BT/aapt2" dump badging "$LABAPK" | grep -E "package: name='com.cyclecare.app.lab'" | tee build-logs/lab-package.txt
+          # Both APKs must carry the ephemeral Android Debug cert...
+          test "$(grep -c 'CN=Android Debug' build-logs/lab-signing.txt)" -eq 2
+          # ...and it must be the SAME signer certificate on both.
+          test "$(grep 'certificate SHA-256 digest' build-logs/lab-signing.txt | sort -u | wc -l)" -eq 1
+          # App package identity, fail-closed.
+          "$BT/aapt2" dump badging lab-artifacts/app-arm64-v8a-lab.apk | grep -E "package: name='com.cyclecare.app.lab'" | tee build-logs/lab-package.txt
+          "$BT/aapt2" dump badging lab-artifacts/app-arm64-v8a-lab.apk | grep -o "sdkVersion:'24'"
+          # Test APK: package + instrumentation target/runner from the actual
+          # binary manifest (aapt2 xmltree), fail-closed. Attribute format
+          # verified against aapt2 34.0.0 xmltree output.
+          "$BT/aapt2" dump badging lab-artifacts/app-arm64-v8a-lab-androidTest.apk | grep '^package: name=' | tee build-logs/lab-test-package.txt
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml lab-artifacts/app-arm64-v8a-lab-androidTest.apk \
+            | tee build-logs/lab-test-manifest.xmltree.txt > /dev/null
+          INSTRBLOCK=$(awk '/E: instrumentation \(/{match($0,/^ */);ind=RLENGTH;f=1;print;next} f{match($0,/^ */);if($0 ~ /E: / && RLENGTH<=ind)exit;print}' build-logs/lab-test-manifest.xmltree.txt)
+          test -n "$INSTRBLOCK"
+          echo "$INSTRBLOCK" | tee build-logs/lab-instrumentation.txt
+          echo "$INSTRBLOCK" | grep -qE 'android:name\(0x[0-9a-f]+\)="androidx\.test\.runner\.AndroidJUnitRunner"'
+          echo "$INSTRBLOCK" | grep -qE 'android:targetPackage\(0x[0-9a-f]+\)="com\.cyclecare\.app\.lab"'
       - name: Check R8 obfuscation active and caller path kept (bounded)
         script: |
           set -euo pipefail
@@ -668,7 +694,6 @@ workflows:
           grep -Eq '^com\.cyclecare\.app\..+ -> [a-z]+:' "$MAP"
           echo "mapping present; bridge + lab caller kept; obfuscation active" | tee build-logs/lab-mapping.txt
     artifacts:
-      - Androidapp/app/build/outputs/apk/lab/*.apk
-      - Androidapp/app/build/outputs/androidTest/apk/lab/*.apk
+      - lab-artifacts/*.apk
       - Androidapp/app/build/outputs/mapping/lab/mapping.txt
       - build-logs/*
