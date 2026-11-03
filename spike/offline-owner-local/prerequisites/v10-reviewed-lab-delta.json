@@ -1,0 +1,18 @@
+{
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabCorpusMapper.kt": {
+    "prior": "945db63eb3c0183992c4e013a27274ba34fdba619fcdae5939324ab27de6d82c",
+    "current": "daa54d2d743bd13d81ffdbc8256818ef3b610f853a37341b04d39ab4085b71d4"
+  },
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt": {
+    "prior": "9dea6264b0946df796cdedc9980d5ff894e8878fa3c48a2cc82c03030dc34e8a",
+    "current": "cab0459a640c623ac7d8e3c748a5f7279a34461712fbe0c78ecf0ebaa1d782b3"
+  },
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt": {
+    "prior": "cdcc1fac26e1f27f71485b9b031ed1ecf37e8bca46e44fbade03b2530681171c",
+    "current": "17160c295bbd573ee36ac820c2707def7cbc84bc77f19bbaf147fcf264288029"
+  },
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/SyntheticFixtureConfig.kt": {
+    "prior": "1ef879820d9484020a6d6d1b8e4406a22c16283a9aaff1ae19e1a4473b571383",
+    "current": "199489f8829c4affe8c3a1e6f5230b803e00ba9aa33ba9f33d5c3a9083f1e582"
+  }
+}

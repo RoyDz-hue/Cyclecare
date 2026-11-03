@@ -1,0 +1,10 @@
+{
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt": {
+    "prior": "cab0459a640c623ac7d8e3c748a5f7279a34461712fbe0c78ecf0ebaa1d782b3",
+    "current": "3c281e87ee4ac2f0e005c6b4dba91b8c44faee001f3d86a01322ff25561e2bf9"
+  },
+  "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/SyntheticFixtureConfig.kt": {
+    "prior": "199489f8829c4affe8c3a1e6f5230b803e00ba9aa33ba9f33d5c3a9083f1e582",
+    "current": "6fe59658ca11d664b866dbf1270c194c4fff7ee97d3a68d3266e947e1fc54192"
+  }
+}

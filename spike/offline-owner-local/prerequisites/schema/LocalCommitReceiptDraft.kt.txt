@@ -1,0 +1,17 @@
+// DESIGN DRAFT, not included in Android source set or compiled as Room entity.
+@Entity(tableName = "local_commit_receipts", primaryKeys = ["ownerNamespace", "operationId"])
+data class LocalCommitReceipt(
+ val ownerNamespace: String,
+ val operationId: String,
+ val intentDigest: String,
+ val resultVersion: Int,
+ val resultJson: String,
+ val committedAt: Long
+)
+// INSERT ABORT, never REPLACE. On existing ID compare digest then decode versioned result.
+// DAO query scoped by original captured namespace and exact operation ID.
+// MIGRATION_9_10 creates additive table above; Room entity list+version10 and schema export
+// must be reviewed/generated later. No receipt index beyond composite PK needed initially.
+// resultJson: versioned committed recordId/revision/hash/tombstone array + commit outcome.
+// Host validates bounded exact schema/digest/revisions before returning any success.
+// Receipt owner namespace is NOT raw effectiveUserId nor encrypted filename guessed by Rust.

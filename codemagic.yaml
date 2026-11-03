@@ -735,3 +735,5 @@ workflows:
       - lab-artifacts/*.apk
       - Androidapp/app/build/outputs/mapping/lab/mapping.txt
       - build-logs/*
+      - Androidapp/app/build/generated/ksp/lab/kotlin/com/cyclecare/app/lab/store/*.kt
+      - Androidapp/app/build/generated/ksp/lab/java/com/cyclecare/app/lab/store/*.java
