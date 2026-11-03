@@ -18,8 +18,27 @@ object RustLogParserConfig { const val ENABLED = false }
 object RustLogParser {
     fun parse(input: String): ParsedLogInterpretation {
         val kotlin = NaturalLanguageLogParser.parse(input)
+        // Invalid UTF-16 (unpaired surrogates) cannot cross JNI faithfully: exact Kotlin result.
+        if (hasUnpairedSurrogate(input)) return kotlin
         val native = nativeOrNull(input) ?: return kotlin
+        // Full-interpretation equality: every ParsedLogInterpretation field (rawText, items,
+        // followUpQuestion, flowLevelResult, energyResult, moodResult, symptomsResult,
+        // painIntensityResult) and every ParsedLogItem field via data-class equals.
         return if (native == kotlin) native else kotlin
+    }
+
+    internal fun hasUnpairedSurrogate(s: String): Boolean {
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c.isHighSurrogate()) {
+                if (i + 1 >= s.length || !s[i + 1].isLowSurrogate()) return true
+                i += 2
+            } else if (c.isLowSurrogate()) {
+                return true
+            } else i++
+        }
+        return false
     }
 
     internal fun nativeOrNull(input: String): ParsedLogInterpretation? {

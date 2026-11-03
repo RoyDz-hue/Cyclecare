@@ -69,5 +69,13 @@ class RustLogParserTest {
         assertNull(RustLogParser.decode(bad))
     }
 
+    @Test fun unpairedSurrogateDetection() {
+        assertTrue(RustLogParser.hasUnpairedSurrogate("bad \uD800x"))
+        assertTrue(RustLogParser.hasUnpairedSurrogate("trailing\uD800"))
+        assertTrue(RustLogParser.hasUnpairedSurrogate("lone \uDC00"))
+        assertTrue(!RustLogParser.hasUnpairedSurrogate("paired \uD83D\uDE31 ok"))
+        assertTrue(!RustLogParser.hasUnpairedSurrogate("plain text"))
+    }
+
     @Test fun flagRemainsDisabled() = assertTrue(!RustLogParserConfig.ENABLED)
 }
