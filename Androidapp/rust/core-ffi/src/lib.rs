@@ -11,16 +11,16 @@ use jni::objects::{JClass, JString};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 
-use cyclecare_core::coin_amount::sanitize_coin_amount_input;
-use cyclecare_core::cycle_math::{parse_local_date_iso, validate_period_date_strings};
-use cyclecare_core::economy_status::{
+use corelib::coin_amount::sanitize_coin_amount_input;
+use corelib::cycle_math::{parse_local_date_iso, validate_period_date_strings};
+use corelib::economy_status::{
     self, RestrictionRecord, WalletNumber,
 };
-use cyclecare_core::pattern_engine::{self, PatternLog, PatternSettings};
-use cyclecare_core::pin::is_complete_pin;
-use cyclecare_core::reconnect_policy::{self, Decision, ReconnectState};
+use corelib::pattern_engine::{self, PatternLog, PatternSettings};
+use corelib::pin::is_complete_pin;
+use corelib::reconnect_policy::{self, Decision, ReconnectState};
 use std::str::FromStr;
-use cyclecare_core::safety::{self, SafetyLog};
+use corelib::safety::{self, SafetyLog};
 
 #[no_mangle]
 pub extern "system" fn Java_com_cyclecare_app_rust_CycleCareCoreBridge_nativeCoreHandshake(
@@ -88,7 +88,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
         }
         "startup_gate" => {
             let b = |k: &str| v[k].as_bool().unwrap_or(false);
-            let g = cyclecare_core::lifecycle::startup_gate(
+            let g = corelib::lifecycle::startup_gate(
                 b("local"), b("secure"), b("stored"), b("profile"), b("onboardingCompleted"),
                 b("pinEnabled"), b("pinPresent"), b("fingerprintEnabled"), b("userIdPresent"),
             );
@@ -99,14 +99,14 @@ fn dispatch(contract: &str, payload: &str) -> String {
         "effective_user_id" => {
             let uid = v["userId"].as_str();
             let device = v["deviceId"].as_str().unwrap_or("");
-            serde_json::json!({"ok": cyclecare_core::lifecycle::effective_user_id(uid, device)}).to_string()
+            serde_json::json!({"ok": corelib::lifecycle::effective_user_id(uid, device)}).to_string()
         }
         "ensure_setup_ok" => {
             let body = v["body"].as_str().unwrap_or("");
-            serde_json::json!({"ok": cyclecare_core::verified_profile::ensure_setup_ok(body)}).to_string()
+            serde_json::json!({"ok": corelib::verified_profile::ensure_setup_ok(body)}).to_string()
         }
         "has_remote_profile" => {
-            let r = cyclecare_core::reconcile::has_remote_profile_response(
+            let r = corelib::reconcile::has_remote_profile_response(
                 v["httpOk"].as_bool().unwrap_or(false),
                 v["body"].as_str().unwrap_or(""),
                 v["owner"].as_str().unwrap_or(""),
@@ -117,7 +117,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
             }
         }
         "verified_profile_parse" => {
-            match cyclecare_core::verified_profile::parse_verified_profile(
+            match corelib::verified_profile::parse_verified_profile(
                 v["owner"].as_str().unwrap_or(""),
                 v["econBody"].as_str().unwrap_or(""),
                 v["profBody"].as_str().unwrap_or(""),
@@ -141,14 +141,14 @@ fn dispatch(contract: &str, payload: &str) -> String {
         }
         "reconcile_offline_claim" => {
             let bd = |k: &str| bigdecimal::BigDecimal::from_str(v[k].as_str().unwrap_or("0")).unwrap_or_default();
-            let o = cyclecare_core::reconcile::reconcile_offline_claim_response(
+            let o = corelib::reconcile::reconcile_offline_claim_response(
                 v["httpOk"].as_bool().unwrap_or(false),
                 v["body"].as_str().unwrap_or(""),
                 &bd("balance"), &bd("earned"),
                 v["rank"].as_str().unwrap_or("LUMEN"),
                 v["pendingDate"].as_str().unwrap_or(""),
             );
-            use cyclecare_core::reconcile::ReconcileOutcome as R;
+            use corelib::reconcile::ReconcileOutcome as R;
             let body = match o {
                 R::Applied { coin_balance, lifetime_earned, rank, mined_date } => serde_json::json!({
                     "outcome": "APPLIED", "coinBalance": coin_balance,
@@ -245,6 +245,63 @@ fn dispatch(contract: &str, payload: &str) -> String {
             serde_json::json!({"ok": {"activeStatus": m.active_status,
                 "finalReason": m.final_reason, "finalUntil": m.final_until}})
                 .to_string()
+        }
+        "cycle_screen_state" => {
+            use corelib::cycle_math::parse_local_date_iso;
+            use corelib::cycle_screen_state::{build_cycle_screen_state, CycleScreenInput};
+            let st = &v["settings"];
+            let today = match v["today"].as_str().and_then(parse_local_date_iso) {
+                Some(d) => d,
+                None => return err("today must be ISO yyyy-MM-dd"),
+            };
+            let selected = match v["selectedDate"].as_str().and_then(parse_local_date_iso) {
+                Some(d) => d,
+                None => return err("selectedDate must be ISO yyyy-MM-dd"),
+            };
+            let input = CycleScreenInput {
+                last_period_start_date: st["lastPeriodStartDate"].as_str().unwrap_or("").into(),
+                average_cycle_length: st["averageCycleLength"].as_i64().unwrap_or(28) as i32,
+                period_duration: st["periodDuration"].as_i64().unwrap_or(5) as i32,
+                luteal_phase_days: st["lutealPhaseDays"].as_i64().unwrap_or(14) as i32,
+                date_choice: v["dateChoice"].as_str().map(Into::into),
+                cycle_length_choice: v["cycleLengthChoice"].as_str().map(Into::into),
+                today,
+                selected_date: selected,
+            };
+            let s = build_cycle_screen_state(&input);
+            let pred = |p: &Option<corelib::cycle_math::DayPrediction>| match p {
+                Some(p) => serde_json::json!({
+                    "date": p.date.to_string(),
+                    "dayOfCycle": p.day_of_cycle,
+                    "phase": format!("{:?}", p.phase),
+                    "phaseTitle": p.phase.kotlin_title(),
+                    "phaseSubtitle": p.phase.kotlin_subtitle(),
+                    "phaseDescription": p.phase.kotlin_description(),
+                    "phaseAdvice": p.phase.kotlin_advice(),
+                    "phaseColorHex": p.phase.kotlin_color_hex(),
+                    "isPeriod": p.is_period,
+                    "isFertile": p.is_fertile,
+                    "isOvulation": p.is_ovulation,
+                    "fertilityConfidence": p.fertility_confidence,
+                    "pregnancyChance": p.pregnancy_chance,
+                }),
+                None => serde_json::Value::Null,
+            };
+            serde_json::json!({"ok": {
+                "hasCycleAnchor": s.has_cycle_anchor,
+                "cycleStartIsApproximate": s.cycle_start_is_approximate,
+                "daysUntilNextPeriod": s.days_until_next_period,
+                "nextPeriodDate": s.next_period_date.map(|d| d.to_string()),
+                "daysUntilOvulation": s.days_until_ovulation,
+                "isPeriodActiveToday": s.is_period_active_today,
+                "todayPrediction": pred(&s.today_prediction),
+                "selectedDatePrediction": pred(&s.selected_prediction),
+                "selectedDayOfCycleText": s.selected_day_of_cycle_text,
+                "daysUntilPeriodFromSelected": s.days_until_period_from_selected,
+                "selectedDayTitle": s.selected_day_title,
+                "disclaimer": s.disclaimer,
+            }})
+            .to_string()
         }
         other => err(&format!("unknown contract: {other}")),
     }
@@ -379,4 +436,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&r).unwrap();
         assert_eq!(v["ok"], "1a6fd60a-34f6-39ee-a11b-f9e6b9689441");
     }
+}
+
+/// Test-only handle on the dispatcher (the JNI entry points need a JVM).
+#[doc(hidden)]
+pub fn dispatch_for_test(contract: &str, payload: &str) -> String {
+    dispatch(contract, payload)
 }

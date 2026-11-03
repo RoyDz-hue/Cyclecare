@@ -32,6 +32,36 @@ impl CyclePhase {
         }
     }
 
+    /// Verbatim CycleModels.kt subtitle (repo main@31b88f5).
+    pub fn kotlin_subtitle(&self) -> &'static str {
+        match self {
+            CyclePhase::Menstrual => "Rest & Reset",
+            CyclePhase::Follicular => "Energy Rising",
+            CyclePhase::Ovulation => "Peak Fertility",
+            CyclePhase::Luteal => "Nurture & Balance",
+        }
+    }
+
+    /// Verbatim CycleModels.kt description (repo main@31b88f5).
+    pub fn kotlin_description(&self) -> &'static str {
+        match self {
+            CyclePhase::Menstrual => "Uterine lining sheds as hormone levels reach baseline.",
+            CyclePhase::Follicular => "Estrogen gradually rises, prompting egg follicles to develop.",
+            CyclePhase::Ovulation => "Luteinizing hormone surge triggers the release of a mature ovum.",
+            CyclePhase::Luteal => "Progesterone peaks to support the uterine lining, then declines if unfertilized.",
+        }
+    }
+
+    /// Verbatim CycleModels.kt advice (repo main@31b88f5).
+    pub fn kotlin_advice(&self) -> &'static str {
+        match self {
+            CyclePhase::Menstrual => "Prioritize restorative rest, gentle stretching, and iron-rich nourishing foods.",
+            CyclePhase::Follicular => "Embrace rising stamina with creative projects, social connection, and active workouts.",
+            CyclePhase::Ovulation => "Highest fertility window. Energy and mood vary from person to person; notice what is true for you.",
+            CyclePhase::Luteal => "Incorporate magnesium, complex carbohydrates, warm herbal infusions, and mindful pacing.",
+        }
+    }
+
     /// Verbatim CycleModels.kt colorHex (0xAARRGGBB, repo main@31b88f5).
     pub fn kotlin_color_hex(&self) -> u32 {
         match self {
