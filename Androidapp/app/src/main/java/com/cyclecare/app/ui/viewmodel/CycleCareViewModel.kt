@@ -230,26 +230,18 @@ class CycleCareViewModel(
     }
 
     /**
-     * For flows that must publish a start decision: waits briefly for an owner
-     * switch to settle (8 attempts, 250 ms apart). Never publishes an unstable read.
+     * For flows that must publish a start decision: waits for an owner switch to
+     * settle (40 attempts, 250 ms apart, about 10 s). Never publishes an unstable
+     * read. On exhaustion the caller leaves the UI unchanged: it deliberately does
+     * NOT show the cloud "could not be checked" screen (wrong for local-only users,
+     * and its retry does nothing for them) and never routes to onboarding.
      */
     private suspend fun readStableLocalSnapshotWithBackoff(resetFirst: Boolean): com.cyclecare.app.data.repository.CycleRepository.StoredSnapshot? {
-        repeat(8) {
+        repeat(40) {
             readStableLocalSnapshot(resetFirst)?.let { return it }
             kotlinx.coroutines.delay(250L)
         }
         return null
-    }
-
-    /**
-     * Explicit state when the local data could not be read stably: the existing
-     * "check failed, try again" state. It never routes to onboarding and never
-     * implies the data is missing.
-     */
-    private fun markLocalReadUnavailable() {
-        _uiState.value = _uiState.value.copy(
-            isCheckingCloudProfile = false, cloudProfileCheckFailed = true, showOnboarding = false
-        )
     }
 
     /** Loads only unresolved conflict metadata for the currently authenticated/local owner. */
@@ -370,7 +362,7 @@ class CycleCareViewModel(
         viewModelScope.launch {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
             val settings = stored.settings
             val profile = stored.profile
             // Isolated spike wiring (RustLifecycleConfig.STARTUP_GATE_ENABLED=false):
@@ -1635,7 +1627,7 @@ class CycleCareViewModel(
         authPreferences.isAiSharingAllowed = false
         resetIdentityUiIfNeeded()
         viewModelScope.launch {
-            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
+            val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
             val settings = stored.settings
             val profile = stored.profile
             _uiState.value = _uiState.value.copy(hasCompletedInitialAuth = true, authMode = "ANONYMOUS",
@@ -1670,7 +1662,7 @@ class CycleCareViewModel(
                 is com.cyclecare.app.data.supabase.AuthResult.Success -> {
                     authPreferences.hasCompletedInitialAuth = true
                     resetIdentityUiIfNeeded()
-                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: run { markLocalReadUnavailable(); return@launch }
+                    val stored = readStableLocalSnapshotWithBackoff(resetFirst = true) ?: return@launch
                     val settings = stored.settings
                     val profile = stored.profile
                     _uiState.value = _uiState.value.copy(
@@ -1964,6 +1956,11 @@ class CycleCareViewModel(
     ) {
         val onboardingOwner = captureConflictOwnerSnapshot()
         viewModelScope.launch {
+            // Stale-operation guard, NOT an atomic fix: if the owner/session already
+            // changed, or the repository is mid owner transition, skip the whole
+            // completion (including the preference writes below). A switch after
+            // this check can still interleave with the writes that follow.
+            if (!isCurrentConflictSnapshot(onboardingOwner) || !repository.isWriteContextStable()) return@launch
             authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
             if (dynamicAnswers.isNotEmpty()) {
                 // Personalization context gathered by the dynamic onboarding

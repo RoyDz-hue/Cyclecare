@@ -107,6 +107,9 @@ class CycleRepository(database: CycleCareDatabase) {
      * is in progress and the write is refused rather than mixing owner A's database
      * with owner B's generation.
      */
+    /** Non-throwing probe of the same alignment captureWriteContext enforces. */
+    fun isWriteContextStable(): Boolean = try { captureWriteContext(); true } catch (_: OwnerTransitionException) { false }
+
     private fun captureWriteContext(): WriteContext {
         val prefs = lifecyclePreferences ?: return WriteContext(current, 0L)
         repeat(5) {
