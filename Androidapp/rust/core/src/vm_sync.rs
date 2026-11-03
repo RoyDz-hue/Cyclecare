@@ -120,7 +120,313 @@ pub fn reconnect_success(reconciled_ok: bool, verified_ok: bool) -> bool {
     reconciled_ok && verified_ok
 }
 
+/// :1657-1672 completePasswordSetup result mapping: Success clears the
+/// required flag and shows the message; VerificationRequired/Error only
+/// update the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordSetupResult {
+    Success,
+    VerificationRequired,
+    Error,
+}
+
+/// Returns (isPasswordSetupRequired, message field name) — message content
+/// comes from the service result, not literals here.
+pub fn password_setup_state(result: PasswordSetupResult) -> bool {
+    // isPasswordSetupRequired after applying the result
+    !matches!(result, PasswordSetupResult::Success)
+}
+
 /// :1431-1435 onForeground: autoSync only after initial auth completed.
 pub fn on_foreground_autosync(has_completed_initial_auth: bool) -> bool {
     has_completed_initial_auth
+}
+
+/// :2153-2156 getPredictionForDate gate: no cycle anchor -> null prediction.
+pub fn prediction_gate(has_cycle_anchor: bool) -> bool {
+    has_cycle_anchor
+}
+
+/// Gift-resolution chain in refreshNotifications (:1820-1836, main 31b88f5).
+/// `find_item` is EconomyCatalog.findItem (host delegate); `fallback_item` is
+/// EconomyCatalog.ALL_ITEMS[1]; `unread_gift` is the first unread
+/// GIFT-typed notification's (title, body). Kotlin semantics preserved:
+/// when lastGiftName is non-blank the catalog lookup runs and ANY miss falls
+/// back to ALL_ITEMS[1]; the notification-text branch runs ONLY when
+/// lastGiftName was blank (giftItem is already non-null otherwise);
+/// contains(..., ignoreCase = true) uses Java-style per-char folding.
+pub fn resolve_gift_item(
+    last_gift_name: Option<&str>,
+    find_item: impl Fn(&str) -> Option<String>,
+    fallback_item: impl Fn() -> String,
+    unread_gift: Option<(&str, &str)>,
+    all_items: &[(&str, &str)],
+) -> Option<String> {
+    if let Some(name) = last_gift_name {
+        if !crate::kotlin_text::kotlin_is_blank(name) {
+            return Some(find_item(name).unwrap_or_else(|| fallback_item()));
+        }
+    }
+    if let Some((title, body)) = unread_gift {
+        // :1832-1835 ALL_ITEMS.find returns the item itself (first match in
+        // catalog order), not a name to re-resolve.
+        let hit = all_items.iter().find(|(n, _)| {
+            crate::kotlin_text::kotlin_contains_ignore_case(body, n)
+                || crate::kotlin_text::kotlin_contains_ignore_case(title, n)
+        });
+        return Some(hit.map(|(_, item)| item.to_string()).unwrap_or_else(|| fallback_item()));
+    }
+    None
+}
+
+/// :1838-1846 state assembly applies ONLY when the verified fetch succeeds;
+/// else notifications list alone is replaced (:1847-1849).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshNotificationsOutcome {
+    /// Verified profile Success: full assembly (list, profile, READY wallet,
+    /// ban/suspension flags, notice, gift fallback to previous when None).
+    VerifiedApplied,
+    /// Non-success: notifications list only.
+    ListOnly,
+}
+
+pub fn refresh_notifications_outcome(verified_success: bool) -> RefreshNotificationsOutcome {
+    if verified_success {
+        RefreshNotificationsOutcome::VerifiedApplied
+    } else {
+        RefreshNotificationsOutcome::ListOnly
+    }
+}
+
+/// :1811 local-only / no-user early return.
+pub fn refresh_notifications_entry(is_local_only_mode: bool, user_id_present: bool) -> bool {
+    !is_local_only_mode && user_id_present
+}
+
+/// :1818 owner/session recheck after the fetches.
+pub fn refresh_still_current(
+    owner: &str,
+    session: i64,
+    current_owner: &str,
+    current_session: i64,
+) -> bool {
+    owner == current_owner && session == current_session
+}
+
+/// Gift unread-notification detection (:1830): type equals "GIFT"
+/// ignoreCase and not read.
+pub fn is_unread_gift_notification(is_read: bool, notif_type: &str) -> bool {
+    !is_read && crate::kotlin_text::kotlin_equals_ignore_case(notif_type, "GIFT")
+}
+
+// ---------------------------------------------------------------------------
+// Composed sequences (injected effects). These drive the actual source
+// control flow; the scalar helpers above remain their corpus-locked pieces.
+// ---------------------------------------------------------------------------
+
+use crate::account_start::{decide as account_start_decide, AccountStartDestination, LocalDataState};
+use crate::reconnect_policy::Decision as TrailingDecision;
+use crate::sync_gate::{local_data_state, local_valid, may_upload, LocalRead};
+
+/// Host effects for runReconnectWorkOnce (:1376-1400).
+pub trait ReconnectEffects {
+    fn effective_user_id(&self) -> &str;
+    fn session_generation(&self) -> i64;
+    /// :1379 runCatching { reconcile }.getOrNull(); true iff Success.
+    fn reconcile_pending_offline_claims(&mut self) -> bool;
+    /// :1382 apply reconciled profile + wallet READY.
+    fn apply_reconciled(&mut self);
+    /// :1385 runCatching { fetchVerifiedProfile }.getOrNull(); true iff Success.
+    fn fetch_verified_profile(&mut self) -> bool;
+    /// :1388-1394 apply verified profile, READY, ban/suspension flags, notice.
+    fn apply_verified(&mut self);
+    /// :1398 runCatching { refreshNotifications() }.
+    fn refresh_notifications_safely(&mut self);
+}
+
+/// :1376-1400 composed. Source semantics preserved INCLUDING the early
+/// `return true` on owner/session staleness mid-run (:1380, :1386): a stale
+/// run reports success-of-no-work, not failure.
+pub fn run_reconnect_work_once<E: ReconnectEffects>(fx: &mut E) -> bool {
+    let owner = fx.effective_user_id().to_string();
+    let session = fx.session_generation();
+    let reconciled_ok = fx.reconcile_pending_offline_claims();
+    if owner != fx.effective_user_id() || session != fx.session_generation() {
+        return true;
+    }
+    if reconciled_ok {
+        fx.apply_reconciled();
+    }
+    let verified_ok = fx.fetch_verified_profile();
+    if owner != fx.effective_user_id() || session != fx.session_generation() {
+        return true;
+    }
+    if verified_ok {
+        fx.apply_verified();
+    }
+    fx.refresh_notifications_safely();
+    reconciled_ok && verified_ok
+}
+
+/// Host effects for the trailing reconnect job (:1402-1428).
+pub trait TrailingEffects {
+    fn trailing_job_active(&self) -> bool;
+    /// Records the job reassignment (both the coalesced schedule AND the
+    /// :1423-1424 direct reassignment inside the throttled arm).
+    fn spawn_trailing(&mut self, delay_ms: i64, allow_reschedule: bool);
+    fn effective_user_id(&self) -> &str;
+    fn is_local_only(&self) -> bool;
+    fn user_id_present(&self) -> bool;
+    fn is_online(&self) -> bool;
+    fn now_ms(&self) -> i64;
+    /// The ported ReconnectWorkPolicy.decideTrailing (reconnect_policy.rs).
+    fn decide_trailing(&mut self, online: bool, eligible: bool, owner: &str, now_ms: i64) -> TrailingDecision;
+    fn run_work(&mut self) -> bool;
+}
+
+/// :1402-1405 coalesced schedule; an active job covers new requests.
+/// Returns true when a new job was launched.
+pub fn schedule_trailing<E: TrailingEffects>(fx: &mut E, delay_ms: i64, allow_reschedule: bool) -> bool {
+    if fx.trailing_job_active() {
+        return false;
+    }
+    fx.spawn_trailing(delay_ms, allow_reschedule);
+    true
+}
+
+/// :1407-1428 the launched job body after the host's delay elapsed.
+/// `owner_at_schedule` was captured at launch time (:1409).
+pub fn execute_trailing<E: TrailingEffects>(fx: &mut E, owner_at_schedule: &str, allow_reschedule: bool) {
+    if owner_at_schedule != fx.effective_user_id() {
+        return; // :1412
+    }
+    let eligible = !fx.is_local_only() && fx.user_id_present(); // :1413
+    let online = fx.is_online(); // :1414
+    let now = fx.now_ms();
+    match fx.decide_trailing(online, eligible, owner_at_schedule, now) {
+        TrailingDecision::Run => {
+            fx.run_work();
+        }
+        TrailingDecision::Throttled { retry_after_ms } => {
+            // :1422-1425 DIRECT reassignment bypassing the active-job check,
+            // with the decision's retryAfterMs and allowReschedule = true.
+            if allow_reschedule {
+                fx.spawn_trailing(retry_after_ms, true);
+            }
+        }
+        TrailingDecision::Skip => {}
+    }
+}
+
+/// What the composed autoSync read from local storage (:1453-1456).
+pub struct LocalSnapshot {
+    pub profile_present: bool,
+    pub profile_completed: bool,
+    pub settings_onboarding_completed: bool,
+}
+
+/// Host effects for autoSyncSilently (:1439-1494).
+pub trait AutoSyncEffects {
+    fn is_local_only(&self) -> bool;
+    fn user_id_present(&self) -> bool;
+    fn effective_user_id(&self) -> &str;
+    fn session_generation(&self) -> i64;
+    fn is_checking_cloud_profile(&self) -> bool;
+    fn cloud_profile_check_failed(&self) -> bool;
+    fn session_needs_reauthentication(&self) -> bool;
+    /// :1441-1443 local-only early return flags.
+    fn apply_local_only_return(&mut self, show_onboarding: bool);
+    /// :1446 refreshWalletNow(force).
+    fn refresh_wallet_now(&mut self, force: bool);
+    /// :1447 coalescing.
+    fn account_refresh_job_active(&self) -> bool;
+    /// :1451 checking -> flags on.
+    fn set_checking_flags(&mut self);
+    /// :1453 runCatching local reads; None = read failed (UNKNOWN).
+    fn read_local(&mut self) -> Option<LocalSnapshot>;
+    /// :1457 runCatching conflicts read; Err = failed (UNKNOWN, fail-safe).
+    fn pending_conflicts_nonempty(&mut self) -> Result<bool, ()>;
+    /// :1461-1463 withTimeoutOrNull(20s) hasRemoteProfile; only invoked when
+    /// needs_remote_profile_probe says so. None = timeout (source nullable).
+    fn has_remote_profile(&mut self) -> Option<bool>;
+    /// :1465-1470 destination-driven flags (checking branch only).
+    fn apply_destination_flags(&mut self, check_failed: bool, show_onboarding: bool, sync_gated: bool);
+    /// :1479 executeSync.
+    fn execute_sync(&mut self) -> SyncResult;
+    /// :1483-1491 apply result + restored reads + admin + reauth composition.
+    fn apply_sync_result(&mut self, result: &SyncResult, session_needs_reauthentication: bool);
+    /// :1493
+    fn update_calculations(&mut self);
+}
+
+pub struct SyncResult {
+    pub is_success: bool,
+    pub requires_authentication: bool,
+}
+
+/// :1439-1494 composed. Preservation gates from sync_gate.rs: upload only
+/// when the destination is HOME and no conflicts are unresolved; conflicted
+/// users still reach HOME, only the upload is gated.
+pub fn auto_sync_silently<E: AutoSyncEffects>(fx: &mut E, force_wallet_refresh: bool) {
+    if fx.is_local_only() || !fx.user_id_present() {
+        // :1441-1444
+        let show_onboarding = !fx
+            .read_local()
+            .map(|s| s.settings_onboarding_completed)
+            .unwrap_or(false);
+        fx.apply_local_only_return(show_onboarding);
+        return;
+    }
+    fx.refresh_wallet_now(force_wallet_refresh); // :1446
+    if fx.account_refresh_job_active() {
+        return; // :1447
+    }
+    let owner = fx.effective_user_id().to_string();
+    let session = fx.session_generation();
+    let checking = fx.is_checking_cloud_profile() || fx.cloud_profile_check_failed(); // :1450
+    if checking {
+        fx.set_checking_flags(); // :1451
+    }
+    let local = fx.read_local(); // :1453
+    let conflicts = fx.pending_conflicts_nonempty(); // :1457
+    let local_read = match &local {
+        Some(snap) => LocalRead::Ok {
+            profile_completed: snap.profile_completed,
+            settings_onboarding_completed: snap.settings_onboarding_completed,
+        },
+        None => LocalRead::Failed,
+    };
+    let state = local_data_state(&local_read, conflicts); // :1458-1464
+    let valid = local_valid(state, &local_read); // :1465-1466 (source lines :1466-1467)
+    let remote: Option<bool> = if checking
+        && !local
+            .as_ref()
+            .map(|s| s.profile_present && s.settings_onboarding_completed)
+            .unwrap_or(false)
+    {
+        fx.has_remote_profile() // :1461-1463, null on timeout
+    } else {
+        Some(true)
+    };
+    if owner != fx.effective_user_id() || session != fx.session_generation() {
+        return; // :1464
+    }
+    let destination = account_start_decide(valid, state, remote); // :1465
+    if checking {
+        fx.apply_destination_flags(
+            destination == AccountStartDestination::Retry,
+            destination == AccountStartDestination::Onboarding,
+            state == LocalDataState::Conflicted,
+        ); // :1466-1470
+    }
+    if !may_upload(destination, state) {
+        return; // :1477-1478
+    }
+    let result = fx.execute_sync(); // :1479
+    if owner != fx.effective_user_id() || session != fx.session_generation() {
+        return; // :1480
+    }
+    let reauth = reauth_after_sync(result.is_success, result.requires_authentication, fx.session_needs_reauthentication());
+    fx.apply_sync_result(&result, reauth); // :1483-1491
+    fx.update_calculations(); // :1493
 }

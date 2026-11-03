@@ -92,6 +92,7 @@ pub mod currency_locale;
 pub mod care_knowledge;
 pub mod care_ai;
 pub mod care_consult;
+pub mod care_log_draft;
 pub mod care_privacy;
 pub mod layered_chat;
 pub mod payment_poll;

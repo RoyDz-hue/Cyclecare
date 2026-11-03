@@ -106,3 +106,28 @@ t5	paused;effects(true,false,false,Erasing your online copy…);token;stale1
 t6	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;stale2
 t7	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept.
 t8	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.
+dr1	Cleared
+dr2	ConfirmRejected
+dr3	NoPending
+ps1	false
+ps2	true
+ps3	true
+sv1	Saved to your health log. No coins were awarded for this health entry.
+gf1	ITEM:BB
+gf2	ITEM:FALLBACK
+gf3	ITEM:MP
+gf4	ITEM:FALLBACK
+gf5	ITEM:SC
+gf6	ITEM:BB
+gf7	NONE
+pg1	true
+pg2	false
+rn1	true
+rn2	false
+rn3	false
+rn4	VerifiedApplied
+rn5	ListOnly
+gq1	true
+gq2	false
+gq3	true
+gq4	false

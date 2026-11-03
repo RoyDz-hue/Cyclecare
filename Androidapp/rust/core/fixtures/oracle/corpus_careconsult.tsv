@@ -106,3 +106,28 @@ t5	dpath	false	false	u	true	true	true	false
 t6	dpath	false	false	u	true	false	true	true
 t7	dpath	false	false	u	true	false	true	false
 t8	dpath	false	false	u	true	false	false	false
+dr1	draft	true	true
+dr2	draft	true	false
+dr3	draft	false	true
+ps1	pset	Success
+ps2	pset	VerificationRequired
+ps3	pset	Error
+sv1	savedmsg
+gf1	gift	Bloom Badge	-	-	-
+gf2	gift	Unknown Badge	-	-	-
+gf3	gift	-	-	You earned a Moon Pin!	Congrats
+gf4	gift	-	-	nothing here	Congrats
+gf5	gift	<SPACES>	-	body has star charm inside	Congrats
+gf6	gift	-	-	Congrats	title says BLOOM BADGE loudly
+gf7	gift	-	-	-	-
+pg1	pgate	true
+pg2	pgate	false
+rn1	rnentry	false	true
+rn2	rnentry	true	true
+rn3	rnentry	false	false
+rn4	rnout	true
+rn5	rnout	false
+gq1	giftq	false	GIFT
+gq2	giftq	true	GIFT
+gq3	giftq	false	gift
+gq4	giftq	false	OTHER

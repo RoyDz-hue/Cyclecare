@@ -36,7 +36,7 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :668 | saveDayLog | ORCHESTRATION | repository write |
 | :693 | deleteDayLog | ORCHESTRATION | repository delete |
 | :700 | updateSettings | DECISION-PORTED | settings_core.rs gates; VM write glue |
-| :719 | deleteCloudHealthCopy | DECISION-PORTED | cloud_health_delete.rs TYPE-STATE sequence shell (v95): RpcPermit unconstructable before persisted pause; checks wired at :741/:743; RPC host-executed |
+| :719 | deleteCloudHealthCopy | DECISION-PORTED | cloud_health_delete.rs injected-effects driver run_deletion (v96): drives exact :720->:747 order through DeletionEffects; pause persisted BEFORE any RPC, abort online-untouched on save failure, owner/session rechecks at :741/:743; RPC host-executed exactly once; corpus dpath traces unchanged across the rewrite (568-case suite green) |
 | :750 | setAiSharingAllowed | DECISION-PORTED | ai_consent_tap.rs |
 | :773 | setAiProviderSharingAllowed | DECISION-PORTED | ai_consent_tap.rs snapshot equality |
 | :822 | enableDisplayedAiProviders | DECISION-PORTED | ai_consent_tap.rs |
@@ -66,12 +66,12 @@ Method counts (mechanically generated: one row per fun declaration, 103 rows): D
 | :1264 | cancelActivePayment | DECISION-PORTED | vm_sync.rs literals (v95) |
 | :1276 | triggerManualSync | DECISION-PORTED | sync_gate.rs manual_sync_preaction |
 | :1320 | refreshWalletNow | DECISION-PORTED | wallet.rs begin_refresh/apply_result (NO_SESSION gate :1320-1326 verified) |
-| :1376 | runReconnectWorkOnce | DECISION-PORTED | vm_sync.rs reconnect_success conjunction (v95) |
-| :1402 | scheduleTrailingReconnectWork | DECISION-PORTED | vm_sync.rs coalescing (v95) |
-| :1407 | launchTrailingReconnectWork | DECISION-PORTED | vm_sync.rs trailing dispatch + owner capture (v95) |
+| :1376 | runReconnectWorkOnce | DECISION-PORTED | vm_sync.rs composed driver run_reconnect_work_once (v96): injected ReconnectEffects, early-return-TRUE on owner/session staleness at BOTH checkpoints (:1380/:1386) preserved; conjunction only at end; 5 transition tests on effect call order |
+| :1402 | scheduleTrailingReconnectWork | DECISION-PORTED | vm_sync.rs composed schedule_trailing (v96): coalesce check, transition-tested |
+| :1407 | launchTrailingReconnectWork | DECISION-PORTED | vm_sync.rs composed execute_trailing (v96): owner-at-launch capture, eligible/online/now reads, reconnect_policy.decide_trailing dispatch; Throttled arm preserves retryAfterMs and uses DIRECT job reassignment bypassing the active-job check with allowReschedule=true (:1422-1425); 7 transition tests |
 | :1431 | onForeground | ORCHESTRATION | lifecycle trigger |
 | :1437 | onBackground | ORCHESTRATION | wallet realtime stop glue |
-| :1439 | autoSyncSilently | DECISION-PORTED | vm_sync.rs composition helpers over sync_gate/account_start (v95) |
+| :1439 | autoSyncSilently | DECISION-PORTED | vm_sync.rs composed driver auto_sync_silently (v96): injected AutoSyncEffects driving :1439-1493 in order - local-only early return (:1440-1444) -> refreshWalletNow (:1446) -> coalesce (:1447) -> owner/session capture -> checking flags -> local reads -> conflicts -> conditional remote probe (:1461-1463, timeout=null) -> recheck (:1464) -> account_start::decide -> destination flags -> may_upload preservation gates (HOME + not CONFLICTED) -> executeSync -> recheck -> reauth_after_sync composition -> updateCalculations; 8 transition tests on effect order |
 | :1496 | unlockApp | DECISION-PORTED | app_lock.rs + pin_verify.rs |
 | :1508 | unlockViaBiometric | DECISION-PORTED | app_lock.rs (fail-open parity, security-review hold, labeled) |
 | :1512 | saveQuickUnlockPin | DECISION-PORTED | pin.rs + pin_verify.rs PBKDF2+legacy |

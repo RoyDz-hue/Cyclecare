@@ -1,20 +1,16 @@
-//! Portable sequencing shell for `CycleCareViewModel.deleteCloudHealthCopy`
+//! Portable sequencing for `CycleCareViewModel.deleteCloudHealthCopy`
 //! (:719-747, main 31b88f5): an ACCOUNT-MUTATION (consent/data) privacy
-//! sequence. This is a TYPE-STATE control-flow port, not a bag of helpers:
-//! the RPC permit (`RpcPermit`) is unconstructable until the sync pause has
-//! been reported persisted, and the result can only be applied through the
-//! post-RPC owner/session recheck. Ordering is enforced by construction:
+//! sequence ported as INJECTED-EFFECTS CONTROL FLOW. `run_deletion` drives
+//! the exact source order; every host capability (pause persistence, privacy
+//! effects, token fetch, the delete RPC itself, message display) is injected
+//! through `DeletionEffects`, so the sequence — persist pause BEFORE any
+//! RPC, abort online-untouched when the pause cannot be saved, owner/session
+//! rechecks at :741 and :743 — cannot be reordered or skipped by a caller.
 //!
-//!   begin (:720-724) -> Ready
-//!   Ready::after_pause (:730-733) - pause_persisted=false => SaveFailed
-//!   Paused: privacy_effects (:735-738) applied by host
-//!   Paused::permit_rpc (:741 first owner/session recheck) -> RpcPermit|Stale
-//!   host performs the deletion RPC (host capability, owner-authorized)
-//!   RpcPermit::complete (:743 second recheck) -> Applied|Stale
-//!
-//! The deletion RPC itself stays host-executed; this module holds no
-//! capability to perform it. Line citations grep-verified against main
-//! 31b88f5.
+//! The deletion RPC stays host-executed and owner-authorized: it is the
+//! `delete_cloud_health_copy` effect, invoked by this driver exactly once,
+//! only after a persisted pause and a passed first recheck.
+//! Line citations grep-verified against main 31b88f5.
 
 use crate::kotlin_text::kotlin_is_blank;
 
@@ -31,137 +27,99 @@ pub const MSG_DELETED: &str = "Your online records were erased. The copies on th
 /// :746-747 unconfirmed deletion: backup stays off, do not assume erasure.
 pub const MSG_UNCONFIRMED: &str = "The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.";
 
-/// Outcome of `begin` (:720-724).
-pub enum BeginOutcome {
-    /// :720 a deletion is already in flight; source returns silently.
+/// Host-injected effects, called by the driver in source order.
+pub trait DeletionEffects {
+    /// Live owner/session reads for the mid-flight rechecks (:725-726 vs
+    /// :741/:743).
+    fn current_owner(&self) -> &str;
+    fn current_session(&self) -> i64;
+    /// :730 pauseHealthSyncFor(owner, session): persist the sync pause +
+    /// consent withdrawal BEFORE any RPC. Returns false when the source
+    /// returns null.
+    fn persist_pause(&mut self, owner: &str, session: i64) -> bool;
+    /// :735-737 force AI sharing off + reset the private conversation.
+    fn apply_privacy_effects(&mut self);
+    /// :738 set deleting-in-flight + cloud-sync-off flags (message is
+    /// delivered via show_message(MSG_ERASING)).
+    fn set_in_flight(&mut self, in_flight: bool, cloud_sync_allowed: bool);
+    /// :740 validAccessToken fetch.
+    fn fetch_access_token(&mut self) -> Option<String>;
+    /// :742 the deletion RPC. Host-executed; returns the source's `deleted`.
+    fn delete_cloud_health_copy(&mut self, token: Option<&str>) -> bool;
+    /// Show a terminal/progress message.
+    fn show_message(&mut self, message: &'static str);
+    /// :744 clear the in-flight flag when the result is applied.
+    fn clear_in_flight(&mut self);
+}
+
+/// Terminal outcome of the driven sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionOutcome {
+    /// :720 already in flight; nothing happened.
     Busy,
-    /// :721-724 local-only mode or null/blank user id; show
-    /// MSG_NO_ONLINE_ACCOUNT, nothing else happens.
+    /// :721-724 no online account.
     NoOnlineAccount,
-    /// Entry guards passed; persist the sync pause next.
-    Ready(Ready),
+    /// :730-733 pause could not be persisted; nothing online was touched.
+    SaveFailed,
+    /// :741 owner/session changed before the RPC; abandoned silently.
+    StaleBeforeRpc,
+    /// :743 owner/session changed during the RPC; result discarded.
+    StaleAfterRpc,
+    /// Result applied with MSG_DELETED.
+    Deleted,
+    /// Result applied with MSG_UNCONFIRMED.
+    Unconfirmed,
 }
 
-/// Entry guards passed. `owner`/`session` are captured at :725-726.
-pub struct Ready {
-    owner: String,
-    session: i64,
-}
-
-pub fn begin(
+/// Drive the full source sequence. `owner`/`session` are captured at
+/// :725-726 from the FIRST current_owner/current_session reads after the
+/// entry guards (the host must report a consistent pair).
+pub fn run_deletion<E: DeletionEffects>(
+    fx: &mut E,
     is_deleting_cloud_health: bool,
     is_local_only_mode: bool,
     user_id: Option<&str>,
-    owner: &str,
-    session: i64,
-) -> BeginOutcome {
+) -> DeletionOutcome {
+    // :720
     if is_deleting_cloud_health {
-        return BeginOutcome::Busy;
+        return DeletionOutcome::Busy;
     }
+    // :721-724
     if is_local_only_mode || user_id.map(kotlin_is_blank).unwrap_or(true) {
-        return BeginOutcome::NoOnlineAccount;
+        fx.show_message(MSG_NO_ONLINE_ACCOUNT);
+        return DeletionOutcome::NoOnlineAccount;
     }
-    BeginOutcome::Ready(Ready {
-        owner: owner.to_string(),
-        session,
-    })
-}
-
-/// Outcome of persisting the pause (:730-733).
-pub enum PauseOutcome {
-    /// pauseHealthSyncFor returned null: show MSG_SAVE_FAILED; nothing online
-    /// is touched. No `Paused` value exists on this path, so no later stage
-    /// can run.
-    SaveFailed,
-    /// Pause persisted BEFORE any RPC (:727-733 ordering).
-    Persisted(Paused),
-}
-
-impl Ready {
-    pub fn after_pause(self, pause_persisted: bool) -> PauseOutcome {
-        if pause_persisted {
-            PauseOutcome::Persisted(Paused {
-                owner: self.owner,
-                session: self.session,
-            })
-        } else {
-            PauseOutcome::SaveFailed
-        }
+    // :725-726
+    let owner = fx.current_owner().to_string();
+    let session = fx.current_session();
+    // :727-733 persist the withdrawal BEFORE any RPC; abort on failure.
+    if !fx.persist_pause(&owner, session) {
+        fx.show_message(MSG_SAVE_FAILED);
+        return DeletionOutcome::SaveFailed;
     }
-}
-
-/// Pause persisted; privacy effects pending, RPC not yet permitted.
-pub struct Paused {
-    owner: String,
-    session: i64,
-}
-
-/// :735-738 state applied once the pause is persisted: AI sharing forced off,
-/// private conversation reset (host effect), cloud sync flagged off, deletion
-/// marked in flight, progress message shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeleteInFlightState {
-    pub is_deleting_cloud_health: bool,
-    pub is_cloud_sync_allowed: bool,
-    pub is_ai_sharing_allowed: bool,
-    pub message: &'static str,
-}
-
-impl Paused {
-    pub fn privacy_effects(&self) -> DeleteInFlightState {
-        DeleteInFlightState {
-            is_deleting_cloud_health: true,
-            is_cloud_sync_allowed: false,
-            is_ai_sharing_allowed: false,
-            message: MSG_ERASING,
-        }
+    // :735-738 privacy effects, in-flight flags, progress message.
+    fx.apply_privacy_effects();
+    fx.set_in_flight(true, false);
+    fx.show_message(MSG_ERASING);
+    // :740 token fetch.
+    let token = fx.fetch_access_token();
+    // :741 first recheck.
+    if owner != fx.current_owner() || session != fx.current_session() {
+        return DeletionOutcome::StaleBeforeRpc;
     }
-
-    /// :741 FIRST owner/session recheck, evaluated after the access token is
-    /// fetched and before the delete RPC. Only on a match does the host
-    /// receive an `RpcPermit`; a mismatch abandons the request silently
-    /// (source `return@launch`).
-    pub fn permit_rpc(self, current_owner: &str, current_session: i64) -> Result<RpcPermit, Stale> {
-        if self.owner == current_owner && self.session == current_session {
-            Ok(RpcPermit {
-                owner: self.owner,
-                session: self.session,
-            })
-        } else {
-            Err(Stale)
-        }
+    // :742 the RPC (exactly once, only here).
+    let deleted = fx.delete_cloud_health_copy(token.as_deref());
+    // :743 second recheck.
+    if owner != fx.current_owner() || session != fx.current_session() {
+        return DeletionOutcome::StaleAfterRpc;
     }
-}
-
-/// Owner/session still matched at :741; the host may now perform the delete
-/// RPC exactly once with this permit.
-pub struct RpcPermit {
-    owner: String,
-    session: i64,
-}
-
-/// Silent abandonment on owner/session change (:741/:743 `return@launch`).
-#[derive(Debug)]
-pub struct Stale;
-
-/// Outcome of applying the RPC result (:743-747).
-pub enum Completion {
-    /// :743 owner/session changed during the RPC; result discarded silently.
-    Stale,
-    /// Result applied: deletion flag cleared, message per confirmation.
-    Applied { message: &'static str },
-}
-
-impl RpcPermit {
-    /// :743 SECOND owner/session recheck, then :744-747 final state. An
-    /// unconfirmed outcome keeps backup off and must NOT be presented as
-    /// erased.
-    pub fn complete(self, deleted: bool, current_owner: &str, current_session: i64) -> Completion {
-        if self.owner != current_owner || self.session != current_session {
-            return Completion::Stale;
-        }
-        Completion::Applied {
-            message: if deleted { MSG_DELETED } else { MSG_UNCONFIRMED },
-        }
+    // :744-747
+    fx.clear_in_flight();
+    if deleted {
+        fx.show_message(MSG_DELETED);
+        DeletionOutcome::Deleted
+    } else {
+        fx.show_message(MSG_UNCONFIRMED);
+        DeletionOutcome::Unconfirmed
     }
 }

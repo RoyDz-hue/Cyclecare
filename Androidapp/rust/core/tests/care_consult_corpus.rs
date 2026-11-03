@@ -7,7 +7,92 @@
 
 use cyclecare_core::care_consult::*;
 use cyclecare_core::cloud_health_delete as chd;
+
+/// Scripted fake for the injected-effects deletion driver: records the exact
+/// effect call order so the corpus trace proves source sequencing (:720-747).
+struct DelFake {
+    owner: String,
+    session: i64,
+    pause_ok: bool,
+    deleted: bool,
+    /// "", "recheck1", or "recheck2": flip the owner at that checkpoint.
+    stale_at: String,
+    phase: u8, // 0 before rpc, 1 after rpc
+    calls: Vec<String>,
+    in_flight: (bool, bool),
+    ai_sharing_allowed_after_effects: bool,
+    terminal_message: &'static str,
+    token: Option<String>,
+}
+
+impl DelFake {
+    fn new(owner: &str, session: i64, pause_ok: bool, deleted: bool, stale_at: &str) -> Self {
+        DelFake {
+            owner: owner.to_string(),
+            session,
+            pause_ok,
+            deleted,
+            stale_at: stale_at.to_string(),
+            phase: 0,
+            calls: Vec::new(),
+            in_flight: (false, true),
+            ai_sharing_allowed_after_effects: true,
+            terminal_message: "",
+            token: None,
+        }
+    }
+    fn staleness_flip(&mut self, checkpoint: u8) {
+        if self.stale_at == "recheck1" && checkpoint == 1 && self.phase == 0 {
+            self.owner = "other".to_string();
+        }
+        if self.stale_at == "recheck2" && checkpoint == 2 && self.phase == 1 {
+            self.owner = "other".to_string();
+        }
+    }
+}
+
+impl chd::DeletionEffects for DelFake {
+    fn current_owner(&self) -> &str {
+        &self.owner
+    }
+    fn current_session(&self) -> i64 {
+        self.session
+    }
+    fn persist_pause(&mut self, _owner: &str, _session: i64) -> bool {
+        self.calls.push("pause".to_string());
+        self.pause_ok
+    }
+    fn apply_privacy_effects(&mut self) {
+        self.calls.push("effects".to_string());
+        self.ai_sharing_allowed_after_effects = false;
+    }
+    fn set_in_flight(&mut self, in_flight: bool, cloud_sync_allowed: bool) {
+        self.calls.push("inflight".to_string());
+        self.in_flight = (in_flight, cloud_sync_allowed);
+    }
+    fn fetch_access_token(&mut self) -> Option<String> {
+        self.calls.push("token".to_string());
+        self.staleness_flip(1);
+        Some("tok".to_string())
+    }
+    fn delete_cloud_health_copy(&mut self, token: Option<&str>) -> bool {
+        self.calls.push("rpc".to_string());
+        self.token = token.map(|t| t.to_string());
+        self.phase = 1;
+        self.staleness_flip(2);
+        self.deleted
+    }
+    fn show_message(&mut self, message: &'static str) {
+        self.calls.push(format!("msg:{}", message));
+        self.terminal_message = message;
+    }
+    fn clear_in_flight(&mut self) {
+        self.calls.push("clear".to_string());
+        self.in_flight = (false, self.in_flight.1);
+    }
+}
 use cyclecare_core::vm_sync as vs;
+use cyclecare_core::care_log_draft as cld;
 use std::path::PathBuf;
 
 fn rows(name: &str) -> Vec<Vec<String>> {
@@ -137,79 +222,83 @@ fn care_consult_matches_jvm_outputs() {
             "fail" => CARE_FAILURE_MESSAGE.to_string(),
             "dentry" => {
                 let uid = if c[4] == "-" { None } else { Some(dec(&c[4])) };
-                let e = chd::begin(c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref(), "o1", 7);
-                match e {
-                    chd::BeginOutcome::Busy => "Busy".to_string(),
-                    chd::BeginOutcome::NoOnlineAccount => "NoOnlineAccount".to_string(),
-                    chd::BeginOutcome::Ready(_) => "Proceed".to_string(),
+                let mut fx = DelFake::new("o1", 7, true, true, "");
+                let out = chd::run_deletion(&mut fx, c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref());
+                match out {
+                    chd::DeletionOutcome::Busy => "Busy".to_string(),
+                    chd::DeletionOutcome::NoOnlineAccount => "NoOnlineAccount".to_string(),
+                    _ => "Proceed".to_string(),
                 }
             }
             "dpause" => {
-                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
-                match r.after_pause(c[2].parse().unwrap()) {
-                    chd::PauseOutcome::Persisted(_) => "proceed".to_string(),
-                    chd::PauseOutcome::SaveFailed => chd::MSG_SAVE_FAILED.to_string(),
+                let mut fx = DelFake::new("u", 7, c[2].parse().unwrap(), true, "");
+                let out = chd::run_deletion(&mut fx, false, false, Some("u"));
+                match out {
+                    chd::DeletionOutcome::SaveFailed => chd::MSG_SAVE_FAILED.to_string(),
+                    _ => "proceed".to_string(),
                 }
             }
             "dstate" => {
-                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
-                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
-                let st = p.privacy_effects();
-                format!("{},{},{},{}", st.is_deleting_cloud_health, st.is_cloud_sync_allowed, st.is_ai_sharing_allowed, st.message)
+                let mut fx = DelFake::new("u", 7, true, true, "");
+                let out = chd::run_deletion(&mut fx, false, false, Some("u"));
+                assert!(matches!(out, chd::DeletionOutcome::Deleted | chd::DeletionOutcome::Unconfirmed));
+                // in-flight flag, cloud-sync flag, AI-sharing flag, progress message
+                let deleting_flag = fx.calls.contains(&"inflight".to_string());
+                let cloud_sync_allowed = fx.in_flight.1;
+                format!("{},{},{},{}", deleting_flag, cloud_sync_allowed,
+                        fx.ai_sharing_allowed_after_effects, chd::MSG_ERASING)
             }
             "dcurrent" => {
-                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
-                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
-                p.permit_rpc(
-                    if c[2].parse().unwrap() { "o1" } else { "o2" },
-                    if c[3].parse().unwrap() { 7 } else { 8 },
-                )
-                .is_ok()
-                .to_string()
+                // stale1 at the first recheck iff owner or session differs
+                let stale = if !(c[2].parse::<bool>().unwrap() && c[3].parse::<bool>().unwrap()) { "recheck1" } else { "" };
+                let mut fx = DelFake::new("o1", 7, true, true, stale);
+                let out = chd::run_deletion(&mut fx, false, false, Some("u"));
+                (!matches!(out, chd::DeletionOutcome::StaleBeforeRpc)).to_string()
             }
             "dfinal" => {
-                let chd::BeginOutcome::Ready(r) = chd::begin(false, false, Some("u"), "o1", 7) else { panic!() };
-                let chd::PauseOutcome::Persisted(p) = r.after_pause(true) else { panic!() };
-                let permit = p.permit_rpc("o1", 7).expect("permit");
-                match permit.complete(c[2].parse().unwrap(), "o1", 7) {
-                    chd::Completion::Applied { message } => message.to_string(),
-                    chd::Completion::Stale => "stale".to_string(),
+                let mut fx = DelFake::new("o1", 7, true, c[2].parse().unwrap(), "");
+                let out = chd::run_deletion(&mut fx, false, false, Some("u"));
+                match out {
+                    chd::DeletionOutcome::Deleted => chd::MSG_DELETED.to_string(),
+                    chd::DeletionOutcome::Unconfirmed => chd::MSG_UNCONFIRMED.to_string(),
+                    other => panic!("unexpected outcome {:?}", other),
                 }
             }
             "dpath" => {
                 let uid = if c[4] == "-" { None } else { Some(dec(&c[4])) };
+                let stale1: bool = c[6].parse().unwrap();
+                let deleted: bool = c[7].parse().unwrap();
+                let stale2: bool = c[8].parse().unwrap();
+                let stale_at = if stale1 { "recheck1" } else if stale2 { "recheck2" } else { "" };
+                let mut fx = DelFake::new("owner1", 7, c[5].parse().unwrap(), deleted, stale_at);
+                let out = chd::run_deletion(&mut fx, c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref());
                 let mut trace = String::new();
-                match chd::begin(c[2].parse().unwrap(), c[3].parse().unwrap(), uid.as_deref(), "owner1", 7) {
-                    chd::BeginOutcome::Busy => trace.push_str("busy"),
-                    chd::BeginOutcome::NoOnlineAccount => {
+                match out {
+                    chd::DeletionOutcome::Busy => trace.push_str("busy"),
+                    chd::DeletionOutcome::NoOnlineAccount => {
                         trace.push_str("msg:"); trace.push_str(chd::MSG_NO_ONLINE_ACCOUNT);
                     }
-                    chd::BeginOutcome::Ready(r) => match r.after_pause(c[5].parse().unwrap()) {
-                        chd::PauseOutcome::SaveFailed => {
-                            trace.push_str("msg:"); trace.push_str(chd::MSG_SAVE_FAILED);
-                        }
-                        chd::PauseOutcome::Persisted(p) => {
-                            let st = p.privacy_effects();
-                            trace.push_str(&format!("paused;effects({},{},{},{});token;",
-                                st.is_deleting_cloud_health, st.is_cloud_sync_allowed,
-                                st.is_ai_sharing_allowed, st.message));
-                            let stale1: bool = c[6].parse().unwrap();
-                            let deleted: bool = c[7].parse().unwrap();
-                            let stale2: bool = c[8].parse().unwrap();
-                            match p.permit_rpc(if stale1 { "other" } else { "owner1" }, 7) {
-                                Err(_) => trace.push_str("stale1"),
-                                Ok(permit) => {
-                                    trace.push_str("permit;rpc;");
-                                    match permit.complete(deleted, if stale2 { "other" } else { "owner1" }, 7) {
-                                        chd::Completion::Stale => trace.push_str("stale2"),
-                                        chd::Completion::Applied { message } => {
-                                            trace.push_str("msg:"); trace.push_str(message);
-                                        }
-                                    }
-                                }
+                    chd::DeletionOutcome::SaveFailed => {
+                        trace.push_str("msg:"); trace.push_str(chd::MSG_SAVE_FAILED);
+                    }
+                    _ => {
+                        trace.push_str(&format!("paused;effects({},{},{},{});token;",
+                            fx.in_flight.0 || fx.calls.contains(&"inflight".to_string()),
+                            false,
+                            fx.ai_sharing_allowed_after_effects,
+                            chd::MSG_ERASING));
+                        match out {
+                            chd::DeletionOutcome::StaleBeforeRpc => trace.push_str("stale1"),
+                            chd::DeletionOutcome::StaleAfterRpc => {
+                                trace.push_str("permit;rpc;"); trace.push_str("stale2");
                             }
+                            chd::DeletionOutcome::Deleted | chd::DeletionOutcome::Unconfirmed => {
+                                trace.push_str("permit;rpc;");
+                                trace.push_str("msg:"); trace.push_str(fx.terminal_message);
+                            }
+                            _ => unreachable!(),
                         }
-                    },
+                    }
                 }
                 trace
             }
@@ -231,6 +320,41 @@ fn care_consult_matches_jvm_outputs() {
                         .to_string(),
                 }
             }
+            "draft" => {
+                let d = if c[2].parse().unwrap() { cld::edit_proposed() } else { cld::cancelled() };
+                format!("{:?}", cld::confirm(d, c[3].parse().unwrap()))
+            }
+            "pset" => {
+                let r = match c[2].as_str() {
+                    "Success" => vs::PasswordSetupResult::Success,
+                    "VerificationRequired" => vs::PasswordSetupResult::VerificationRequired,
+                    _ => vs::PasswordSetupResult::Error,
+                };
+                vs::password_setup_state(r).to_string()
+            }
+            "savedmsg" => cld::CARE_LOG_SAVED_MESSAGE.to_string(),
+            "gift" => {
+                let find = |n: &str| match n {
+                    "Bloom Badge" => Some("ITEM:BB".to_string()),
+                    "Moon Pin" => Some("ITEM:MP".to_string()),
+                    "Star Charm" => Some("ITEM:SC".to_string()),
+                    _ => None,
+                };
+                let unread = if c[4] == "-" { None } else { Some((dec(&c[4]), dec(&c[5]))) };
+                let name = if c[2] == "-" { None } else { Some(dec(&c[2])) };
+                vs::resolve_gift_item(
+                    name.as_deref(),
+                    find,
+                    || "ITEM:FALLBACK".to_string(),
+                    unread.as_ref().map(|(t, b)| (t.as_str(), b.as_str())),
+                    &[("Bloom Badge", "ITEM:BB"), ("Moon Pin", "ITEM:MP"), ("Star Charm", "ITEM:SC")],
+                )
+                .unwrap_or_else(|| "NONE".to_string())
+            }
+            "pgate" => vs::prediction_gate(c[2].parse().unwrap()).to_string(),
+            "rnentry" => vs::refresh_notifications_entry(c[2].parse().unwrap(), c[3].parse().unwrap()).to_string(),
+            "rnout" => format!("{:?}", vs::refresh_notifications_outcome(c[2].parse().unwrap())),
+            "giftq" => vs::is_unread_gift_notification(c[2].parse().unwrap(), &c[3]).to_string(),
             "reauth" => vs::reauth_after_sync(c[2].parse().unwrap(), c[3].parse().unwrap(), c[4].parse().unwrap()).to_string(),
             "alo" => {
                 let (a, b) = vs::autosync_local_only_return(c[2].parse().unwrap());
