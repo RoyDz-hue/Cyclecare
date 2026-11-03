@@ -55,6 +55,10 @@ workflows:
           chmod +x gradlew
           mkdir -p ../build-logs
           ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.bridge.RustCoinAmountTest" \
+            --tests "com.cyclecare.bridge.RustReconnectPolicyTest" \
+            --tests "com.cyclecare.bridge.RustSetupChecksTest" \
+            --tests "com.cyclecare.bridge.RustEffectiveUserIdTest" \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
             --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
@@ -536,6 +540,10 @@ workflows:
           chmod +x gradlew
           mkdir -p ../build-logs
           ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.bridge.RustCoinAmountTest" \
+            --tests "com.cyclecare.bridge.RustReconnectPolicyTest" \
+            --tests "com.cyclecare.bridge.RustSetupChecksTest" \
+            --tests "com.cyclecare.bridge.RustEffectiveUserIdTest" \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
             --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
