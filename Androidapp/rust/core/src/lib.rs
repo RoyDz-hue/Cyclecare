@@ -34,6 +34,7 @@ pub mod cycle_screen;
 pub mod care_screen;
 pub mod money_dialogs;
 pub mod something_sheet;
+pub mod bigdecimal_tostring;
 pub mod pin_verify;
 pub mod app_lock;
 pub mod supabase_config;

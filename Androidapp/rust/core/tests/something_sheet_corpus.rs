@@ -31,5 +31,6 @@ fn sheet_misc_rules() {
     assert!(interpretation_card_visible(true, 1));
     assert!(!interpretation_card_visible(true, 0));
     assert_eq!(interpretation_item_line("Cramps", "severe"), "\u{2022} Cramps (severe)");
+    assert_eq!(sub_item_label("Cramps"), "\u{2022} Cramps"); // :254 verbatim shape
     assert_eq!(follow_up_text("How long?"), "\u{1F4AD} How long?");
 }

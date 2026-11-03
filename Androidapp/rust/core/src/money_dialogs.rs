@@ -81,6 +81,16 @@ pub fn transfer_confirm_decision(
     }
 }
 
+/// InsufficientCoinsDialog :76 - title line with the RAW BigDecimal
+/// interpolated (Java BigDecimal.toString, scale-preserving, scientific
+/// branch included; distinct from CoinFormatter's DecimalFormat display).
+pub fn need_more_coins_label(missing: &BigDecimal) -> String {
+    format!(
+        "Need {} More Coins",
+        crate::bigdecimal_tostring::java_bigdecimal_to_string(missing)
+    )
+}
+
 /// InsufficientCoinsDialog :61 - exact decimal, floored at 0.001.
 pub fn missing_coins(item_price: i64, user_coins: &BigDecimal) -> BigDecimal {
     let diff = BigDecimal::from(item_price) - user_coins;

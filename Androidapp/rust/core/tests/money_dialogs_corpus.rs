@@ -66,6 +66,14 @@ fn transfer_chain_matches_jvm() {
 }
 
 #[test]
+fn need_more_coins_label_matches_jvm() {
+    // fixtures/money_dialogs/bd_jvm_expected.txt tail (after the "---" row)
+    assert_eq!(need_more_coins_label(&bd("30")), "Need 30 More Coins");
+    assert_eq!(need_more_coins_label(&bd("0.001")), "Need 0.001 More Coins");
+    assert_eq!(need_more_coins_label(&bd("48.7655")), "Need 48.7655 More Coins");
+}
+
+#[test]
 fn mpesa_button_label_verbatim() {
     assert_eq!(mpesa_send_button_label(250), "Send payment prompt \u{b7} KES 250");
 }
