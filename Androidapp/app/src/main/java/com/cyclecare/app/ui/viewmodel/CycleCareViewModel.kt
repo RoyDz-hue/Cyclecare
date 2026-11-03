@@ -557,7 +557,12 @@ class CycleCareViewModel(
         viewModelScope.launch {
             com.cyclecare.app.util.NetworkHelper.observeNetwork(authPreferences.context).collect { isConnected ->
                 val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
-                when (val decision = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decide(
+                when (val decision = if (com.cyclecare.bridge.RustReconnectPolicyConfig.ENABLED)
+                    com.cyclecare.bridge.RustReconnectPolicy.decide(
+                        reconnectWorkState, isConnected, eligible,
+                        authPreferences.effectiveUserId, System.currentTimeMillis()
+                    )
+                else com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decide(
                     reconnectWorkState, isConnected, eligible,
                     authPreferences.effectiveUserId, System.currentTimeMillis()
                 )) {
@@ -1544,7 +1549,12 @@ class CycleCareViewModel(
             if (ownerAtSchedule != authPreferences.effectiveUserId) return@launch
             val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
             val online = com.cyclecare.app.util.NetworkHelper.isOnline(authPreferences.context)
-            when (val decision = com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decideTrailing(
+            when (val decision = if (com.cyclecare.bridge.RustReconnectPolicyConfig.ENABLED)
+                com.cyclecare.bridge.RustReconnectPolicy.decideTrailing(
+                    reconnectWorkState, online, eligible,
+                    authPreferences.effectiveUserId, System.currentTimeMillis()
+                )
+            else com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decideTrailing(
                 reconnectWorkState, online, eligible,
                 authPreferences.effectiveUserId, System.currentTimeMillis()
             )) {
