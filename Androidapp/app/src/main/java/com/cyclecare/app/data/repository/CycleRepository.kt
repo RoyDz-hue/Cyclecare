@@ -109,27 +109,20 @@ class CycleRepository(database: CycleCareDatabase) {
     private fun captureWriteContext(): OperationToken = beginOperation()
 
     /**
-     * Coherent capture: the preferences owner, session generation, effective owner
-     * (which keys the consent generation) and the repository context must be equal on
-     * both sides of the generation read. A switch away and back bumps the session
-     * generation, so it fails this check. The null guest owner maps to the
-     * legacy_guest database key while its generation is keyed by the derived
-     * effective id; that mapping is deliberate and unchanged.
+     * Coherent capture: the preferences owner, session and consent generation come
+     * from one locked read (AuthPreferences.operationSnapshot) and must name the same
+     * owner as the repository context, which must be unchanged afterwards. The null
+     * guest owner maps to the legacy_guest database key while its generation is keyed
+     * by the derived effective id; that mapping is deliberate and unchanged.
      */
     fun beginOperation(): OperationToken {
         val prefs = lifecyclePreferences ?: return OperationToken(current, 0L, 0L)
         repeat(5) {
             val before = current
-            val owner1 = prefs.userId
-            val session1 = prefs.sessionGeneration
-            val effective1 = prefs.effectiveUserId
-            val generation = prefs.healthConsentGeneration
-            val owner2 = prefs.userId
-            val session2 = prefs.sessionGeneration
-            val effective2 = prefs.effectiveUserId
-            if (owner1 == before.owner && owner2 == owner1 && session2 == session1 &&
-                effective2 == effective1 && current === before) {
-                return OperationToken(before, session1, generation)
+            // Owner, session, effective id and generation come from ONE locked read.
+            val snapshot = prefs.operationSnapshot()
+            if (snapshot.owner == before.owner && current === before) {
+                return OperationToken(before, snapshot.session, snapshot.consentGeneration)
             }
         }
         throw OwnerTransitionException()

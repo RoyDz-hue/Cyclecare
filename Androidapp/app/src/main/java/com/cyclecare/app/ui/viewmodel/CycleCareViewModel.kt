@@ -1,7 +1,3 @@
-            val completion = try {
-                repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock, token = token)
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e
-            } catch (_: Exception) { failAttempt(); return@launch }
 package com.cyclecare.app.ui.viewmodel
 
 import android.net.Uri
@@ -52,7 +48,6 @@ enum class AppNavTab(val title: String) {
     SPACE("Space");
 
     companion object {
-        private const val ONBOARDING_RETRY_MESSAGE = "We couldn't save your answers just now. Nothing was lost, so please tap Finish again."
         val HOME get() = TODAY
     }
 }
@@ -210,6 +205,10 @@ class CycleCareViewModel(
     private var pendingQuickLogOwner: String? = null
     private var pendingCareProposal: com.cyclecare.app.domain.ai.ProposedCareLog? = null
     private val processorConsentService = com.cyclecare.app.domain.ai.AiProcessorConsentService(authPreferences)
+
+    private companion object {
+        const val ONBOARDING_RETRY_MESSAGE = "Your answers couldn't be saved completely. Please try again."
+    }
 
     private data class ConflictOwnerSnapshot(val owner: String, val session: Long)
 
@@ -1987,78 +1986,92 @@ class CycleCareViewModel(
         }
         _uiState.value = _uiState.value.copy(isCompletingOnboarding = true, onboardingCompletionMessage = null)
         viewModelScope.launch {
-            fun failAttempt() {
-                if (isCurrentConflictSnapshot(onboardingOwner)) {
-                    _uiState.value = _uiState.value.copy(isCompletingOnboarding = false, onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
+            try {
+                fun failAttempt() {
+                    if (isCurrentConflictSnapshot(onboardingOwner)) {
+                        _uiState.value = _uiState.value.copy(isCompletingOnboarding = false, onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
+                    }
                 }
-            }
-            // The preference writes run under the same lock the account setter uses, only
-            // while the account and session are still the ones the user acted under. This is
-            // atomic with account changes, NOT with the database write that follows; if that
-            // write later fails the user's own choices stay saved and Finish can be tapped again.
-            val accountMode = authPreferences.runIfIdentityUnchanged(token.context.owner, token.session) {
-                authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
-                if (dynamicAnswers.isNotEmpty()) {
-                    // Personalization context gathered by the dynamic onboarding
-                    // questions; local-only, feeds future insight personalization.
-                    authPreferences.onboardingDynamicInsightsJson = org.json.JSONObject().apply {
-                        dynamicAnswers.forEach { (id, answers) -> put(id, org.json.JSONArray(answers.toList())) }
-                    }.toString()
-                }
-                if (pin.isNotBlank()) {
-                    authPreferences.pin = pin
-                    authPreferences.isPinEnabled = enableLock
-                    authPreferences.isQuickUnlockAsked = true
-                }
-                authPreferences.accountMode
-            }
-            if (accountMode == null) { failAttempt(); return@launch }
+                // The preference writes run under the preferences lock (shared by the account,
+                // session and cloud-sync consent setters), only while the account and session are
+                // still the ones the user acted under. The consent generation AFTER the user's own
+                // cloud-sync choice is read in the same locked block and bound to the original
+                // context. Atomic with preference changes, NOT with the database write that follows;
+                // if that write fails the user's own choices stay saved and Finish can be tapped again.
+                val applied = try {
+                    authPreferences.runIfIdentityUnchanged(token.context.owner, token.session) {
+                        authPreferences.isCloudSyncAllowed = isCloudSyncAllowed
+                        if (dynamicAnswers.isNotEmpty()) {
+                            // Personalization context gathered by the dynamic onboarding
+                            // questions; local-only, feeds future insight personalization.
+                            authPreferences.onboardingDynamicInsightsJson = org.json.JSONObject().apply {
+                                dynamicAnswers.forEach { (id, answers) -> put(id, org.json.JSONArray(answers.toList())) }
+                            }.toString()
+                        }
+                        if (pin.isNotBlank()) {
+                            authPreferences.pin = pin
+                            authPreferences.isPinEnabled = enableLock
+                            authPreferences.isQuickUnlockAsked = true
+                        }
+                        authPreferences.accountMode to authPreferences.operationSnapshot().consentGeneration
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) { failAttempt(); return@launch }
+                if (applied == null) { failAttempt(); return@launch }
+                val accountMode = applied.first
+                val writeToken = token.copy(consentGeneration = applied.second)
 
-            val profile = OnboardingProfile(
-                id = 1,
-                isCompleted = true,
-                completedAtTimestamp = System.currentTimeMillis(),
-                isAgeVerified = true,
-                isTermsAgreed = true,
-                accountMode = accountMode,
-                selectedGoalsCsv = goals.joinToString(","),
-                lastPeriodDateString = if (periodStartChoice == "UNKNOWN") "" else lastPeriodDate.toString(),
-                // Raw episode record: the end date exactly as entered and
-                // confirmed, never clamped into the typical-duration range.
-                lastPeriodEndDateString = lastPeriodEndDate?.toString() ?: "",
-                approximatePeriodChoice = periodStartChoice,
-                cycleLengthOption = cycleLengthOption.ifBlank { "UNKNOWN" },
-                cycleLengthDays = cycleLength,
-                periodDurationDays = periodDuration,
-                remindFertileWindow = remindFertile,
-                typicalSymptomsCsv = typicalSymptoms.joinToString(","),
-                typicalEnergy = typicalEnergy,
-                typicalSleepQuality = typicalSleep,
-                hasCompletedDeepBaseline = hasCompletedDeepBaseline
-            )
-            // Refused during an owner transition: nothing is written to the database or published.
-            val completion = try {
-                repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock)
-            } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return@launch }
-            SoundFeedbackManager.playGentleRewardChime()
-            // The write above is bound to the database/owner captured at its start.
-            // Publish only if that owner, session and repository context are still
-            // current; otherwise the completed record stays with its own owner and
-            // the current owner's state is left to its own load.
-            if (!isCurrentConflictSnapshot(onboardingOwner) || !repository.isCurrentContext(completion.context)) return@launch
-            val updated = completion.settings
-            _uiState.value = _uiState.value.copy(
-                showOnboarding = false,
-                isCompletingOnboarding = false,
-                onboardingCompletionMessage = null,
-                isAppLocked = false,
-                settings = updated,
-                onboardingProfile = profile,
-                isCloudSyncAllowed = isCloudSyncAllowed,
-                showQuickUnlockDialog = !authPreferences.isQuickUnlockAsked && pin.isBlank()
-            )
-            updateCalculations(updated, LocalDate.now(), LocalDate.now())
-            autoSyncSilently()
+                val profile = OnboardingProfile(
+                    id = 1,
+                    isCompleted = true,
+                    completedAtTimestamp = System.currentTimeMillis(),
+                    isAgeVerified = true,
+                    isTermsAgreed = true,
+                    accountMode = accountMode,
+                    selectedGoalsCsv = goals.joinToString(","),
+                    lastPeriodDateString = if (periodStartChoice == "UNKNOWN") "" else lastPeriodDate.toString(),
+                    // Raw episode record: the end date exactly as entered and
+                    // confirmed, never clamped into the typical-duration range.
+                    lastPeriodEndDateString = lastPeriodEndDate?.toString() ?: "",
+                    approximatePeriodChoice = periodStartChoice,
+                    cycleLengthOption = cycleLengthOption.ifBlank { "UNKNOWN" },
+                    cycleLengthDays = cycleLength,
+                    periodDurationDays = periodDuration,
+                    remindFertileWindow = remindFertile,
+                    typicalSymptomsCsv = typicalSymptoms.joinToString(","),
+                    typicalEnergy = typicalEnergy,
+                    typicalSleepQuality = typicalSleep,
+                    hasCompletedDeepBaseline = hasCompletedDeepBaseline
+                )
+                // The write uses the intent-time token (post-choice consent generation), never a later lookup.
+                val completion = try {
+                    repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock, token = writeToken)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) { failAttempt(); return@launch }
+                SoundFeedbackManager.playGentleRewardChime()
+                // The write above is bound to the database/owner captured at its start.
+                // Publish only if that owner, session and repository context are still
+                // current; otherwise the completed record stays with its own owner and
+                // the current owner's state is left to its own load.
+                if (!isCurrentConflictSnapshot(onboardingOwner) || !repository.isCurrentContext(completion.context)) return@launch
+                val updated = completion.settings
+                _uiState.value = _uiState.value.copy(
+                    showOnboarding = false,
+                    isCompletingOnboarding = false,
+                    onboardingCompletionMessage = null,
+                    isAppLocked = false,
+                    settings = updated,
+                    onboardingProfile = profile,
+                    isCloudSyncAllowed = isCloudSyncAllowed,
+                    showQuickUnlockDialog = !authPreferences.isQuickUnlockAsked && pin.isBlank()
+                )
+                updateCalculations(updated, LocalDate.now(), LocalDate.now())
+                autoSyncSilently()
+            } finally {
+                // Transient flag: always cleared, including cancellation and early returns, so the
+                // saving overlay can never stay up.
+                _uiState.value = _uiState.value.copy(isCompletingOnboarding = false)
+            }
         }
     }
 

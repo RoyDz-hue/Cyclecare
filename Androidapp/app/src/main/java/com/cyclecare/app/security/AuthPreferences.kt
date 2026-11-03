@@ -138,17 +138,21 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     var isCloudSyncAllowed: Boolean
         get() = prefs.getBoolean("${KEY_CLOUD_SYNC_ALLOWED}_v2_${effectiveUserId}", false)
         set(value) {
-            val owner = effectiveUserId
-            val key = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
-            val previous = prefs.getBoolean(key, false)
-            if (previous != value) {
-                // One editor commit makes the consent decision and generation advance
-                // visible together, preventing stale sync workers from ABA reuse.
-                val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
-                val generation = prefs.getLong(generationKey, 0L)
-                val edit = prefs.edit().putBoolean(key, value).putLong(generationKey, Math.addExact(generation, 1L))
-                if (!value) edit.putBoolean("health_sync_pending_revoke_$owner", true)
-                edit.commit()
+            // Same lock as the userId setter and clearSession, so the owner used for the key
+            // and the generation advance cannot straddle an identity change.
+            synchronized(prefs) {
+                val owner = effectiveUserId
+                val key = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
+                val previous = prefs.getBoolean(key, false)
+                if (previous != value) {
+                    // One editor commit makes the consent decision and generation advance
+                    // visible together, preventing stale sync workers from ABA reuse.
+                    val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
+                    val generation = prefs.getLong(generationKey, 0L)
+                    val edit = prefs.edit().putBoolean(key, value).putLong(generationKey, Math.addExact(generation, 1L))
+                    if (!value) edit.putBoolean("health_sync_pending_revoke_$owner", true)
+                    edit.commit()
+                }
             }
             if (!value) {
                 runCatching { androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("cyclecare_sync") }
@@ -158,7 +162,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     /** Durable, account-bound cloud health-consent generation for sync CAS. */
     var healthConsentGeneration: Long
         get() = prefs.getLong("${KEY_HEALTH_CONSENT_GENERATION}_$effectiveUserId", 0L)
-        set(value) { prefs.edit().putLong("${KEY_HEALTH_CONSENT_GENERATION}_$effectiveUserId", value).commit() }
+        set(value) { synchronized(prefs) { prefs.edit().putLong("${KEY_HEALTH_CONSENT_GENERATION}_$effectiveUserId", value).commit() } }
 
     val hasPendingHealthSyncRevoke: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean("health_sync_pending_revoke_$effectiveUserId", false)
@@ -263,12 +267,23 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     data class ConsentMutationSnapshot(val owner: String, val session: Long, val decision: Long, val healthGeneration: Long)
     val sessionGeneration: Long get() = prefs.getLong("session_generation_v3", 0L)
 
+    /** Owner, session, effective account id and that account's consent generation, read under one lock. */
+    data class OperationSnapshot(val owner: String?, val session: Long, val effectiveUserId: String, val consentGeneration: Long)
+
+    /**
+     * Reads the identity and the consent generation under the same lock the userId
+     * setter, clearSession, the cloud-sync consent setter and pauseHealthSyncFor use,
+     * so the four values always belong together (no read-order reasoning needed).
+     */
+    fun operationSnapshot(): OperationSnapshot = synchronized(prefs) {
+        OperationSnapshot(userId, sessionGeneration, effectiveUserId, healthConsentGeneration)
+    }
+
     /**
      * Runs [block] only if the account and session are still exactly [owner] and
-     * [session], holding the same lock the userId setter uses, so an identity change
-     * cannot land in the middle of [block]. Returns null (block not run) when stale.
-     * This makes the preference writes atomic with identity changes only; it is not
-     * atomic with any database write.
+     * [session], holding that same lock, so an identity or consent change from another
+     * thread cannot land in the middle of [block]. Returns null (block not run) when
+     * stale. Atomic with preference changes only; not atomic with any database write.
      */
     fun <T> runIfIdentityUnchanged(owner: String?, session: Long, block: () -> T): T? = synchronized(prefs) {
         if (userId == owner && sessionGeneration == session) block() else null
@@ -362,7 +377,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var accountMode: String
         get() = prefs.getString(KEY_ACCOUNT_MODE, "ANONYMOUS") ?: "ANONYMOUS"
-        set(value) = prefs.edit { putString(KEY_ACCOUNT_MODE, value) }
+        set(value) = synchronized(prefs) { prefs.edit { putString(KEY_ACCOUNT_MODE, value) } }
 
     var userId: String?
         get() = readSecureString(KEY_USER_ID)

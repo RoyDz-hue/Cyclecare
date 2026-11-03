@@ -67,8 +67,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
@@ -178,8 +180,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
             uiState.localReadFailed -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("We couldn't open your data on this device just yet.")
-                        Text("Nothing has been changed or erased.")
+                        Text("We couldn't open your saved data.")
                         TextButton(onClick = { viewModel.retryLocalRead() }) { Text("Try again") }
                     }
                 }
@@ -260,6 +261,9 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
             // Onboarding Flow
             uiState.showOnboarding -> {
               Box(modifier = Modifier.fillMaxSize()) {
+                // While saving, the form is hidden from accessibility services and the overlay
+                // below consumes touches, so nothing underneath can be activated.
+                Box(modifier = if (uiState.isCompletingOnboarding) Modifier.fillMaxSize().clearAndSetSemantics { } else Modifier.fillMaxSize()) {
                 OnboardingScreen(
                     onComplete = { goals, lastPeriod, periodEndDate, periodStartChoice, cycleLength, cycleLengthOption, periodDuration, pin, enableLock, remindFertile, typicalSymptoms, typicalEnergy, typicalSleep, hasCompletedDeepBaseline, isCloudSyncAllowed, dynamicAnswers ->
                         viewModel.completeOnboarding(
@@ -282,11 +286,13 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         )
                     }
                 )
+                }
                 if (uiState.isCompletingOnboarding) {
                     Box(
                         modifier = Modifier.fillMaxSize()
                             .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f))
-                            .pointerInput(Unit) { detectTapGestures { } },
+                            .pointerInput(Unit) { detectTapGestures { } }
+                            .semantics { contentDescription = "Saving your answers" },
                         contentAlignment = Alignment.Center
                     ) { CircularProgressIndicator() }
                 }
