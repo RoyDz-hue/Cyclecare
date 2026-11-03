@@ -637,7 +637,11 @@ workflows:
           chmod +x gradlew
           mkdir -p ../build-logs
           ./gradlew -Pcyclecare.testBuildType=lab -PslimApk \
-            assembleLab assembleLabAndroidTest 2>&1 | tee ../build-logs/lab-build.log
+            assembleLab assembleLabAndroidTest 2>&1 | tee ../build-logs/lab-build.log \
+            || { rc=$?; \
+                 for f in app/build/outputs/mapping/lab*/missing_rules.txt; do \
+                   [ -f "$f" ] && { echo "=== $f ==="; cat "$f"; }; \
+                 done; exit $rc; }
       - name: Verify lab APKs (native bytes, DEX JNI, ephemeral debug cert)
         script: |
           set -euo pipefail

@@ -143,6 +143,9 @@ android {
       // never the release/upload key, never a committed keystore.
       signingConfig = signingConfigs.getByName("debug")
       proguardFiles("proguard-lab.pro")
+      // The minified lab androidTest APK does NOT inherit app proguardFiles;
+      // its rules live in a dedicated lab-test file.
+      testProguardFiles("proguard-lab-androidtest.pro")
       buildConfigField("boolean", "RUST_LAB", "true")
     }
   }
