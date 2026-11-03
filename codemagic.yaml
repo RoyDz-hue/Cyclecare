@@ -58,6 +58,7 @@ workflows:
             --tests "com.cyclecare.bridge.RustCoinAmountTest" \
             --tests "com.cyclecare.bridge.RustReconnectPolicyTest" \
             --tests "com.cyclecare.bridge.RustSetupChecksTest" \
+            --tests "com.cyclecare.bridge.RustLogParserTest" \
             --tests "com.cyclecare.bridge.RustEffectiveUserIdTest" \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
@@ -543,6 +544,7 @@ workflows:
             --tests "com.cyclecare.bridge.RustCoinAmountTest" \
             --tests "com.cyclecare.bridge.RustReconnectPolicyTest" \
             --tests "com.cyclecare.bridge.RustSetupChecksTest" \
+            --tests "com.cyclecare.bridge.RustLogParserTest" \
             --tests "com.cyclecare.bridge.RustEffectiveUserIdTest" \
             --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
             --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
