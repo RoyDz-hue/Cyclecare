@@ -281,8 +281,10 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     /**
      * Runs [block] only if the account and session are still exactly [owner] and
-     * [session], holding that same lock, so an identity or consent change from another
-     * thread cannot land in the middle of [block]. Returns null (block not run) when
+     * [session], holding that same lock, so an identity change (userId, clearSession) or a
+     * cloud-sync consent / account mode change through the synchronized setters cannot
+     * land in the middle of [block]. Provider consents and markPendingHealthSyncRevoke
+     * do not take this lock and are NOT covered. Returns null (block not run) when
      * stale. Atomic with preference changes only; not atomic with any database write.
      */
     fun <T> runIfIdentityUnchanged(owner: String?, session: Long, block: () -> T): T? = synchronized(prefs) {

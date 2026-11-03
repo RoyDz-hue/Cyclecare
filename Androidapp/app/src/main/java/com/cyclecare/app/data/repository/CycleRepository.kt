@@ -105,6 +105,19 @@ class CycleRepository(database: CycleCareDatabase) {
      */
     data class OperationToken(val context: StoredContext, val session: Long, val consentGeneration: Long)
 
+    /**
+     * Rejects a token whose owner, session or consent generation no longer matches the
+     * preferences (logout, owner switch, consent change). A token is an intent-time
+     * capture, never standing authority. This check is not atomic with the database
+     * write that follows: a change landing after it is not caught.
+     */
+    private fun requireTokenFresh(token: OperationToken) {
+        val prefs = lifecyclePreferences ?: return
+        val now = prefs.operationSnapshot()
+        if (now.owner != token.context.owner || now.session != token.session ||
+            now.consentGeneration != token.consentGeneration) throw OwnerTransitionException()
+    }
+
     /** Kept as the internal name used by the write paths. */
     private fun captureWriteContext(): OperationToken = beginOperation()
 
@@ -178,12 +191,14 @@ class CycleRepository(database: CycleCareDatabase) {
             // The slow lookup above can finish after a newer switch. Publish only if
             // the preferences still name this owner and session; otherwise retry with
             // the newest identity instead of rolling the repository back.
-            synchronized(this) {
-                if (preferences.userId == owner && preferences.sessionGeneration == session) {
-                    publishContext(database, owner)
-                    return
-                }
+            // The identity check holds the preferences lock while publishing, so an identity
+            // change cannot land between the check and the publish. Lock order is always
+            // preferences, then this repository; nothing takes them the other way round.
+            val published = preferences.runIfIdentityUnchanged(owner, session) {
+                synchronized(this) { publishContext(database, owner) }
+                true
             }
+            if (published == true) return
         }
     }
 
@@ -302,6 +317,7 @@ class CycleRepository(database: CycleCareDatabase) {
         // before the first suspension. Either way the transaction and journal keys use
         // that token's database, owner and consent generation only.
         val writeContext = token ?: captureWriteContext()
+        requireTokenFresh(writeContext)
         val capturedContext = writeContext.context
         afterContextCaptured?.invoke(capturedContext)
         val selectedDatabase = capturedContext.database
@@ -320,6 +336,7 @@ class CycleRepository(database: CycleCareDatabase) {
         val owner = ownerKey(capturedContext.owner)
         val capturedConsentGeneration = writeContext.consentGeneration
         selectedDatabase.withTransaction {
+            requireTokenFresh(writeContext)
             val sync = selectedDatabase.healthSyncDao()
             val profilePayload = HealthSyncPayloadCodec.profilePayload(profile)
             val profilePrior = sync.revision(owner, "profile")
@@ -362,6 +379,7 @@ class CycleRepository(database: CycleCareDatabase) {
         token: OperationToken? = null
     ): SettingsUpdate {
         val write = token ?: captureWriteContext()
+        requireTokenFresh(write)
         val captured = write.context
         afterContextCaptured?.invoke(captured)
         val db = captured.database

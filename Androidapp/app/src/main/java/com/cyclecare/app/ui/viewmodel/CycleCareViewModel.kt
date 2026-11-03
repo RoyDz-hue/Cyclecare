@@ -210,6 +210,9 @@ class CycleCareViewModel(
         const val ONBOARDING_RETRY_MESSAGE = "Your answers couldn't be saved completely. Please try again."
     }
 
+    /** Identifies the current onboarding save, so an older save's cleanup never clears a newer one's flag. */
+    private var onboardingOperationId = 0L
+
     private data class ConflictOwnerSnapshot(val owner: String, val session: Long)
 
     private fun captureConflictOwnerSnapshot(): ConflictOwnerSnapshot {
@@ -231,7 +234,9 @@ class CycleCareViewModel(
         repeat(3) {
             val owner = if (resetFirst) captureConflictOwnerSnapshot()
                 else ConflictOwnerSnapshot(authPreferences.effectiveUserId, authPreferences.sessionGeneration)
-            val stored = repository.getStoredSnapshot()
+            val stored = try { repository.getStoredSnapshot() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { return@repeat }
             if (isCurrentConflictSnapshot(owner) && repository.isCurrentContext(stored.context)) return stored
         }
         return null
@@ -766,10 +771,13 @@ class CycleCareViewModel(
         // Intent-time token; during an owner transition nothing is saved (no message: the
         // settings screen has no failure surface, so the change is simply not applied).
         val token = try { repository.beginOperation() } catch (_: com.cyclecare.app.data.repository.OwnerTransitionException) { return }
+        if (token.session != owner.session || !isCurrentConflictSnapshot(owner)) return
         val previousSettings = _uiState.value.settings
         viewModelScope.launch {
             // Profile read and both writes use the token's database, owner and consent generation.
-            val update = repository.updateSettingsBound(newSettings, previousSettings.averageCycleLength, token)
+            val update = try { repository.updateSettingsBound(newSettings, previousSettings.averageCycleLength, token) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { return@launch }
             // The write stays with its own owner; only the current owner's UI is updated.
             if (!isCurrentConflictSnapshot(owner) || !repository.isCurrentContext(update.context)) return@launch
             _uiState.value = _uiState.value.copy(onboardingProfile = update.profile)
@@ -1984,11 +1992,18 @@ class CycleCareViewModel(
             _uiState.value = _uiState.value.copy(onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
             return
         }
+        // The UI snapshot and the token are two captures; refuse unless they are the same
+        // owner and session, so one tap can never pair owner A's intent with owner B's token.
+        if (token.session != onboardingOwner.session || !isCurrentConflictSnapshot(onboardingOwner)) {
+            _uiState.value = _uiState.value.copy(onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
+            return
+        }
+        val operationId = ++onboardingOperationId
         _uiState.value = _uiState.value.copy(isCompletingOnboarding = true, onboardingCompletionMessage = null)
         viewModelScope.launch {
             try {
                 fun failAttempt() {
-                    if (isCurrentConflictSnapshot(onboardingOwner)) {
+                    if (operationId == onboardingOperationId && isCurrentConflictSnapshot(onboardingOwner)) {
                         _uiState.value = _uiState.value.copy(isCompletingOnboarding = false, onboardingCompletionMessage = ONBOARDING_RETRY_MESSAGE)
                     }
                 }
@@ -2068,9 +2083,11 @@ class CycleCareViewModel(
                 updateCalculations(updated, LocalDate.now(), LocalDate.now())
                 autoSyncSilently()
             } finally {
-                // Transient flag: always cleared, including cancellation and early returns, so the
-                // saving overlay can never stay up.
-                _uiState.value = _uiState.value.copy(isCompletingOnboarding = false)
+                // Cleared on every exit (including cancellation) by the operation that set it,
+                // and only if no newer save has started since.
+                if (operationId == onboardingOperationId) {
+                    _uiState.value = _uiState.value.copy(isCompletingOnboarding = false)
+                }
             }
         }
     }
