@@ -23,6 +23,7 @@ pub mod care_image_gen;
 pub mod debug_bridge;
 pub mod data_export_json;
 pub mod db_key_manager;
+pub mod owner_switch;
 pub mod data_export_pdf;
 pub mod sound_feedback;
 pub mod network_helper;

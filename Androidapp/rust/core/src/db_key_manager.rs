@@ -7,21 +7,35 @@
 //!    against the source's own JCE calls (Cipher.getInstance("AES/GCM/
 //!    NoPadding"), GCMParameterSpec(128, iv)) executed on jdk-17.0.21+9:
 //!    same key + same IV -> byte-identical blob, JVM-produced blobs decrypt
-//!    here, tampered tags fail, truncated blobs hit the require() message.
-//!    The Android Keystore wrapping key is injected as raw bytes: on device
-//!    it never leaves the hardware keystore; the crypto BOUNDARY (JCE
-//!    AES/GCM) is what this corpus proves. android.util.Base64 decode
-//!    ignores non-alphabet characters while Rust's STANDARD decoder rejects
-//!    them - divergence on MALFORMED input only, labeled, never hit on
-//!    values this manager itself writes.
+//!    here, tampered tags fail, truncated blobs hit the require() message,
+//!    invalid-UTF-8 plaintext under a valid tag decodes with the same
+//!    U+FFFD substitution the JVM String(bytes, UTF_8) performs (u* rows),
+//!    and Base64 with non-alphabet garbage decodes through the lenient
+//!    android.util.Base64 path (l* rows; java MIME decoder used as the
+//!    desktop stand-in for android's lenient decoder - labeled
+//!    approximation, android.util.Base64 is not on the desktop JDK).
 //!
 //! 2. getOrCreatePassphrase SEQUENCE (composed driver): wrapped present ->
 //!    decrypt and return (errors propagate like the source's require() and
 //!    AEADBadTagException); absent -> SecureRandom 32 bytes -> Base64 ->
-//!    source zeroes the byte array (modeled: the local copy is consumed and
-//!    dropped; a Rust &[u8;32] cannot be fill(0)-ed through the trait, the
-//!    host-owned buffer obligation is documented) -> encrypt -> commit()
-//!    with check() -> the exact persist-failure message on false.
+//!    secret.fill(0) in source order -> encrypt -> commit() with check() ->
+//!    the exact persist-failure message on false.
+//!
+//! DEVICE CONTRACT (preserved verbatim from main 2026-11-03 05:51 EAT):
+//! "Device path MUST retain nonextractable Keystore JCE host operation;
+//! raw32byte staging key doesn't implement it." The injected
+//! [DbKeyEffects::wrapping_key] raw 32 bytes are STAGING-ONLY: they prove
+//! the crypto boundary, they do not implement the device behavior. On
+//! device the wrapping key never leaves the hardware Keystore and both GCM
+//! operations run through JCE on the Keystore handle.
+//! Actual device compatibility remains open (unproven on a device).
+//!
+//! CONCURRENCY: the source annotates getOrCreatePassphrase @Synchronized
+//! (instance-level monitor). Rust has no intrinsic monitor: the host MUST
+//! serialize calls to this driver behind its own mutex holding the
+//! manager's lifetime. Two racing create paths would otherwise both
+//! generate and the loser's commit could be overwritten (source prevents
+//! this via the monitor; this port models the sequential result only).
 
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -42,22 +56,37 @@ pub const ERR_INVALID_STORED: &str = "Stored local database key is invalid.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DbKeyError {
-    /// Base64 decode failed (Rust strict; android lenient - labeled limit).
+    /// Base64 decode failed even after lenient filtering (android's decoder
+    /// ignores non-alphabet chars but still rejects structurally bad
+    /// input: bad length, broken padding).
     MalformedBase64,
     /// combined.size <= GCM_IV_LENGTH: the source's require() message.
     InvalidStoredKey,
     /// GCM tag verification failed (AEADBadTagException parity).
     TagMismatch,
-    /// Decrypted bytes were not UTF-8 (source would mangle via String();
-    /// Kotlin's String(bytes, UTF_8) replaces malformed input, so this is
-    /// unreachable on values the manager itself wrote - fail visibly).
-    NotUtf8,
+    /// getOrCreateWrappingKey() failed: Keystore.load, getKey, or the
+    /// KeyGenerator init/generate threw. Source has NO catching here - the
+    /// throw propagates out of getOrCreatePassphrase; typed propagation.
+    KeystoreFailed,
     /// commit() returned false: the source's check() message.
     PersistFailed,
 }
 
 fn b64() -> impl Engine {
     base64::engine::general_purpose::STANDARD // NO_WRAP equivalent
+}
+
+/// android.util.Base64.decode(str, NO_WRAP) parity: the decoder IGNORES
+/// any character outside the alphabet (whitespace, punctuation) rather
+/// than rejecting the input; structurally invalid cleaned input (bad
+/// length, broken padding) still fails. Differs from the crate's strict
+/// STANDARD decoder, which rejects on the first non-alphabet byte.
+fn b64_decode_lenient(s: &str) -> Result<Vec<u8>, DbKeyError> {
+    let cleaned: Vec<u8> = s
+        .bytes()
+        .filter(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'=')
+        .collect();
+    b64().decode(cleaned).map_err(|_| DbKeyError::MalformedBase64)
 }
 
 /// encrypt(): Base64 NO_WRAP of `cipher.iv || doFinal(utf8 plaintext)`.
@@ -74,10 +103,12 @@ pub fn gcm_encrypt_blob(key: &[u8; 32], iv: &[u8; GCM_IV_LENGTH], plaintext: &st
     b64().encode(combined)
 }
 
-/// decrypt(): Base64 decode -> require(size > 12) -> split iv/ciphertext ->
-/// GCM 128-bit tag verify -> UTF-8 string.
+/// decrypt(): Base64 decode (lenient, android parity) -> require(size > 12)
+/// -> split iv/ciphertext -> GCM 128-bit tag verify -> String(UTF_8) with
+/// the JVM's malformed-input substitution (U+FFFD), from_utf8_lossy parity:
+/// u28 corpus row proves identical substitution bytes on the oracle input.
 pub fn gcm_decrypt_blob(key: &[u8; 32], encoded: &str) -> Result<String, DbKeyError> {
-    let combined = b64().decode(encoded).map_err(|_| DbKeyError::MalformedBase64)?;
+    let combined = b64_decode_lenient(encoded)?;
     if combined.len() <= GCM_IV_LENGTH {
         return Err(DbKeyError::InvalidStoredKey);
     }
@@ -86,7 +117,7 @@ pub fn gcm_decrypt_blob(key: &[u8; 32], encoded: &str) -> Result<String, DbKeyEr
     let plain = cipher
         .decrypt(Nonce::from_slice(iv), Payload { msg: ct, aad: b"" })
         .map_err(|_| DbKeyError::TagMismatch)?;
-    String::from_utf8(plain).map_err(|_| DbKeyError::NotUtf8)
+    Ok(String::from_utf8_lossy(&plain).into_owned())
 }
 
 /// Passphrase derivation: Base64 NO_WRAP of 32 random bytes (:27-29).
@@ -96,13 +127,16 @@ pub fn passphrase_from_secret(secret: &[u8; 32]) -> String {
 
 /// Host effects for getOrCreatePassphrase.
 pub trait DbKeyEffects {
-    /// getOrCreateWrappingKey(): the Keystore-resident AES key, injected as
-    /// raw bytes for staging; on device this is a Keystore handle and the
-    /// crypto ops run through JCE without exposing the bytes.
-    fn wrapping_key(&self) -> [u8; 32];
+    /// getOrCreateWrappingKey(): the Keystore-resident AES key. STAGING:
+    /// injected as raw bytes. DEVICE: a nonextractable Keystore handle and
+    /// the crypto runs through JCE - the raw-32 path does NOT implement
+    /// that. Err = the source's unguarded Keystore throw (load/getKey/
+    /// generate), typed-propagated as [DbKeyError::KeystoreFailed].
+    fn wrapping_key(&self) -> Result<[u8; 32], DbKeyError>;
     /// preferences.getString(WRAPPED_PASSPHRASE, null).
     fn get_wrapped(&self) -> Option<String>;
-    /// SecureRandom().nextBytes(32).
+    /// SecureRandom().nextBytes(32). Mutable: the caller owns the buffer so
+    /// the driver can zeroize it (source: secret.fill(0)).
     fn secure_random_32(&mut self) -> [u8; 32];
     /// Fresh 12-byte IV (source: from the encrypt-mode cipher).
     fn gcm_iv(&mut self) -> [u8; GCM_IV_LENGTH];
@@ -111,18 +145,19 @@ pub trait DbKeyEffects {
 }
 
 /// :21-37 composed. Wrapped present -> decrypt (errors PROPAGATE like the
-/// source's require()/AEADBadTagException - no swallow). Absent -> generate,
-/// derive, encrypt, commit-with-check.
+/// source's require()/AEADBadTagException - no swallow). Absent ->
+/// generate, derive, ZEROIZE in source order, encrypt, commit-with-check.
+/// Host MUST serialize calls (source @Synchronized - see module docs).
 pub fn get_or_create_passphrase<E: DbKeyEffects>(fx: &mut E) -> Result<String, DbKeyError> {
-    let key = fx.wrapping_key();
+    let key = fx.wrapping_key()?;
     if let Some(wrapped) = fx.get_wrapped() {
         return gcm_decrypt_blob(&key, &wrapped);
     }
-    let secret = fx.secure_random_32();
+    let mut secret = fx.secure_random_32();
     let passphrase = passphrase_from_secret(&secret);
-    // Source: secret.fill(0) immediately after encoding. The port never
-    // retains the secret beyond this call; host zeroization obligation noted.
-    drop(secret);
+    // Source order: secret.fill(0) immediately after encoding, BEFORE the
+    // encrypt call. Now actually implemented, not just documented.
+    secret.fill(0);
     let iv = fx.gcm_iv();
     let encrypted = gcm_encrypt_blob(&key, &iv, &passphrase);
     if !fx.commit_wrapped(&encrypted) {
