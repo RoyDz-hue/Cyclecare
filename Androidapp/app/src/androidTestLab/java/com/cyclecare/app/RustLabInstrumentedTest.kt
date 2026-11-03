@@ -40,7 +40,7 @@ class RustLabInstrumentedTest {
         // silently taken over - that is a failure here, by design.
         val failures = results.filter { !it.answered }
         assertTrue(
-            "native dispatcher failures: " + failures.joinToString { "${it.contract}: ${it.detail}" },
+            "native dispatcher returned one or more failed contracts",
             failures.isEmpty(),
         )
         assertEquals(6, results.size)

@@ -19,11 +19,15 @@ internal data class CycleMonthRequest(
     val owner: String,
     val inputs: CyclePredictionInputs,
     val month: YearMonth,
-    val producer: Any
+    val producer: Any,
+    val epoch: Long = 0L
 )
 internal data class CycleMonthResult(
     val request: CycleMonthRequest,
-    val predictions: Map<String, DayPrediction>
+    val predictions: Map<String, DayPrediction>,
+    val nativeAnswered: Boolean = false,
+    val computedOffMain: Boolean = false,
+    val elapsedNanos: Long = 0L
 )
 
 internal fun CycleMonthResult.acceptFor(request: CycleMonthRequest): Map<String, DayPrediction>? =
@@ -50,32 +54,87 @@ fun CycleScreenRustRoute(
     logsMap: Map<String, CycleDayLog>,
     modifier: Modifier = Modifier
 ) {
+    CycleScreenRustContent(
+        uiState = uiState, logsMap = logsMap, modifier = modifier,
+        producer = viewModel,
+        fallbackMonth = { snapshot, month -> viewModel.getPredictionsForSnapshot(snapshot, month) },
+        fallbackDate = { snapshot, date -> viewModel.getPredictionForSnapshot(snapshot, date) },
+        onSelectDate = viewModel::selectDate, onOpenTrackForDate = viewModel::openTrackForDate
+    )
+}
+
+/** Shared existing-route seam: accepts state/events without constructing a VM.
+ * Production keeps its existing fallback. A lab caller can require a native
+ * answer and then loading/failure never masquerades as empty predictions.
+ * Epoch is local freshness metadata, never sent to the native payload.
+ */
+@Composable
+internal fun CycleScreenRustContent(
+    uiState: CycleUiState,
+    logsMap: Map<String, CycleDayLog>,
+    producer: Any,
+    fallbackMonth: (CycleUiState, YearMonth) -> Map<String, DayPrediction>,
+    fallbackDate: (CycleUiState, LocalDate) -> DayPrediction?,
+    onSelectDate: (LocalDate) -> Unit,
+    onOpenTrackForDate: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+    epoch: Long = 0L,
+    requireNative: Boolean = false,
+    onNativeState: (String) -> Unit = {},
+    onAcceptedResult: (CycleMonthResult?) -> Unit = {}
+) {
     var month by remember { mutableStateOf(YearMonth.from(uiState.selectedDate)) }
-    val request = CycleMonthRequest(uiState.localDataOwnerKey, uiState.predictionInputs(), month, viewModel)
-    val result by produceState<CycleMonthResult?>(null, request, viewModel) {
+    val request = CycleMonthRequest(uiState.localDataOwnerKey, uiState.predictionInputs(), month, producer, epoch)
+    val result by produceState<CycleMonthResult?>(null, request) {
         val snapshot = uiState
         value = withContext(Dispatchers.Default) {
+            val started = System.nanoTime()
+            val computedOffMain = android.os.Looper.myLooper() != android.os.Looper.getMainLooper()
             val native = CycleScreenStateAdapter.fetchMonthPredictions(request.inputs, request.month.toString())
-            val predictions = native?.let {
+            val decoded = native?.let {
                 try { it.toAppPredictions() } catch (_: IllegalArgumentException) { null }
                 catch (_: java.time.DateTimeException) { null }
-            } ?: viewModel.getPredictionsForSnapshot(snapshot, request.month)
-            CycleMonthResult(request, predictions)
+            }
+            CycleMonthResult(request, decoded ?: if (requireNative) emptyMap() else fallbackMonth(snapshot, request.month),
+                nativeAnswered = decoded != null, computedOffMain = computedOffMain,
+                elapsedNanos = System.nanoTime() - started)
         }
     }
-    // produceState retains old value during a new request. Never expose it
-    // across month/settings/anchor/owner changes. Legacy source UI remains
-    // available while the matching async result is pending.
-    val accepted = result?.acceptFor(request)
+    // produceState retains its previous value while work is pending. Reject
+    // owner/settings/month/producer/epoch mismatch before any cell can see it.
+    val matching = result?.takeIf { it.request == request }
+    val accepted = matching?.predictions
+    val nativeState = when {
+        matching == null -> "loading"
+        matching.nativeAnswered -> "native"
+        else -> "unavailable"
+    }
+    SideEffect {
+        onNativeState(nativeState)
+        onAcceptedResult(matching)
+    }
+    if (requireNative && nativeState != "native") {
+        androidx.compose.material3.Text(
+            if (nativeState == "loading") "Loading calendar estimates" else "Calendar estimates unavailable. Native calculation failed.",
+            modifier = modifier
+        )
+        return
+    }
+    // Lab selected-card evidence is only valid when selected date belongs to
+    // displayed month; cross-month today/selected-card parity remains open.
+    val displayState = if (requireNative) uiState.copy(
+        selectedDatePrediction = accepted?.get(uiState.selectedDate.toString()),
+        todayPrediction = accepted?.get(uiState.currentDate.toString())
+    ) else uiState
     CycleScreenContent(
-        uiState = uiState,
+        uiState = displayState,
         logsMap = logsMap,
         predictionForDate = { date ->
             if (accepted != null) accepted[date.toString()]
-            else viewModel.getPredictionForSnapshot(uiState, date)
+            else fallbackDate(uiState, date)
         },
-        onSelectDate = viewModel::selectDate,
-        onOpenTrackForDate = viewModel::openTrackForDate,
+        onSelectDate = onSelectDate,
+        onOpenTrackForDate = onOpenTrackForDate,
         modifier = modifier,
         controlledMonth = month,
         onDisplayedMonthChange = { month = it }
