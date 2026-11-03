@@ -143,8 +143,19 @@ android {
       // never the release/upload key, never a committed keystore.
       signingConfig = signingConfigs.getByName("debug")
       proguardFiles("proguard-lab.pro")
-      // The minified lab androidTest APK does NOT inherit app proguardFiles;
-      // its rules live in a dedicated lab-test file.
+      // The lab androidTest APK stays R8-processed: in application modules
+      // the androidTest shrinker follows the build type's isMinifyEnabled
+      // (AGP 9.1.1 OptimizationDslInfoImpl.codeShrinkerEnabled; the
+      // androidTest{enableMinification} DSL exists only on LibraryBuildType).
+      // The app/test DEX boundary is instead closed by EXACT derived keeps:
+      // proguard-lab.pro keeps, under original names, precisely the classes
+      // the selected lab test needs from the shared app classpath (classes
+      // the androidTest build subtracts from its program inputs as
+      // app-provided - kotlin-stdlib, androidx.tracing), while
+      // proguard-lab-androidtest.pro carries the test-side rules. The lab
+      // test source set is isolated (src/androidTestLab only) and UI-test
+      // dependencies are debug-only, so the boundary surface is minimal and
+      // ci/lab-dex-closure.py fail-closed verifies it on every build.
       testProguardFiles("proguard-lab-androidtest.pro")
       buildConfigField("boolean", "RUST_LAB", "true")
     }
@@ -216,11 +227,16 @@ dependencies {
   // JVM 21 at configuration) is still applied only with -Ppaparazzi.
   testImplementation("app.cash.paparazzi:paparazzi:2.0.0-alpha05")
   testImplementation(libs.mockwebserver)
-  androidTestImplementation(platform(libs.androidx.compose.bom))
-  androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-  androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
+  // UI-test-only dependencies are debug-scoped: the isolated lab test
+  // (src/androidTestLab) uses only runner + androidx.test.ext:junit, and
+  // every androidTest dependency overlapping the app's runtime classpath is
+  // subtracted from the test APK's packaged classes (app-provided model),
+  // so the lab test classpath stays minimal on purpose.
+  debugAndroidTestImplementation(platform(libs.androidx.compose.bom))
+  debugAndroidTestImplementation(libs.androidx.compose.ui.test.junit4)
+  debugAndroidTestImplementation(libs.androidx.espresso.core)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)

@@ -687,6 +687,16 @@ workflows:
           echo "$INSTRBLOCK" | tee build-logs/lab-instrumentation.txt
           echo "$INSTRBLOCK" | grep -qE 'android:name\(0x[0-9a-f]+\)="androidx\.test\.runner\.AndroidJUnitRunner"'
           echo "$INSTRBLOCK" | grep -qE 'android:targetPackage\(0x[0-9a-f]+\)="com\.cyclecare\.app\.lab"'
+      - name: DEX closure preflight (gates any Test Lab matrix submission)
+        script: |
+          set -euo pipefail
+          ANDROID_JAR=$(ls -d "$ANDROID_HOME/platforms/"*/ | sort -V | tail -1)android.jar
+          test -s "$ANDROID_JAR"
+          # Fail-closed: the matrix may only be submitted when this exits 0.
+          # Proves runner + lab test + kept lab entry point are defined and
+          # every test-APK type reference resolves to test APK, app APK, or
+          # the platform (android.jar), minus an exact-name reviewed allowlist.
+          python3 ci/lab-dex-closure.py             lab-artifacts/app-arm64-v8a-lab.apk             lab-artifacts/app-arm64-v8a-lab-androidTest.apk             "$ANDROID_JAR" | tee build-logs/lab-dex-closure.txt
       - name: Check R8 obfuscation active and caller path kept (bounded)
         script: |
           set -euo pipefail
