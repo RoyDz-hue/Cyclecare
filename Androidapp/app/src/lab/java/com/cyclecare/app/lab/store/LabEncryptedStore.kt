@@ -35,6 +35,10 @@ internal class LabEncryptedStore(private val db:LabReceiptDatabase,private var i
    require(matching.size==result.length())
    for(n in 0 until result.length()){val item=result.getJSONObject(n);val j=matching.single{it.recordId==item.getString("record")};require(j.revision==item.getLong("revision")&&(j.kind=="DELETE")==item.getBoolean("tombstone"));require((if(item.isNull("hash"))null else item.getString("hash"))==(if(j.kind=="DELETE")null else j.payloadHash))}}
  }}
+ // Harness-only diagnostics. Synthetic app/package/config are enforced by factory.
+ internal suspend fun inspectSynthetic():LabSyntheticSnapshot=mutex.withLock{check(!closed);db.withTransaction{LabSyntheticSnapshot(dao.records(),dao.revisions(),dao.journals(),dao.receipts(),dao.metadata())}}
+ internal suspend fun closeHelperForSyntheticReopen()=mutex.withLock{check(!closed);db.openHelper.close()}
+ internal suspend fun corruptSyntheticReceiptForRejection()=mutex.withLock{check(!closed);db.withTransaction{check(dao.receipts().isNotEmpty());db.openHelper.writableDatabase.execSQL("UPDATE lab_receipts SET resultJson='{}'")}}
  private fun validateReceipt(raw:String){require(raw.length<=65536);val o=JSONObject(raw);require(o.keys().asSequence().toSet()==setOf("version","outcome","records"));require(o.get("version") is Int&&o.getInt("version")==1&&o.get("outcome")=="Committed");val a=o.getJSONArray("records");require(a.length() in 1..2);for(n in 0 until a.length()){val r=a.getJSONObject(n);require(r.keys().asSequence().toSet()==setOf("record","revision","hash","tombstone"));require(r.get("revision") is Int||r.get("revision") is Long);require(r.getLong("revision")>0&&r.get("tombstone") is Boolean);require(r.get("record") is String&&r.getString("record").length<=128)}}
  suspend fun commit(plan:LabCommitPlan,faultAfterStep:Int=0,loseReceiptAfterCommit:Boolean=false):LabCommitResult=mutex.withLock{
   try{
