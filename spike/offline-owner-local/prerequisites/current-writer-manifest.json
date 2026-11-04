@@ -3,7 +3,7 @@
     "Androidapp/app/src/androidTestDebug/java/com/cyclecare/app/DeviceInsetsScreenshotTest.kt": "1d6d1a7b230ce85404f74778fbb702f8e803a2398d59323731e7efbf4b63b802",
     "Androidapp/app/src/androidTestDebug/java/com/cyclecare/app/PrivateDataAcceptanceTest.kt": "3c8892faa6d8ca32839028ba0d6e7f5cd7af7d933f70ecef6c86ce5578f06bc0",
     "Androidapp/app/src/androidTestDebug/java/com/cyclecare/app/RustBridgeInstrumentedTest.kt": "dc137051827cf91b05e2e760a2492b405547d86db804da8060f8445542df567f",
-    "Androidapp/app/src/androidTestLab/java/com/cyclecare/app/LabEncryptedHostInstrumentedTest.java": "d183f0da2164d55440e649848f1af28c217fbb001d75879a0f3a027b004cf7cc",
+    "Androidapp/app/src/androidTestLab/java/com/cyclecare/app/LabEncryptedHostInstrumentedTest.java": "025acbf3b20c840c7f7d45aa0b674b56b02c0049efefe77f57917f82660e7283",
     "Androidapp/app/src/androidTestLab/java/com/cyclecare/app/RustCalendarLabInstrumentedTest.java": "5d2acef13288cc793ff1400d30163deea7fab2b510d657340a85089171255895",
     "Androidapp/app/src/androidTestLab/java/com/cyclecare/app/RustLabInstrumentedTest.kt": "ccae08c575d27c67091e98264735abb3ffaefc648e0a1c0a07518250c73af6b6",
     "Androidapp/app/src/debug/res/values/strings.xml": "3c947aefab759e50dd36b83e8ae7d45ca2bb8005fa1f7c567ae1388f874d44a9",
@@ -13,10 +13,11 @@
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/RustCalendarLabProof.kt": "5119bffa540dcec8eda1648beba12736308ce98630b32786742738061a698709",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/RustLabSelfCheck.kt": "ec81d0b673b9b06d3a3d15f92d8bbdb3f7e1c893615c576eec224fcab269c434",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabCorpusMapper.kt": "daa54d2d743bd13d81ffdbc8256818ef3b610f853a37341b04d39ab4085b71d4",
-    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt": "e107f6bb4606869cd9a55e4d67f1621352a2858847e6af888091fc4ce1ebe48c",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt": "908442dff03e7f3321b0ef8f4d1a0832ff33224e018e2652e8d702c333efc37a",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt": "8df095924b48dc06c912e6c865478a2316078874e81e5c7cb91b0a5a5acd2d7c",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt": "17160c295bbd573ee36ac820c2707def7cbc84bc77f19bbaf147fcf264288029",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabReceiptDatabase.kt": "73c1b06ce3899d1f4458666048e1b5e02ea2bd96ef94dd5d43259b8bd5c555aa",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt": "55706792760ee4f49f753651dc407f3dc954aa75e60921cfff0b50af32c42233",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSyntheticSnapshot.kt": "33454a7bd5143d1a76ca1ec9290ee0c74006ed0132d8c5286dd74c9bfd1dbb57",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/SyntheticFixtureConfig.kt": "6fe59658ca11d664b866dbf1270c194c4fff7ee97d3a68d3266e947e1fc54192",
     "Androidapp/app/src/main/AndroidManifest.xml": "edce61c88c4df80fdaccd645a49dc3d2ad9ee3265798874fefc4231becd751df",
@@ -859,15 +860,23 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 22,
+      "line": 20,
       "categories": [
         "declaration"
       ],
-      "source": "  fun verify(ok:Boolean,label:String){checks++;check(ok){label}}"
+      "source": " private suspend fun execute(context:Context,trackJson:String,settingsJson:String,diagnostic:LabSafeDiagnostic):String {"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 23,
+      "line": 27,
+      "categories": [
+        "declaration"
+      ],
+      "source": "  fun verify(ok:Boolean,id:Int){checks++;diagnostic.verify(ok,id)}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 28,
       "categories": [
         "declaration"
       ],
@@ -875,7 +884,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 24,
+      "line": 29,
       "categories": [
         "declaration"
       ],
@@ -883,7 +892,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 25,
+      "line": 30,
       "categories": [
         "declaration"
       ],
@@ -891,7 +900,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 35,
+      "line": 41,
       "categories": [
         "declaration"
       ],
@@ -899,7 +908,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 38,
+      "line": 45,
       "categories": [
         "declaration"
       ],
@@ -907,7 +916,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 52,
+      "line": 62,
       "categories": [
         "declaration"
       ],
@@ -915,35 +924,11 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 61,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "    for(step in 1..steps){verify(a.commit(plan,step)==LabCommitResult.StorageFailure,\"track injected failure $index/$step\");verify(a.inspectSynthetic().digest()==before.digest(),\"track rollback independent DAO $index/$step\")}"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 62,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "    val result=a.commit(plan);verify(result is LabCommitResult.Committed&&!result.replay,\"track commit\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 63,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "    verify(a.commit(plan) is LabCommitResult.Committed && (a.commit(plan) as LabCommitResult.Committed).replay,\"track idempotency\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
       "line": 72,
       "categories": [
         "preference_effect"
       ],
-      "source": "    for(step in 1..plan.mutations.size*3+1){verify(a.commit(plan,step)==LabCommitResult.StorageFailure,\"settings fault\");verify(a.inspectSynthetic().digest()==before.digest(),\"settings rollback\")}"
+      "source": "    for(step in 1..steps){verify(a.commit(plan,step)==LabCommitResult.StorageFailure,11);verify(a.inspectSynthetic().digest()==before.digest(),12)}"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
@@ -951,47 +936,31 @@
       "categories": [
         "preference_effect"
       ],
-      "source": "    verify(a.commit(plan) is LabCommitResult.Committed,\"settings commit\");val after=capture(a,\"settings-$index\")"
+      "source": "    val result=a.commit(plan);verify(result is LabCommitResult.Committed&&!result.replay,13)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 79,
+      "line": 74,
       "categories": [
         "preference_effect"
       ],
-      "source": "   verify(a.commit(good.copy(operationId=\"bad-bits\",mutations=good.mutations.mapIndexed{i,m->if(i==0)m.copy(bbtBits=0x7fc00001L)else m})) is LabCommitResult.Malformed,\"nonfinite bits reject\")"
+      "source": "    verify(a.commit(plan) is LabCommitResult.Committed && (a.commit(plan) as LabCommitResult.Committed).replay,14)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 86,
+      "line": 84,
       "categories": [
         "preference_effect"
       ],
-      "source": "   verify(a.commit(u,loseReceiptAfterCommit=true) is LabCommitResult.Unknown,\"postcommit unknown\")"
+      "source": "    for(step in 1..plan.mutations.size*3+1){verify(a.commit(plan,step)==LabCommitResult.StorageFailure,18);verify(a.inspectSynthetic().digest()==before.digest(),19)}"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 87,
+      "line": 85,
       "categories": [
         "preference_effect"
       ],
-      "source": "   val committed=capture(a,\"unknown-committed\");a.close();verify(a.capture()==null&&a.commit(u)==LabCommitResult.RejectedClosed,\"closed APIs\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 89,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "   val replay=a.commit(u);verify(replay is LabCommitResult.Committed&&replay.replay,\"same op recovers\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 90,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "   val beforeConflict=a.inspectSynthetic().digest();verify(a.commit(good.copy(operationId=\"old-base\"))==LabCommitResult.Conflict,\"old log base conflicts\");verify(a.inspectSynthetic().digest()==beforeConflict,\"conflict no writes\")"
+      "source": "    verify(a.commit(plan) is LabCommitResult.Committed,20);val after=capture(a,\"settings-$index\")"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
@@ -999,28 +968,68 @@
       "categories": [
         "preference_effect"
       ],
-      "source": "   verify(a.commit(different)==LabCommitResult.InvalidReuse,\"different intent rejects\")"
+      "source": "   verify(a.commit(good.copy(operationId=\"bad-bits\",mutations=good.mutations.mapIndexed{i,m->if(i==0)m.copy(bbtBits=0x7fc00001L)else m})) is LabCommitResult.Malformed,23)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 102,
+      "line": 100,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   verify(a.commit(u,loseReceiptAfterCommit=true) is LabCommitResult.Unknown,26)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 101,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   val committed=capture(a,\"unknown-committed\");a.close();verify(a.capture()==null&&a.commit(u)==LabCommitResult.RejectedClosed,27)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 103,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   val replay=a.commit(u);verify(replay is LabCommitResult.Committed&&replay.replay,29)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 104,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   val beforeConflict=a.inspectSynthetic().digest();verify(a.commit(good.copy(operationId=\"old-base\"))==LabCommitResult.Conflict,30);verify(a.inspectSynthetic().digest()==beforeConflict,31)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 106,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   verify(a.commit(different)==LabCommitResult.InvalidReuse,32)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 117,
       "categories": [
         "writer_call",
         "preference_effect"
       ],
-      "source": "    verify(prefs.edit().remove(\"wrapped\").commit(),\"remove owned envelope\")"
+      "source": "    verify(prefs.edit().remove(\"wrapped\").commit(),35)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 105,
+      "line": 120,
       "categories": [
         "preference_effect"
       ],
-      "source": "    verify(prefs.edit().putString(\"wrapped\",\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\").commit(),\"corrupt owned envelope\")"
+      "source": "    verify(prefs.edit().putString(\"wrapped\",\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\").commit(),38)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 108,
+      "line": 123,
       "categories": [
         "preference_effect"
       ],
@@ -1028,71 +1037,71 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 111,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "   val race=coroutineScope{listOf(async{a.commit(r1)},async{a.commit(r2)}).awaitAll()};verify(race.count{it is LabCommitResult.Committed}==1&&race.count{it==LabCommitResult.Conflict}==1,\"perrecord base race\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 119,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "    try{verify(router.commit(p) is LabCommitResult.Committed,\"old A writable before publish\")}finally{release.complete(Unit)};verify(publish.await(),\"publish B\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 122,
-      "categories": [
-        "preference_effect"
-      ],
-      "source": "   verify(router.commit(u)==LabCommitResult.Stale,\"crossowner ABA rejects old A\")"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
       "line": 127,
       "categories": [
         "preference_effect"
       ],
-      "source": "   verify(router.commit(u)==LabCommitResult.Stale,\"sameowner ABA rejects\")"
+      "source": "   val race=coroutineScope{listOf(async{a.commit(r1)},async{a.commit(r2)}).awaitAll()};verify(race.count{it is LabCommitResult.Committed}==1&&race.count{it==LabCommitResult.Conflict}==1,41)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 130,
+      "line": 136,
       "categories": [
         "preference_effect"
       ],
-      "source": "   val bp=LabCorpusMapper.settings(bi,\"B-seed\",settings.getJSONObject(0).getString(\"settingsPayload\"),null,0,0);verify(b.commit(bp) is LabCommitResult.Committed,\"seed B receipt\")"
+      "source": "    try{verify(router.commit(p) is LabCommitResult.Committed,42)}finally{release.complete(Unit)};verify(publish.await(),43)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 133,
+      "line": 139,
       "categories": [
         "preference_effect"
       ],
-      "source": "   val finalBase=a.inspectSynthetic();verify(router.commit(LabCorpusMapper.settings(ai2,\"after-corrupt-B\",settings.getJSONObject(0).getString(\"settingsPayload\"),null,finalBase.revision(\"settings\"),0)) is LabCommitResult.Committed,\"A writable after corrupt B\")"
+      "source": "   verify(router.commit(u)==LabCommitResult.Stale,44)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 147,
+      "line": 144,
       "categories": [
-        "writer_call"
+        "preference_effect"
       ],
-      "source": "    for(suffix in listOf(\"\",\"-wal\",\"-shm\",\"-journal\")){val f=File(dir,c.filename+suffix);verify(!f.exists()||f.delete(),\"exact owned file cleanup\")}"
+      "source": "   verify(router.commit(u)==LabCommitResult.Stale,49)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
       "line": 148,
       "categories": [
-        "writer_call"
+        "preference_effect"
       ],
-      "source": "    verify(context.deleteSharedPreferences(c.prefs),\"owned preferences cleanup\")"
+      "source": "   val bp=LabCorpusMapper.settings(bi,\"B-seed\",settings.getJSONObject(0).getString(\"settingsPayload\"),null,0,0);verify(b.commit(bp) is LabCommitResult.Committed,51)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 149,
+      "line": 151,
+      "categories": [
+        "preference_effect"
+      ],
+      "source": "   val finalBase=a.inspectSynthetic();verify(router.commit(LabCorpusMapper.settings(ai2,\"after-corrupt-B\",settings.getJSONObject(0).getString(\"settingsPayload\"),null,finalBase.revision(\"settings\"),0)) is LabCommitResult.Committed,54)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 166,
+      "categories": [
+        "writer_call"
+      ],
+      "source": "    for(suffix in listOf(\"\",\"-wal\",\"-shm\",\"-journal\")){val f=File(dir,c.filename+suffix);verify(!f.exists()||f.delete(),57)}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 167,
+      "categories": [
+        "writer_call"
+      ],
+      "source": "    verify(context.deleteSharedPreferences(c.prefs),58)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
+      "line": 168,
       "categories": [
         "writer_call"
       ],
@@ -1100,12 +1109,12 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt",
-      "line": 151,
+      "line": 170,
       "categories": [
         "writer_call",
         "preference_effect"
       ],
-      "source": "    verify(registry.edit().remove(c.filename).commit(),\"owned registry entry cleanup\")"
+      "source": "    verify(registry.edit().remove(c.filename).commit(),60)"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt",
@@ -1347,6 +1356,126 @@
         "dao_or_sql_write"
       ],
       "source": " @Insert(onConflict=OnConflictStrategy.ABORT) suspend fun putReceipt(value:LabReceipt)"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 6,
+      "categories": [
+        "declaration"
+      ],
+      "source": "internal class LabCheckFailure:IllegalStateException()"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 7,
+      "categories": [
+        "declaration"
+      ],
+      "source": "internal class LabSafeDiagnostic {"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 8,
+      "categories": [
+        "declaration"
+      ],
+      "source": " var stage=LabStage.ENTRY"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 9,
+      "categories": [
+        "declaration"
+      ],
+      "source": " private var activeCheck=0"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 10,
+      "categories": [
+        "declaration"
+      ],
+      "source": " private var failedCheck=0"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 11,
+      "categories": [
+        "declaration"
+      ],
+      "source": " var checks=0;private set"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 12,
+      "categories": [
+        "declaration"
+      ],
+      "source": " var cleanupStarted=false"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 13,
+      "categories": [
+        "declaration"
+      ],
+      "source": " var evidenceAvailable=false"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 14,
+      "categories": [
+        "declaration"
+      ],
+      "source": " fun beginCheck(id:Int){require(id in 1..128);activeCheck=id}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 15,
+      "categories": [
+        "declaration"
+      ],
+      "source": " fun verify(ok:Boolean,id:Int){beginCheck(id);checks++;if(!ok){failedCheck=id;throw LabCheckFailure()};activeCheck=0}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 16,
+      "categories": [
+        "declaration"
+      ],
+      "source": " private fun kind(t:Throwable)=when(t){"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 26,
+      "categories": [
+        "declaration"
+      ],
+      "source": " inline fun failure(t:Throwable,saveEvidence:()->Unit,close:()->Unit):String {"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 29,
+      "categories": [
+        "declaration"
+      ],
+      "source": "  var closeOk=true;try{close()}catch(_:Throwable){closeOk=false}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 30,
+      "categories": [
+        "declaration"
+      ],
+      "source": "  var writeState=\"UNAVAILABLE\";if(evidenceAvailable){try{saveEvidence();writeState=\"WRITTEN\"}catch(_:Throwable){writeState=\"FAILED\"}}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 33,
+      "categories": [
+        "declaration"
+      ],
+      "source": " fun success()=\"PASS\""
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSyntheticSnapshot.kt",

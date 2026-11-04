@@ -19,6 +19,6 @@ public class LabEncryptedHostInstrumentedTest {
  }
  @Test public void syntheticEncryptedProtocol() throws Exception {
   String result=LabEncryptedHostProof.run(InstrumentationRegistry.getInstrumentation().getTargetContext(),asset("track-plans.json"),asset("settings-oracle.json"));
-  assertTrue("Synthetic evidence is preserved privately on failure",result.equals("PASS"));
+  assertTrue(result,result.equals("PASS"));
  }
 }
