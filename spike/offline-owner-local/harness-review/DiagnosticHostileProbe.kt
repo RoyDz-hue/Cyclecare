@@ -7,10 +7,13 @@ fun main(){
  for(stage in LabStage.entries)for(t in throwables)for(badSave in listOf(false,true))for(badClose in listOf(false,true)){
   val d=LabSafeDiagnostic();d.evidenceAvailable=true;d.stage=stage;d.beginCheck(13)
   val report=d.failure(t,{if(badSave)throw IOException(hostile)},{if(badClose)throw SecurityException(hostile)})
-  verify(report.startsWith("FAIL|stage=${stage.name}|check=13|"));verify(report.contains("evidence=${if(badSave)"FAILED" else "WRITTEN"}|close=${!badClose}"));verify(!report.contains(hostile)&&!report.contains("password")&&!report.contains("wrapped")&&!report.contains("private")&&!report.contains("FAKE"));verify(report.length<180)
+  verify(report.startsWith("FAIL|stage=${stage.name}|factory=NONE|check=13|"));verify(report.contains("evidence=${if(badSave)"FAILED" else "WRITTEN"}|close=${!badClose}"));verify(!report.contains(hostile)&&!report.contains("password")&&!report.contains("wrapped")&&!report.contains("private")&&!report.contains("FAKE"));verify(report.length<220)
  }
  val d=LabSafeDiagnostic();d.evidenceAvailable=true;d.stage=LabStage.TRACK_CORPUS;d.verify(true,1);val t=runCatching{d.verify(false,42)}.exceptionOrNull()!!
- verify(t is LabCheckFailure);verify(d.failure(t,{throw IOException("secondary")},{throw Exception("tertiary")})=="FAIL|stage=TRACK_CORPUS|check=42|kind=CHECK|checks=2|cleanup=false|evidence=FAILED|close=false")
+ verify(t is LabCheckFailure);verify(d.failure(t,{throw IOException("secondary")},{throw Exception("tertiary")})=="FAIL|stage=TRACK_CORPUS|factory=NONE|check=42|kind=CHECK|checks=2|cleanup=false|evidence=FAILED|close=false")
  verify(runCatching{d.beginCheck(0)}.isFailure);verify(runCatching{d.beginCheck(129)}.isFailure);verify(d.success()=="PASS");val setup=LabSafeDiagnostic();verify(setup.failure(Exception(hostile),{error("should not save")},{ }).contains("evidence=UNAVAILABLE"))
+ for(step in LabFactoryStep.entries){val f=LabSafeDiagnostic();f.stage=LabStage.FACTORY_OPEN;f.factoryStep=step;f.evidenceAvailable=true
+  val text=f.failure(IllegalArgumentException(hostile),{throw IOException(hostile)},{f.factoryStep=LabFactoryStep.READY;throw Exception(hostile)})
+  verify(text.contains("factory=${step.name}|check=0|kind=ARGUMENT"));verify(!text.contains(hostile));verify(text.contains("evidence=FAILED|close=false"))}
  println("PASS $n pure hostile diagnostic assertions: fixed IDs/categories only; original failure retained through save/close errors. No Android, key, DB or runtime harness execution")
 }

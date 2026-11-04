@@ -13,11 +13,12 @@
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/RustCalendarLabProof.kt": "5119bffa540dcec8eda1648beba12736308ce98630b32786742738061a698709",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/RustLabSelfCheck.kt": "ec81d0b673b9b06d3a3d15f92d8bbdb3f7e1c893615c576eec224fcab269c434",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabCorpusMapper.kt": "daa54d2d743bd13d81ffdbc8256818ef3b610f853a37341b04d39ab4085b71d4",
-    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt": "908442dff03e7f3321b0ef8f4d1a0832ff33224e018e2652e8d702c333efc37a",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedHostProof.kt": "f470cbdd7f5e695502cc58eb8d0ac632137307ddaaf8507c70bbabe5438e6e63",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt": "8df095924b48dc06c912e6c865478a2316078874e81e5c7cb91b0a5a5acd2d7c",
-    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt": "17160c295bbd573ee36ac820c2707def7cbc84bc77f19bbaf147fcf264288029",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt": "4c13e215df281360d54c9fd2a681665d5c7939579bd6d1414437c95780a6d199",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabFixturePath.kt": "c424edf532ac4e0234daaad29362649675473f158b9aced49cac7a28819ea0a9",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabReceiptDatabase.kt": "73c1b06ce3899d1f4458666048e1b5e02ea2bd96ef94dd5d43259b8bd5c555aa",
-    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt": "55706792760ee4f49f753651dc407f3dc954aa75e60921cfff0b50af32c42233",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt": "b8e99b18b0c6831c1d2a91d73b7c3c5e23642f77f68c624d094102173f1c90ff",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSyntheticSnapshot.kt": "33454a7bd5143d1a76ca1ec9290ee0c74006ed0132d8c5286dd74c9bfd1dbb57",
     "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/SyntheticFixtureConfig.kt": "6fe59658ca11d664b866dbf1270c194c4fff7ee97d3a68d3266e947e1fc54192",
     "Androidapp/app/src/main/AndroidManifest.xml": "edce61c88c4df80fdaccd645a49dc3d2ad9ee3265798874fefc4231becd751df",
@@ -1275,11 +1276,11 @@
       "categories": [
         "declaration"
       ],
-      "source": " suspend fun open(context:Context,config:SyntheticFixtureConfig,identity:LabIdentity):LabEncryptedStore {"
+      "source": " suspend fun open(context:Context,config:SyntheticFixtureConfig,identity:LabIdentity,diagnostic:LabSafeDiagnostic?=null):LabEncryptedStore {"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt",
-      "line": 33,
+      "line": 37,
       "categories": [
         "preference_effect"
       ],
@@ -1287,7 +1288,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt",
-      "line": 49,
+      "line": 56,
       "categories": [
         "preference_effect"
       ],
@@ -1295,7 +1296,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt",
-      "line": 53,
+      "line": 61,
       "categories": [
         "declaration"
       ],
@@ -1303,11 +1304,19 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt",
-      "line": 59,
+      "line": 71,
       "categories": [
         "writer_call"
       ],
       "source": "   db.withTransaction{val m=db.dao().metadata();if(m==null){check(!existed);db.dao().insertMetadata(LabMetadata(runId=config.runId,ownerDigest=config.ownerDigest))}else check(m.runId==config.runId&&m.ownerDigest==config.ownerDigest)}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabFixturePath.kt",
+      "line": 6,
+      "categories": [
+        "declaration"
+      ],
+      "source": " fun resolve(directory:File,filename:String,isSymbolicLink:(File)->Boolean):File {"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabReceiptDatabase.kt",
@@ -1359,7 +1368,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 6,
+      "line": 7,
       "categories": [
         "declaration"
       ],
@@ -1367,7 +1376,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 7,
+      "line": 8,
       "categories": [
         "declaration"
       ],
@@ -1375,7 +1384,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 8,
+      "line": 9,
       "categories": [
         "declaration"
       ],
@@ -1383,19 +1392,11 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 9,
-      "categories": [
-        "declaration"
-      ],
-      "source": " private var activeCheck=0"
-    },
-    {
-      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
       "line": 10,
       "categories": [
         "declaration"
       ],
-      "source": " private var failedCheck=0"
+      "source": " var factoryStep=LabFactoryStep.NONE"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1403,7 +1404,7 @@
       "categories": [
         "declaration"
       ],
-      "source": " var checks=0;private set"
+      "source": " private var activeCheck=0"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1411,7 +1412,7 @@
       "categories": [
         "declaration"
       ],
-      "source": " var cleanupStarted=false"
+      "source": " private var failedCheck=0"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1419,7 +1420,7 @@
       "categories": [
         "declaration"
       ],
-      "source": " var evidenceAvailable=false"
+      "source": " var checks=0;private set"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1427,7 +1428,7 @@
       "categories": [
         "declaration"
       ],
-      "source": " fun beginCheck(id:Int){require(id in 1..128);activeCheck=id}"
+      "source": " var cleanupStarted=false"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1435,7 +1436,7 @@
       "categories": [
         "declaration"
       ],
-      "source": " fun verify(ok:Boolean,id:Int){beginCheck(id);checks++;if(!ok){failedCheck=id;throw LabCheckFailure()};activeCheck=0}"
+      "source": " var evidenceAvailable=false"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
@@ -1443,11 +1444,27 @@
       "categories": [
         "declaration"
       ],
+      "source": " fun beginCheck(id:Int){require(id in 1..128);activeCheck=id}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 17,
+      "categories": [
+        "declaration"
+      ],
+      "source": " fun verify(ok:Boolean,id:Int){beginCheck(id);checks++;if(!ok){failedCheck=id;throw LabCheckFailure()};activeCheck=0}"
+    },
+    {
+      "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
+      "line": 18,
+      "categories": [
+        "declaration"
+      ],
       "source": " private fun kind(t:Throwable)=when(t){"
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 26,
+      "line": 28,
       "categories": [
         "declaration"
       ],
@@ -1455,7 +1472,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 29,
+      "line": 31,
       "categories": [
         "declaration"
       ],
@@ -1463,7 +1480,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 30,
+      "line": 32,
       "categories": [
         "declaration"
       ],
@@ -1471,7 +1488,7 @@
     },
     {
       "path": "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabSafeDiagnostic.kt",
-      "line": 33,
+      "line": 35,
       "categories": [
         "declaration"
       ],

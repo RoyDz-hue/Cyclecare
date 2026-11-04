@@ -40,7 +40,7 @@ object LabEncryptedHostProof {
   }
   suspend fun open(pair:Pair<SyntheticFixtureConfig,LabIdentity>):LabEncryptedStore {
    val previousStage=diagnostic.stage;diagnostic.stage=LabStage.FACTORY_OPEN
-   val s=LabEncryptedStoreFactory.open(context,pair.first,pair.second);handles.add(s);diagnostic.stage=previousStage;return s
+   val s=LabEncryptedStoreFactory.open(context,pair.first,pair.second,diagnostic);handles.add(s);diagnostic.factoryStep=LabFactoryStep.NONE;diagnostic.stage=previousStage;return s
   }
   suspend fun capture(s:LabEncryptedStore,label:String):LabSyntheticSnapshot{val v=s.inspectSynthetic();event(label,v.json().put("snapshotHash",v.digest()));return v}
   diagnostic.evidenceAvailable=true
