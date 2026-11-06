@@ -105,7 +105,10 @@ fun CoinTransferDialog(
                         // Never silently rewrite a money amount into a different
                         // one: accept only unambiguous input, keep anything else
                         // as typed and say clearly what is wrong.
-                        val (accepted, rejection) = sanitizeCoinAmountInput(raw)
+                        val (accepted, rejection) =
+                            if (com.cyclecare.bridge.RustCoinAmountConfig.ENABLED)
+                                com.cyclecare.bridge.RustCoinAmount.sanitize(raw)
+                            else sanitizeCoinAmountInput(raw)
                         transferAmountText = accepted
                         errorMessage = rejection
                     },

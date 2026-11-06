@@ -1,0 +1,3 @@
+s01	clearSession	genBefore=1	genAfter=2	mode=ANONYMOUS	userId=null	email=null	access=null	refresh=null	expires=0	pendingEmail=null	action=null	verifier=null	guest=false	pwSetup=false
+s02	signOut	gen=2	mode=ANONYMOUS	userId=null	access=null
+s03	insecure	secure=false	access=null	userId=null	email=null	mode=ANONYMOUS

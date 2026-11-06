@@ -62,6 +62,10 @@ fun CycleScreen(
     logsMap: Map<String, CycleDayLog>,
     modifier: Modifier = Modifier
 ) {
+    if (com.cyclecare.bridge.CycleScreenRustConfig.ENABLED) {
+        com.cyclecare.bridge.CycleScreenRustRoute(viewModel, uiState, logsMap, modifier)
+        return
+    }
     CycleScreenContent(
         uiState = uiState,
         logsMap = logsMap,
@@ -80,9 +84,16 @@ fun CycleScreenContent(
     predictionForDate: (java.time.LocalDate) -> DayPrediction?,
     onSelectDate: (java.time.LocalDate) -> Unit,
     onOpenTrackForDate: (java.time.LocalDate) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    controlledMonth: YearMonth? = null,
+    onDisplayedMonthChange: ((YearMonth) -> Unit)? = null,
+    trackEnabled: Boolean = true
 ) {
-    var displayedMonth by remember { mutableStateOf(YearMonth.from(uiState.selectedDate)) }
+    var localMonth by remember { mutableStateOf(YearMonth.from(uiState.selectedDate)) }
+    val displayedMonth = controlledMonth ?: localMonth
+    val changeMonth: (YearMonth) -> Unit = { month ->
+        if (onDisplayedMonthChange == null) localMonth = month else onDisplayedMonthChange(month)
+    }
     val selectedDate = uiState.selectedDate
     val today = uiState.currentDate
     val selectedPrediction = uiState.selectedDatePrediction
@@ -119,7 +130,7 @@ fun CycleScreenContent(
                 if (selectedDate != today) {
                     TextButton(onClick = {
                         onSelectDate(today)
-                        displayedMonth = YearMonth.from(today)
+                        changeMonth(YearMonth.from(today))
                     }) {
                         Text("Jump to today")
                     }
@@ -198,14 +209,14 @@ fun CycleScreenContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
-                            onClick = { displayedMonth = displayedMonth.minusMonths(1) },
+                            onClick = { changeMonth(displayedMonth.minusMonths(1)) },
                             modifier = Modifier.size(48.dp).testTag("prev_month_button")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous month")
                         }
                         Text(displayedMonth.format(monthFormatter), style = MaterialTheme.typography.titleMedium)
                         IconButton(
-                            onClick = { displayedMonth = displayedMonth.plusMonths(1) },
+                            onClick = { changeMonth(displayedMonth.plusMonths(1)) },
                             modifier = Modifier.size(48.dp).testTag("next_month_button")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next month")
@@ -382,6 +393,7 @@ fun CycleScreenContent(
                     }
                     Button(
                         onClick = { onOpenTrackForDate(selectedDate) },
+                        enabled = trackEnabled,
                         modifier = Modifier.fillMaxWidth().height(48.dp).testTag("edit_selected_day_button"),
                         shape = RoundedCornerShape(16.dp)
                     ) {

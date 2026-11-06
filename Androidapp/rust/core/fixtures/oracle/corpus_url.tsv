@@ -1,0 +1,6 @@
+ur01	https://x.supabase.co/rest/v1	ORD 123
+ur02	https://x.supabase.co/rest/v1	a/b?c=d&e
+ur03	https://x.supabase.co/rest/v1	café
+ur04	https://x.supabase.co/rest/v1	a*b-c.d_e
+ur05	https://x.supabase.co/rest/v1	~tilde
+ur06	https://x.supabase.co/rest/v1	<EMPTY>

@@ -1,0 +1,107 @@
+PARTIAL	MainActivity.kt	startup_route.rs mirrors gate order
+NOT_PORTED	data/economy/CommunityGuidesService.kt	
+NOT_PORTED	data/economy/CosmeticAssets.kt	
+PORTED	data/economy/CurrencyLocaleManager.kt	currency_locale.rs
+PORTED	data/economy/EconomyModels.kt	economy_catalog.rs + model shapes
+NOT_PORTED	data/economy/GuidedChatsRepository.kt	
+NOT_PORTED	data/economy/RemoteCoinPackages.kt	
+PORTED	data/economy/RemoteLocalPricing.kt	currency_locale.rs
+PARTIAL	data/economy/SupabaseEconomyService.kt	verified_profile/reconcile/economy_rules/economy_status pure cores
+NOT_PORTED	data/economy/WalletRealtimeObserver.kt	
+PARTIAL	data/local/CycleCareDatabase.kt	storage_schema.rs DDL mirror (SQLCipher cross-read OPEN)
+PORTED	data/local/CycleDayLog.kt	entity shape in storage_schema/ports
+NOT_PORTED	data/local/CycleDayLogDao.kt	
+PORTED	data/local/CycleSettings.kt	entity shape
+PARTIAL	data/local/DatabaseEncryption.kt	AES 5/5 bidirectional proof; Tink/Keystore cross-read OPEN
+NOT_PORTED	data/local/DatabaseKeyManager.kt	
+NOT_PORTED	data/local/HealthSyncLocal.kt	
+PORTED	data/local/OnboardingProfile.kt	entity shape
+NOT_PORTED	data/local/OnboardingProfileDao.kt	
+PORTED	data/local/OwnerDataGate.kt	owner_data_gate.rs
+NOT_PORTED	data/local/OwnerScopedDatabaseProvider.kt	
+PORTED	data/model/CycleModels.kt	model shapes across ports
+NOT_PORTED	data/notification/NotificationModels.kt	
+PARTIAL	data/notification/SupabaseNotificationService.kt	notifications.rs parse fns
+NOT_PORTED	data/payment/MpesaPaymentService.kt	
+NOT_PORTED	data/payment/PaymentModels.kt	
+PORTED	data/payment/PaymentSafety.kt	payment_safety.rs
+NOT_PORTED	data/payment/SupabasePaymentService.kt	
+PARTIAL	data/repository/CycleRepository.kt	cycle_math.rs ports calculateDayPrediction + companion validators (validatePeriodDates/Pair, PeriodDateRange); onboarding_complete.rs ports completeOnboardingWithProfile profile/settings mapping; sync journal + DAO ops remain
+PORTED	data/supabase/AuthErrorMessages.kt	auth_errors.rs: for_response/fallback for all 9 operations, 28 corpus rows locked vs verbatim Kotlin execution
+NOT_PORTED	data/supabase/HealthSyncV3Transport.kt	
+PARTIAL	data/supabase/OnboardingQuestionService.kt	onboarding_questions.rs fallback bank; edge fn host
+PORTED	data/supabase/SupabaseAuthService.kt	auth_uri.rs+auth_link.rs+auth_flows.rs+auth_google.rs+auth_session.rs+pkce.rs+auth_errors.rs+session_token.rs: callback parse, email-link/PKCE trees, all email/guest/password flows, Google URL builders + isCycleCareAdmin, session-store bridge to the executed session-manager refresh machine (103+ executed rows); host glue remaining: okhttp live transport, Keystore/EncryptedSharedPrefs persistence layer
+NOT_PORTED	data/supabase/SupabaseConfig.kt	
+NOT_PORTED	data/supabase/SupabaseModels.kt	
+PARTIAL	data/supabase/SupabaseSessionManager.kt	session_token.rs resolve/expiry/JWT decode
+NOT_PORTED	data/supabase/SupabaseSyncService.kt	
+NOT_PORTED	data/supabase/SupabaseSyncWorker.kt	
+NOT_PORTED	data/supabase/UserFacingServerMessage.kt	
+PORTED	domain/ai/AiConsentTap.kt	ai_consent_tap.rs
+PARTIAL	domain/ai/AiProcessorConsentService.kt	manifest models + tap binding; fetch/parse unported
+PORTED	domain/ai/CareAiService.kt	care_ai.rs (decision layer; HTTP host)
+PORTED	domain/ai/CareConversationPolicy.kt	care_policy.rs
+NOT_PORTED	domain/ai/CareImageGenerationService.kt	
+PORTED	domain/ai/CarePrivacyService.kt	care_privacy.rs (payload/guards; HTTP host)
+PORTED	domain/ai/LayeredChatOrchestrator.kt	layered_chat.rs
+PORTED	domain/attention/AttentionEngine.kt	attention.rs
+PORTED	domain/care/CareKnowledgeBase.kt	care_knowledge.rs
+NOT_PORTED	domain/diagnostics/DebugBridgeConfiguration.kt	
+PORTED	domain/economy/EarnCoinsUseCase.kt	earn_coins.rs
+PORTED	domain/economy/MiningUseCase.kt	earn_coins.rs
+PORTED	domain/health/PeriodDateConsistency.kt	cycle_math.rs
+PORTED	domain/health/PeriodEpisodeEntry.kt	cycle_math.rs
+PORTED	domain/learning/LearningEngine.kt	learning.rs
+PORTED	domain/onboarding/OnboardingQuestions.kt	onboarding_questions.rs (fallback bank)
+PORTED	domain/parser/NaturalLanguageLogParser.kt	log_parser.rs
+PORTED	domain/pattern/PatternEngine.kt	pattern_engine.rs
+PORTED	domain/pattern/SomethingChangedEngine.kt	something_changed.rs
+NOT_PORTED	domain/payment/PaymentUseCase.kt	
+PORTED	domain/safety/SafetyEngine.kt	safety.rs
+PORTED	domain/sync/AccountStartPolicy.kt	account_start.rs
+PORTED	domain/sync/HealthSyncProtocol.kt	sync_protocol.rs
+PORTED	domain/sync/ReconnectWorkPolicy.kt	reconnect_policy.rs
+NOT_PORTED	domain/sync/SyncUseCase.kt	
+PARTIAL	security/AuthPreferences.kt	lifecycle.rs session/identity semantics; consent receipt methods unported
+NOT_PORTED	security/BiometricHelper.kt	
+NOT_PORTED	ui/auth/AuthSheet.kt	
+NOT_PORTED	ui/auth/QuickUnlockDialog.kt	
+NOT_PORTED	ui/auth/WelcomeAuthScreen.kt	
+NOT_PORTED	ui/components/AccountRestrictionScreen.kt	
+NOT_PORTED	ui/components/CareConversationMessage.kt	
+NOT_PORTED	ui/components/ChatText.kt	
+NOT_PORTED	ui/components/CycleDial.kt	
+NOT_PORTED	ui/components/CycleInputControls.kt	
+NOT_PORTED	ui/components/FloatingDispatchBanner.kt	
+NOT_PORTED	ui/components/GiftReceivedDialog.kt	
+NOT_PORTED	ui/components/InteractiveArtifact3D.kt	
+NOT_PORTED	ui/components/NotificationCenterScreen.kt	
+PARTIAL	ui/screens/AppLockScreen.kt	Dioxus render proof v3 (pre-compaction)
+NOT_PORTED	ui/screens/AtelierScreen.kt	
+NOT_PORTED	ui/screens/CalendarScreen.kt	
+NOT_PORTED	ui/screens/CareScreen.kt	
+PARTIAL	ui/screens/CoinTransferDialog.kt	coin_amount.rs sanitizer
+NOT_PORTED	ui/screens/CycleScreen.kt	
+NOT_PORTED	ui/screens/GuidedChatsScreen.kt	
+NOT_PORTED	ui/screens/HomeScreen.kt	
+NOT_PORTED	ui/screens/InsightsScreen.kt	
+NOT_PORTED	ui/screens/InsufficientCoinsDialog.kt	
+NOT_PORTED	ui/screens/MpesaStkPushDialog.kt	
+NOT_PORTED	ui/screens/OnboardingScreen.kt	
+NOT_PORTED	ui/screens/PregnancyScreen.kt	
+PARTIAL	ui/screens/SettingsScreen.kt	pin.rs completeness check
+NOT_PORTED	ui/screens/SomethingDifferentSheet.kt	
+NOT_PORTED	ui/screens/TrackScreen.kt	
+NOT_PORTED	ui/screens/UnifiedGamifiedCheckoutDialog.kt	
+NOT_PORTED	ui/screens/VaultEconomyScreen.kt	
+NOT_PORTED	ui/theme/Color.kt	
+NOT_PORTED	ui/theme/MotionPreferences.kt	
+NOT_PORTED	ui/theme/Theme.kt	
+NOT_PORTED	ui/theme/Type.kt	
+PARTIAL	ui/viewmodel/CycleCareViewModel.kt	wallet/sync_gate/conflict_resolve pure cores
+PARTIAL	ui/viewmodel/OnboardingViewModel.kt	onboarding_vm.rs ports state + step handlers + completion params; onboarding_complete.rs ports completeOnboarding mapping (20-row JVM corpus); sync journal + dynamic-question AI path remain
+PORTED	util/CoinFormatter.kt	coin_format.rs
+NOT_PORTED	util/DataExportPdf.kt	
+NOT_PORTED	util/NetworkHelper.kt	
+PORTED	util/PaymentInputValidator.kt	payment_validation.rs
+NOT_PORTED	util/SoundFeedbackManager.kt	

@@ -1,0 +1,18 @@
+ec01	Error:Service unavailable
+ec02	Success:SVC:verifyAndMineCoins:u1:30
+ec03	Success:SVC:verifyAndMineCoins:local_user:30
+ec04	Success:
+ec05	Success:SVC:reconcile:u1
+ec06	Success:SVC:reconcile:local_user
+ec07	Error:Economy service offline
+ec08	Success:SVC:transferCoins
+ec09	Error:Economy service offline
+ec10	Success:SVC:purchaseArtifact
+ec11	Error:Economy service offline
+ec12	Success:SVC:equipItem
+ec13	Error:Economy service offline
+ec14	Success:SVC:purchasePackage
+ec15	Error:Economy service offline
+ec16	Success:SVC:upgradeTier
+ec17	Error:Streak mechanics are deprecated per spec §48. Your daily rewards are always available in the Hub.
+ec18	Error:Streak mechanics are deprecated per spec §48. Your daily rewards are always available in the Hub.

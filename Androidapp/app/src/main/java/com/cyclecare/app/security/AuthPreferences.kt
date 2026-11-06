@@ -20,6 +20,31 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     val isSecureStorageAvailable: Boolean = preferenceStore.secure
     private data class PreferenceStore(val preferences: SharedPreferences, val secure: Boolean)
 
+    /** Only explicit candidate construction installs this coordinator. Normal
+     * production preferences remain unchanged until full connected cutover.
+     */
+    @Volatile internal var publicationAdmission:IdentityPublicationAdmission?=null
+        private set
+    internal fun attachPublicationAdmission(admission:IdentityPublicationAdmission){
+        check(publicationAdmission==null||publicationAdmission===admission)
+        OwnerDataGate.attachPublicationAdmission(context,admission)
+        publicationAdmission=admission
+    }
+    internal fun mutatePublicationIdentity(action:()->Unit){
+        val admission=publicationAdmission
+        if(admission==null)action()else admission.mutate(action)
+    }
+    /** External result may commit only into its original candidate context.
+     * Validation and all bundled setters share the serialized admission.
+     */
+    internal fun mutatePublicationIdentityIfCurrent(expected:RustOperationSnapshot,stillCurrent:()->Boolean={true},action:()->Unit):Boolean{
+        if(publicationAdmission==null){action();return true}
+        return mutatePublicationResult(false){runIfRustOperationUnchanged(expected){if(stillCurrent()){action();true}else false}?:false}
+    }
+    private fun <T> mutatePublicationResult(rejected:T,action:()->T):T{
+        val admission=publicationAdmission
+        return if(admission==null)action()else admission.mutateResult(rejected,action)
+    }
     companion object {
         private const val PREFS_SECURE_NAME = "cyclecare_auth_secure_prefs"
         private const val PREFS_LEGACY_NAME = "cyclecare_auth_prefs"
@@ -129,7 +154,10 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     /** Local mode is not an authenticated identity and must never create a cloud session. */
     var isLocalOnlyMode: Boolean
         get() = prefs.getBoolean("local_only_mode_v1", false)
-        set(value) { prefs.edit().putBoolean("local_only_mode_v1", value).commit() }
+        set(value) { mutatePublicationIdentity { synchronized(prefs) {
+            if (isLocalOnlyMode != value) prefs.edit().putBoolean("local_only_mode_v1", value)
+                .putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L)).commit()
+        } } }
 
     var hasCompletedInitialAuth: Boolean
         get() = isLocalOnlyMode || (isSecureStorageAvailable && prefs.getBoolean(KEY_INITIAL_AUTH_COMPLETED, false))
@@ -137,35 +165,88 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var isCloudSyncAllowed: Boolean
         get() = prefs.getBoolean("${KEY_CLOUD_SYNC_ALLOWED}_v2_${effectiveUserId}", false)
-        set(value) {
-            val owner = effectiveUserId
-            val key = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
-            val previous = prefs.getBoolean(key, false)
-            if (previous != value) {
-                // One editor commit makes the consent decision and generation advance
-                // visible together, preventing stale sync workers from ABA reuse.
-                val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
-                val generation = prefs.getLong(generationKey, 0L)
-                val edit = prefs.edit().putBoolean(key, value).putLong(generationKey, Math.addExact(generation, 1L))
-                if (!value) edit.putBoolean("health_sync_pending_revoke_$owner", true)
-                edit.commit()
-            }
+        set(value) { mutatePublicationIdentity {
+            setCloudSyncChoiceWithoutCallouts(value)
             if (!value) {
                 runCatching { androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("cyclecare_sync") }
             }
+        } }
+
+    /** Caller owns candidate admission; no WorkManager call under domain locks. */
+    internal fun setCloudSyncChoiceWithoutCallouts(value:Boolean,finishDisabledChoice:Boolean=false){
+        check(publicationAdmission==null||publicationAdmission!!.isTransitionAction())
+        val wasAllowed=isCloudSyncAllowed
+        var disabledExact:RustOperationSnapshot?=null
+        if(finishDisabledChoice&&wasAllowed&&!value){
+            val gate=publicationAdmission?:error("candidate_finalizer_requires_admission")
+            // Reserve before any durable choice write. Failure cannot consume
+            // the choice and then discover no finalizer capacity remains.
+            gate.afterCurrentAction{disabledExact?.let(::cancelOwnDisabledSyncChoice)}
         }
+            // Same lock as the userId setter and clearSession, so the owner used for the key
+            // and the generation advance cannot straddle an identity change.
+            synchronized(prefs) {
+                val owner = effectiveUserId
+                val key = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
+                val previous = prefs.getBoolean(key, false)
+                if (previous != value) {
+                    // One editor commit makes the consent decision and generation advance
+                    // visible together, preventing stale sync workers from ABA reuse.
+                    val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
+                    val generation = prefs.getLong(generationKey, 0L)
+                    val edit = prefs.edit().putBoolean(key, value).putLong(generationKey, Math.addExact(generation, 1L))
+                    if (!value) edit.putBoolean("health_sync_pending_revoke_$owner", true)
+                    check(edit.commit()){"cloud_choice_commit_failed"}
+                }
+            }
+        if(finishDisabledChoice&&wasAllowed&&!value)disabledExact=rustOperationSnapshot()
+    }
+
+    /** Explicit retry of THIS host's uncertain consent write. Rewrites exact
+     * expected values without another generation advance; commit success is
+     * required before the host can publish any replacement capability. */
+    internal fun persistExactCloudChoice(expected:RustOperationSnapshot,enabled:Boolean):Boolean {
+        check(publicationAdmission?.isTransitionAction()==true)
+        return synchronized(prefs){
+            if(rustOperationSnapshot()!=expected||isCloudSyncAllowed!=enabled)return@synchronized false
+            val owner=expected.operation.effectiveUserId
+            val editor=prefs.edit().putBoolean("${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner",enabled)
+                .putLong("${KEY_HEALTH_CONSENT_GENERATION}_$owner",expected.operation.consentGeneration)
+            if(!enabled)editor.putBoolean("health_sync_pending_revoke_$owner",true)
+            editor.commit()
+        }
+    }
+
+    /** Finalizer of an exact own choice. Serialized before later admission;
+     * never cancels a replacement identity or a later enabled choice. */
+    internal fun cancelOwnDisabledSyncChoice(expected:RustOperationSnapshot){
+        if(rustOperationSnapshot()!=expected||isCloudSyncAllowed)return
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork("cyclecare_daily_supabase_sync")
+    }
+
+    /** Candidate explicit erasure helper: no WorkManager call while identity
+     * and lifecycle/Room monitors are held. Existing public setter unchanged.
+     */
+    fun pauseHealthSyncForErasureWithoutCallouts(owner:String?,session:Long):Boolean= mutatePublicationResult(false) { synchronized(prefs){
+        check(userId==owner&&sessionGeneration==session){"owner_changed"}
+        val effective=effectiveUserId;val allowed="${KEY_CLOUD_SYNC_ALLOWED}_v2_$effective";val generation="${KEY_HEALTH_CONSENT_GENERATION}_$effective"
+        val was=prefs.getBoolean(allowed,false);val before=prefs.getLong(generation,0L)
+        check(prefs.edit().putBoolean(allowed,false).putLong(generation,if(was)Math.addExact(before,1L)else before).putBoolean("health_sync_pending_revoke_$effective",true).commit())
+        true
+    } }
+    fun cancelHealthSyncWorkAfterErasure(){runCatching{androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("cyclecare_sync")}}
 
     /** Durable, account-bound cloud health-consent generation for sync CAS. */
-    var healthConsentGeneration: Long
+    val healthConsentGeneration: Long
         get() = prefs.getLong("${KEY_HEALTH_CONSENT_GENERATION}_$effectiveUserId", 0L)
-        set(value) { prefs.edit().putLong("${KEY_HEALTH_CONSENT_GENERATION}_$effectiveUserId", value).commit() }
 
     val hasPendingHealthSyncRevoke: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean("health_sync_pending_revoke_$effectiveUserId", false)
-    fun markPendingHealthSyncRevoke() {
+    fun markPendingHealthSyncRevoke() = mutatePublicationIdentity {
         if (isSecureStorageAvailable) prefs.edit().putBoolean("health_sync_pending_revoke_$effectiveUserId", true).commit()
     }
-    fun pauseHealthSyncFor(owner: String, session: Long): Long? = synchronized(prefs) {
+    fun pauseHealthSyncFor(owner: String, session: Long): Long? = mutatePublicationResult(null) {
+      val result=synchronized(prefs) {
         if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session) return@synchronized null
         val allowedKey = "${KEY_CLOUD_SYNC_ALLOWED}_v2_$owner"
         val generationKey = "${KEY_HEALTH_CONSENT_GENERATION}_$owner"
@@ -176,8 +257,10 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             .remove("health_sync_receipt_server_$owner").remove("health_sync_receipt_local_$owner")
             .remove("health_sync_receipt_session_$owner").commit()
         if (!committed) return@synchronized null
-        runCatching { androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("cyclecare_sync") }
         generation
+      }
+      if(result!=null)cancelHealthSyncWorkAfterErasure()
+      result
     }
     val serverHealthConsentGeneration: Long?
         get() {
@@ -185,13 +268,13 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             if (!isSecureStorageAvailable || !isCloudSyncAllowed || hasPendingHealthSyncRevoke || prefs.getLong("health_sync_receipt_local_$owner", -1) != healthConsentGeneration || prefs.getLong("health_sync_receipt_session_$owner", -1) != sessionGeneration) return null
             return prefs.getLong("health_sync_receipt_server_$owner", 0).takeIf { it > 0 }
         }
-    fun saveServerHealthConsentReceipt(owner: String, session: Long, localGeneration: Long, serverGeneration: Long, enabled: Boolean): Boolean = synchronized(prefs) {
+    fun saveServerHealthConsentReceipt(owner: String, session: Long, localGeneration: Long, serverGeneration: Long, enabled: Boolean): Boolean = mutatePublicationResult(false) {  synchronized(prefs) {
         if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session || healthConsentGeneration != localGeneration || serverGeneration <= 0 || (enabled && (!isCloudSyncAllowed || hasPendingHealthSyncRevoke || OwnerDataGate.isWiped(context, owner)))) return@synchronized false
         val edit = prefs.edit().putBoolean("health_sync_pending_revoke_$owner", false)
         if (enabled) edit.putLong("health_sync_receipt_server_$owner", serverGeneration).putLong("health_sync_receipt_local_$owner", localGeneration).putLong("health_sync_receipt_session_$owner", session)
         else edit.remove("health_sync_receipt_server_$owner").remove("health_sync_receipt_local_$owner").remove("health_sync_receipt_session_$owner")
         edit.commit()
-    }
+    } }
 
     private fun providerKey(provider: String, suffix: String): String =
         "ai_processor_${provider}_${suffix}_$effectiveUserId"
@@ -263,21 +346,73 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     data class ConsentMutationSnapshot(val owner: String, val session: Long, val decision: Long, val healthGeneration: Long)
     val sessionGeneration: Long get() = prefs.getLong("session_generation_v3", 0L)
 
+    /** Owner, session, effective account id and that account's consent generation, read under one lock. */
+    data class OperationSnapshot(val owner: String?, val session: Long, val effectiveUserId: String, val consentGeneration: Long)
+
+    /**
+     * Reads the identity and the consent generation under the same lock the userId
+     * setter, clearSession, the cloud-sync consent setter and pauseHealthSyncFor use,
+     * so the four values always belong together (no read-order reasoning needed).
+     */
+    fun operationSnapshot(): OperationSnapshot = synchronized(prefs) {
+        OperationSnapshot(userId, sessionGeneration, effectiveUserId, healthConsentGeneration)
+    }
+
+    /** Non-suspending IO-only candidate guard: preferences -> host router -> DB.
+     * No coroutine suspension or main-thread DB operation is allowed in block.
+     * Existing callers are unchanged; candidate adapter must not activate until
+     * all lifecycle/wipe/writers share this publication protocol.
+     */
+    data class RustOperationSnapshot(val operation: OperationSnapshot, val localOnly: Boolean, val accountMode: String)
+    fun rustOperationSnapshot(): RustOperationSnapshot = synchronized(prefs) {
+        RustOperationSnapshot(operationSnapshot(), isLocalOnlyMode, accountMode)
+    }
+    fun <T> runIfRustOperationUnchanged(expected: RustOperationSnapshot, block: () -> T): T? = synchronized(prefs) {
+        if (rustOperationSnapshot() == expected) block() else null
+    }
+
+    /** Coherent sync identity: owner, session, local AND server consent
+     * generation under the same prefs lock (no read-order reasoning needed).
+     * Pending-revoke writes remain outside this lock (stated gap). */
+    data class SyncIdentitySnapshot(val owner: String?, val session: Long, val localConsentGeneration: Long, val serverConsentGeneration: Long?)
+    internal fun syncIdentitySnapshot(): SyncIdentitySnapshot = synchronized(prefs) {
+        SyncIdentitySnapshot(userId, sessionGeneration, healthConsentGeneration, serverHealthConsentGeneration)
+    }
+
+    /** Sync-dispatch guard: like runIfRustOperationUnchanged, plus the server
+     * consent generation inside the SAME lock, so a receipt/withdrawal cannot
+     * land between the operation snapshot and the server-generation read. */
+    internal fun <T> runIfRustSyncUnchanged(expected: RustOperationSnapshot, serverGeneration: Long, block: () -> T): T? = synchronized(prefs) {
+        if (rustOperationSnapshot() == expected && serverHealthConsentGeneration == serverGeneration) block() else null
+    }
+
+    /**
+     * Runs [block] only if the account and session are still exactly [owner] and
+     * [session], holding that same lock, so an identity change (userId, clearSession) or a
+     * cloud-sync consent / account mode change through the synchronized setters cannot
+     * land in the middle of [block]. Provider consents and markPendingHealthSyncRevoke
+     * do not take this lock and are NOT covered. Returns null (block not run) when
+     * stale. Atomic with preference changes only; not atomic with any database write.
+     */
+    fun <T> runIfIdentityUnchanged(owner: String?, session: Long, block: () -> T): T? = synchronized(prefs) {
+        if (userId == owner && sessionGeneration == session) block() else null
+    }
+
     /** Execute an owner-bound mutation only while the captured login session is current. */
     internal inline fun <T> withCurrentSession(owner: String, session: Long, block: () -> T): T? =
         synchronized(prefs) {
             if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session) null else block()
         }
     private fun decisionKey(provider: String) = receiptKey(provider, "decision_generation")
-    fun beginProcessorConsentMutation(provider: String, enabled: Boolean): ConsentMutationSnapshot? = synchronized(prefs) {
+    fun beginProcessorConsentMutation(provider: String, enabled: Boolean): ConsentMutationSnapshot? = mutatePublicationResult(null) {  synchronized(prefs) {
         val id = provider.trim().uppercase()
         if (!isSecureStorageAvailable || id !in AI_PROVIDERS || (enabled && id in pendingProcessorRevokes())) return@synchronized null
         val next = Math.addExact(prefs.getLong(decisionKey(id), 0L), 1L)
         if (!prefs.edit().putLong(decisionKey(id), next).commit()) return@synchronized null
         if (!enabled) revokeProcessorReceipt(id)
         ConsentMutationSnapshot(effectiveUserId, sessionGeneration, next, healthConsentGeneration)
-    }
-    fun completeProcessorConsentMutation(snapshot: ConsentMutationSnapshot, provider: String, receipt: com.cyclecare.app.domain.ai.AiProcessorReceipt?): Boolean = synchronized(prefs) {
+    } }
+    fun completeProcessorConsentMutation(snapshot: ConsentMutationSnapshot, provider: String, receipt: com.cyclecare.app.domain.ai.AiProcessorReceipt?): Boolean = mutatePublicationResult(false) {  synchronized(prefs) {
         val id = provider.trim().uppercase()
         if (!isSecureStorageAvailable || id !in AI_PROVIDERS || effectiveUserId != snapshot.owner || sessionGeneration != snapshot.session || healthConsentGeneration != snapshot.healthGeneration || prefs.getLong(decisionKey(id), 0L) != snapshot.decision || OwnerDataGate.isWiped(context, snapshot.owner)) return@synchronized false
         if (receipt != null && (receipt.providerId != id || receipt.revision < 1 || !Regex("^[a-f0-9]{64}$").matches(receipt.manifestFingerprint))) return@synchronized false
@@ -286,7 +421,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
         val editor = prefs.edit().putString(pendingRevokeKey(), JSONArray(pending.toList()).toString())
         if (receipt != null) editor.putInt(receiptKey(id, "revision"), receipt.revision).putString(receiptKey(id, "fingerprint"), receipt.manifestFingerprint).putString(receiptKey(id, "account"), snapshot.owner)
         editor.commit()
-    }
+    } }
 
     fun saveProcessorReceipt(receipt: com.cyclecare.app.domain.ai.AiProcessorReceipt) {
         if (!isSecureStorageAvailable || receipt.providerId.isBlank() || receipt.revision < 0 || receipt.manifestFingerprint.isBlank()) return
@@ -351,14 +486,18 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var accountMode: String
         get() = prefs.getString(KEY_ACCOUNT_MODE, "ANONYMOUS") ?: "ANONYMOUS"
-        set(value) = prefs.edit { putString(KEY_ACCOUNT_MODE, value) }
+        set(value) = mutatePublicationIdentity { synchronized(prefs) {
+            if (accountMode != value) prefs.edit().putString(KEY_ACCOUNT_MODE, value)
+                .putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L)).commit()
+            Unit
+        } }
 
     var userId: String?
         get() = readSecureString(KEY_USER_ID)
-        set(value) { synchronized(prefs) {
+        set(value) { mutatePublicationIdentity { synchronized(prefs) {
             if (readSecureString(KEY_USER_ID) != value) prefs.edit().putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L)).commit()
             writeSecureString(KEY_USER_ID, value)
-        } }
+        } } }
 
     var userEmail: String?
         get() = readSecureString(KEY_USER_EMAIL)
@@ -374,7 +513,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
 
     var sessionExpiresAtSeconds: Long
         get() = if (isSecureStorageAvailable) prefs.getLong(KEY_SESSION_EXPIRES_AT, 0L) else 0L
-        set(value) { if (isSecureStorageAvailable) prefs.edit { putLong(KEY_SESSION_EXPIRES_AT, value) } }
+        set(value) = mutatePublicationIdentity { if (isSecureStorageAvailable) prefs.edit { putLong(KEY_SESSION_EXPIRES_AT, value) } }
 
     var pendingEmail: String?
         get() = readSecureString(KEY_PENDING_EMAIL)
@@ -403,12 +542,19 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             if (value.isNullOrBlank()) {
                 prefs.edit { remove(KEY_PIN) }
             } else {
-                prefs.edit { putString(KEY_PIN, encodePinPbkdf2(value)) }
+                prefs.edit { putString(KEY_PIN, nativeEncodePinPbkdf2(value) ?: encodePinPbkdf2(value)) }
             }
         }
 
     fun verifyPin(candidate: String): Boolean {
         val stored = readSecureString(KEY_PIN) ?: return false
+        // Native core port first (identical chain + iteration bounds + legacy
+        // order); on native verdict use it, on null fall through to Kotlin.
+        when (com.cyclecare.app.rust.CycleCareCoreBridge.verifyPin(stored, candidate, deviceId)) {
+            "current" -> return true
+            "legacy_migrate" -> { pin = candidate; return true }
+            "rejected" -> return false
+        }
         // Current format: salted, slow PBKDF2 - resists offline brute force.
         if (stored.startsWith(PBKDF2_PREFIX)) {
             return verifyPinPbkdf2(stored, candidate)
@@ -428,6 +574,12 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             return true
         }
         return false
+    }
+
+    /** Native encode with a fresh SecureRandom salt; null when native is down. */
+    private fun nativeEncodePinPbkdf2(raw: String): String? {
+        val salt = ByteArray(PBKDF2_SALT_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+        return com.cyclecare.app.rust.CycleCareCoreBridge.encodePin(raw, salt.toHex())
     }
 
     private fun encodePinPbkdf2(raw: String): String {
@@ -503,6 +655,21 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     var isQuickUnlockAsked: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean(KEY_QUICK_UNLOCK_ASKED, false)
         set(value) { if (isSecureStorageAvailable) prefs.edit { putBoolean(KEY_QUICK_UNLOCK_ASKED, value) } }
+
+    /** Backup-status publication: ONE editor for all three status fields,
+     * written only while the original request scope (owner/session/local/
+     * server) is still current under the prefs lock. Returns false - nothing
+     * written - when stale. apply() parity with the individual setters: the
+     * return value reports publication, not durable persistence. Pending-
+     * revoke writes remain outside this lock (stated gap). */
+    fun publishBackupStatusIfCurrent(owner: String, session: Long, local: Long, server: Long, timestamp: Long, message: String, success: Boolean): Boolean =
+        runIfIdentityUnchanged(owner, session) {
+            if (healthConsentGeneration != local || serverHealthConsentGeneration != server || !isCloudSyncAllowed || OwnerDataGate.isWiped(context, owner)) false
+            else {
+                prefs.edit().putLong(KEY_LAST_SYNC_TIMESTAMP, timestamp).putString(KEY_LAST_SYNC_MESSAGE, message).putBoolean(KEY_LAST_SYNC_STATUS, success).apply()
+                true
+            }
+        } ?: false
 
     var lastSyncTimestamp: Long
         get() = prefs.getLong(KEY_LAST_SYNC_TIMESTAMP, 0L)
@@ -581,7 +748,7 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
         }
     }
 
-    fun clearSession() = synchronized(prefs) {
+    fun clearSession() = mutatePublicationIdentity { synchronized(prefs) {
         prefs.edit {
             putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L))
             remove(KEY_ACCESS_TOKEN)
@@ -596,12 +763,12 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
             putBoolean(KEY_NEEDS_PASSWORD_SETUP, false)
             putString(KEY_ACCOUNT_MODE, "ANONYMOUS")
         }
-    }
+    } }
 
     private fun readSecureString(key: String): String? =
         if (isSecureStorageAvailable) prefs.getString(key, null) else null
 
-    private fun writeSecureString(key: String, value: String?) {
+    private fun writeSecureString(key: String, value: String?) = mutatePublicationIdentity {
         prefs.edit {
             if (isSecureStorageAvailable && !value.isNullOrBlank()) putString(key, value)
             else remove(key)

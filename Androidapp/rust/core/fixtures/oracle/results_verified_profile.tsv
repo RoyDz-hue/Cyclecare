@@ -1,0 +1,21 @@
+vp01	OK|u1|SUPPORTER|AURELIA|363.5|1000|10|f1|cycle_coin|a1|SOOTHING_ROSE|2026-11-01|custom_x,cycle_coin|ACTIVE|null|null|gift1
+vp02	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|ACTIVE|null|null|
+vp03	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|BANNED|abuse|null|
+vp04	ERROR:Cloud wallet owner mismatch. Please retry before using the shared vault.
+vp05	ERROR:Cloud wallet record is missing or ambiguous. Please retry before using the shared vault.
+vp06	ERROR:Cloud wallet record is missing or ambiguous. Please retry before using the shared vault.
+vp07	ERROR:Cloud wallet response was malformed. Please retry before using the shared vault.
+vp08	ERROR:Cloud wallet coin_balance was not a number. Please retry before using the shared vault.
+vp09	ERROR:Cloud wallet coin_balance was negative. Please retry before using the shared vault.
+vp10	OK|u1|FREE|LUMEN|36.6|1700000000000|5.0|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|ACTIVE|null|null|
+vp11	ERROR:Cloud wallet account status could not be verified. Please retry before using the shared vault.
+vp12	ERROR:Account status response was malformed. Please retry before using the shared vault.
+vp13	ERROR:Account status owner mismatch. Please retry before using the shared vault.
+vp14	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|SUSPENDED|prof|null|
+vp15	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|SUSPENDED|prof reason|2026-12-01T00:00:00Z|
+vp16	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|SUSPENDED|prof reason|2027-01-01T00:00:00Z|
+vp17	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|ACTIVE|null|null|
+vp18	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin,obj_id,obj_name|ACTIVE|null|null|
+vp19	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|SUSPENDED|null|null|
+vp20	OK|u1|FREE|LUMEN|1|2|3|null|cycle_coin|null|SOOTHING_ROSE|null|cycle_coin|SUSPENDED|null|2026-11-02T10:00:00Z|
+vp21	ERROR:Cloud wallet account status could not be verified. Please retry before using the shared vault.

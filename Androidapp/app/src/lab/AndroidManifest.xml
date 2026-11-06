@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <!-- This disposable variant cannot use sockets, including via main code. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <application>
+        <!-- Baseline APK provider inspection found WorkManager auto-init,
+             which opens its own database before Activity.onCreate. Remove
+             auto-initializers in this disposable lab process, not production. -->
+        <provider android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup" tools:node="remove" />
+        <service android:name="androidx.work.impl.background.systemalarm.SystemAlarmService" tools:node="remove" />
+        <service android:name="androidx.work.impl.background.systemjob.SystemJobService" tools:node="remove" />
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryChargingProxy" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryNotLowProxy" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.ConstraintProxy$StorageNotLowProxy" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.ConstraintProxy$NetworkStateProxy" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.RescheduleReceiver" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.background.systemalarm.ConstraintProxyUpdateReceiver" tools:node="remove" />
+        <receiver android:name="androidx.work.impl.diagnostics.DiagnosticsReceiver" tools:node="remove" />
+        <activity android:name="com.cyclecare.app.lab.SelectedCycleSessionLabActivity" android:exported="false" />
+        <activity android:name="com.cyclecare.app.lab.RustCalendarLabActivity" android:exported="false" />
+    </application>
+</manifest>

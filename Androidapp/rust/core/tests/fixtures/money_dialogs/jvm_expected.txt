@@ -1,0 +1,33 @@
+SEND|sam@x.io|5
+ERR|Please enter a valid registered email address.
+ERR|Please enter a valid registered email address.
+ERR|Please enter a valid registered email address.
+ERR|Enter an amount with up to 3 decimal places.
+ERR|Enter an amount with up to 3 decimal places.
+ERR|Enter an amount with up to 3 decimal places.
+ERR|Enter an amount with up to 3 decimal places.
+ERR|Enter an amount with up to 3 decimal places.
+ERR|Enter an amount with up to 3 decimal places.
+SEND|sam@x.io|7
+SEND|sam@x.io|5.250
+ERR|Please enter an amount greater than zero.
+ERR|Please enter an amount greater than zero.
+SEND|sam@x.io|0.001
+SEND|sam@x.io|10.500
+ERR|Amount exceeds your available balance (10.5 coins).
+SEND|sam@x.io|11
+SEND|sam@x.io|5
+SEND|  sam@x.io  |5
+---missing---
+30
+0.001
+0.001
+0.001
+---mpesa---
+true
+false
+true
+false
+false
+KES 100
+M-Pesa price unavailable

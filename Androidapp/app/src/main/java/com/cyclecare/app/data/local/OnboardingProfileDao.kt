@@ -18,7 +18,7 @@ interface OnboardingProfileDao {
     @Query("SELECT * FROM onboarding_profiles WHERE id = 1 LIMIT 1")
     suspend fun getProfile(): OnboardingProfile?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = OnboardingProfile::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateProfile(profile: OnboardingProfile)
 
     @Query("DELETE FROM onboarding_profiles")

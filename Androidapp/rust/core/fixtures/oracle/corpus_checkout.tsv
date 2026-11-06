@@ -1,0 +1,71 @@
+g1	gate	true	900	all
+g2	gate	true	900	disabled
+g3	gate	true	0	all
+g4	gate	false	900	all
+g5	gate	true	900	mpesa
+g6	gate	true	900	paypal
+n1	nextstep	false	false	MPESA	-	false
+n2	nextstep	true	true	MPESA	-	true
+n3	nextstep	true	true	PAYPAL	-	false
+n4	nextstep	true	false	MPESA	Request timeout while contacting provider	true
+n5	nextstep	true	false	PAYPAL	Card declined	false
+n6	nextstep	true	false	MPESA	-	true
+n7	nextstep	true	false	MPESA	-	false
+n8	nextstep	true	false	PAYPAL	-	false
+n9	nextstep	true	false	PAYPAL	TIMEOUT happened	false
+a1	amount	MPESA	900	$6.99
+a2	amount	MPESA	0	$6.99
+a3	amount	PAYPAL	900	$2.99
+c1	coins	250	0
+c2	coins	250	50
+l1	alt	PAYPAL	true	900
+l2	alt	MPESA	true	900
+l3	alt	PAYPAL	false	900
+l4	alt	PAYPAL	true	0
+d1	desc	MPESA
+d2	desc	PAYPAL
+d3	desc	DEBIT_CREDIT_CARD
+d4	desc	CRYPTO
+i1	icon	true	MPESA
+i2	icon	false	PAYPAL
+t1	tag	MPESA
+t2	tag	DEBIT_CREDIT_CARD
+s1	submit	true	900	-	0712345678
+s2	submit	true	900	-	0712 345 678
+s3	submit	false	900	-	0712345678
+s4	submit	true	0	-	0712345678
+s5	submit	true	900	Invalid phone	0712345678
+s6	submit	true	900	-	<SPACES>
+s7	submit	true	900	-	12345
+s8	submit	true	389.9	-	+254712345678
+b1	mpesabtn	389
+b2	mpesabtn	389.9
+p1	paypalbtn	$2.99
+f1	footer	MPESA
+f2	footer	PAYPAL
+w1	ptitle	MPESA
+w2	ptitle	PAYPAL
+w3	pbody	MPESA	-
+w4	pbody	PAYPAL	-
+w5	pbody	MPESA	Waiting on STK
+u1	sbody	250	50	-
+u2	sbody	250	0	Payment confirmed
+o1	count	1
+o2	count	2
+x1	dismiss	false
+x2	dismiss	true
+y1	panel	true	true
+y2	panel	false	true
+y3	panel	false	false
+z1	form	MPESA
+z2	form	PAYPAL
+z3	form	DEBIT_CREDIT_CARD
+z4	form	CRYPTO
+n10	nextstep	true	false	PAYPAL	tımeout waiting	false
+n11	nextstep	true	false	PAYPAL	TİMEOUT	false
+n12	nextstep	true	false	PAYPAL	tİmeout	false
+n13	nextstep	true	false	PAYPAL	TimeOut occurred	false
+c3	coins	9223372036854775807	1
+c4	coins	9223372036854775807	9223372036854775807
+u3	sbody	9223372036854775807	5	-
+u4	sbody	-9223372036854775808	-1	-

@@ -1,0 +1,17 @@
+[package]
+name = "cyclecare-core-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only JNI bridge over cyclecare-core pure functions. JSON in, JSON out. No DB, no Keystore, no signing, no account mutation."
+
+[lib]
+name = "cyclecare_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+corelib = { path = "../core", package = "cyclecare-core" }
+jni = "0.21"  # NOTE: jni 0.21.1 has NO default features (default=[]), so default-features=false would be a no-op. walkdir is an UNCONDITIONAL dependency and winapi-util 0.1.11 (Windows-only) stays in the lockfile for every target. It is never compiled on non-Windows targets, but a strict offline resolver still wants the .crate present. This is NOT an offline-resolution fix.
+serde = { version = "1", features = ["derive"] }
+bigdecimal = "0.4"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false }

@@ -45,6 +45,7 @@ securityCrypto = "1.1.0-alpha06"
 desugarJdkLibs = "2.1.5"
 sqlcipherAndroid = "4.19.1"
 sqlite = "2.7.0"
+webkit = "1.12.1"
 
 
 [libraries]
@@ -99,6 +100,7 @@ androidx-security-crypto = { group = "androidx.security", name = "security-crypt
 android-tools-desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 net-zetetic-sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipherAndroid" }
 androidx-sqlite = { group = "androidx.sqlite", name = "sqlite", version.ref = "sqlite" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 
 

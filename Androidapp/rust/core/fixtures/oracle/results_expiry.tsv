@@ -1,0 +1,17 @@
+ex01	Valid
+ex02	Valid
+ex03	Invalid:This card has expired.
+ex04	Invalid:Month must be between 01 and 12.
+ex05	Valid
+ex06	Invalid:Year must be 2 digits (e.g. 28).
+ex07	Invalid:Year must be 2 digits (e.g. 28).
+ex08	Invalid:Month must be between 01 and 12.
+ex09	Invalid:Year must be 2 digits (e.g. 28).
+ex10	Invalid:Use MM/YY format (e.g. 12/28).
+ex11	Invalid:Use MM/YY format (e.g. 12/28).
+ex12	Valid
+ex13	Invalid:Month must be between 01 and 12.
+ex14	Valid
+ex15	Invalid:Month must be between 01 and 12.
+ex16	Valid
+ex17	Invalid:Month must be between 01 and 12.

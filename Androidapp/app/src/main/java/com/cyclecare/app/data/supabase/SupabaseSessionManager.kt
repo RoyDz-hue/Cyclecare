@@ -63,8 +63,16 @@ object SupabaseSessionManager {
     suspend fun validAccessToken(preferences: AuthPreferences): String? =
         (resolveAccessToken(preferences) as? AccessTokenResolution.Valid)?.token
 
-    suspend fun resolveAccessToken(preferences: AuthPreferences): AccessTokenResolution = withContext(Dispatchers.IO) {
+    suspend fun resolveAccessToken(preferences: AuthPreferences): AccessTokenResolution {
+        val identity=preferences.rustOperationSnapshot()
+        val lifecycle=com.cyclecare.app.data.local.OwnerDataGate.snapshot(preferences.context,identity.operation.owner)
+        val job=currentCoroutineContext()[kotlinx.coroutines.Job]
+        val originCurrent={job?.isActive!=false&&(preferences.publicationAdmission==null||
+            (preferences.rustOperationSnapshot()==identity&&com.cyclecare.app.data.local.OwnerDataGate.snapshot(preferences.context,identity.operation.owner)==lifecycle))}
+        return withContext(Dispatchers.IO) {
         refreshMutex.withLock {
+            currentCoroutineContext().ensureActive()
+            if(!originCurrent())return@withLock AccessTokenResolution.TemporarilyUnavailable
             if (!preferences.isSecureStorageAvailable) return@withLock AccessTokenResolution.ReauthenticationRequired
             val token = preferences.accessToken?.takeIf { it.isNotBlank() } ?: return@withLock AccessTokenResolution.Missing
             val owner = preferences.userId?.takeIf { it.isNotBlank() } ?: return@withLock AccessTokenResolution.ReauthenticationRequired
@@ -80,6 +88,7 @@ object SupabaseSessionManager {
             try {
                 val response = refreshTransport.execute(refreshToken)
                 currentCoroutineContext().ensureActive()
+                if(!originCurrent())return@withLock AccessTokenResolution.TemporarilyUnavailable
                 if (response.code !in 200..299) {
                     return@withLock if (response.code in setOf(400, 401, 403)) AccessTokenResolution.ReauthenticationRequired
                         else AccessTokenResolution.TemporarilyUnavailable
@@ -105,7 +114,12 @@ object SupabaseSessionManager {
                 }
                 if (reportedExpiry <= now || reportedExpiry > now + 604800L) return@withLock AccessTokenResolution.ReauthenticationRequired
                 val newExpiry = minOf(reportedExpiry, tokenExpiry(renewedToken))
-                val committed = preferences.withCurrentSession(owner, session) {
+                // Admission precedes the prefs monitor. All setters execute in one
+                // guarded transition, never waiting for admission while holding prefs.
+                var committed=false
+                val admitted=preferences.mutatePublicationIdentityIfCurrent(identity,originCurrent){
+                    if(!originCurrent())return@mutatePublicationIdentityIfCurrent
+                    committed = preferences.withCurrentSession(owner, session) {
                     if (preferences.accessToken != token || preferences.refreshToken != refreshToken) return@withCurrentSession false
                     preferences.accessToken = renewedToken
                     preferences.refreshToken = rotatedRefresh
@@ -113,12 +127,15 @@ object SupabaseSessionManager {
                     preferences.userEmail = (user.opt("email") as? String)?.ifBlank { null } ?: preferences.userEmail
                     preferences.accountMode = if (user.optBoolean("is_anonymous", false)) "ANONYMOUS" else "EMAIL"
                     true
-                } == true
-                if (!committed) return@withLock AccessTokenResolution.TemporarilyUnavailable
+                    } == true
+                }
+                currentCoroutineContext().ensureActive()
+                if (!admitted||!committed) return@withLock AccessTokenResolution.TemporarilyUnavailable
                 AccessTokenResolution.Valid(renewedToken)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: IOException) { AccessTokenResolution.TemporarilyUnavailable }
             catch (_: Exception) { AccessTokenResolution.TemporarilyUnavailable }
+        }
         }
     }
 

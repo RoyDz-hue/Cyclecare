@@ -1,0 +1,19 @@
+Setting|28d|—|Need 2+|0 logs
+Interval|27d|27d|Need 2+|1 log
+Average|29d|29d|±3d|2 logs
+Average|27d|28d|±2d|1 log
+Average|32d|33d|±7d|40 logs
+---
+false|0|0|See all 0 observations|See all 0 patterns|See all 0 months
+false|1|1|See all 1 observations|See all 1 patterns|See all 1 months
+false|2|1|See all 2 observations|See all 2 patterns|See all 2 months
+false|5|1|See all 5 observations|See all 5 patterns|See all 5 months
+true|0|0|Show less|Show fewer patterns|Show less history
+true|1|1|Show less|Show fewer patterns|Show less history
+true|2|2|Show less|Show fewer patterns|Show less history
+true|5|5|Show less|Show fewer patterns|Show less history
+---
+27d observed interval
+5 logged bleeding days
+1 logged bleeding days
+6 logged bleeding days

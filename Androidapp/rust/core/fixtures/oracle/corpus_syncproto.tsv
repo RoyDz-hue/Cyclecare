@@ -1,0 +1,12 @@
+sp01	grant	apply:o1:rec1:UPSERT:0:1:hA:1
+sp02	apply:o1:rec1:UPSERT:0:1:hA:0
+sp03	grant	revoke	apply:o1:rec1:UPSERT:0:1:hA:2
+sp04	grant	grant	gen	apply:o1:rec1:UPSERT:0:1:hA:2	apply:o2:rec1:UPSERT:0:1:hA:1
+sp05	grant	applyOwner:o1:rec1:UPSERT:0:1:hA:1:owner2
+sp06	grant	apply:o1:rec1:UPSERT:0:2:hA:1	apply:o2:rec1:UPSERT:-1:1:hA:1	apply:o3:rec1:UPSERT:0:0:hA:1
+sp07	grant	apply:o1:rec1:UPSERT:0:1:hA:1	apply:o1:rec1:UPSERT:0:1:hA:1	apply:o1:rec1:UPSERT:0:1:hB:1
+sp08	grant	apply:o1:rec1:UPSERT:0:1:hA:1	apply:o2:rec1:UPSERT:0:2:hB:1
+sp09	grant	apply:o1:rec1:UPSERT:1:2:hA:1
+sp10	grant	apply:o1:rec1:DELETE:0:1:hA:1	apply:o2:rec1:UPSERT:1:2:hB:1	apply:o3:rec1:DELETE:1:2:ignored:1
+sp11	grant	apply:o1:rec1:UPSERT:0:1:hA:1	apply:o2:rec1:UPSERT:1:2:hB:1	apply:o3:rec1:UPSERT:2:3:hC:1
+sp12	grant	apply:o1:r1:UPSERT:0:1:hA:1	apply:o2:r2:UPSERT:0:1:hB:1	apply:o3:r1:DELETE:1:2:hC:1	apply:o4:r2:UPSERT:0:2:hD:1

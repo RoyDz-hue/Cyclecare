@@ -39,6 +39,11 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // Instrumented-test build type stays "debug" by default (device-verify
+  // workflow). The Rust lab workflow selects the lab build type with
+  // ./gradlew -Pcyclecare.testBuildType=lab ... connectedLabAndroidTest.
+  testBuildType = providers.gradleProperty("cyclecare.testBuildType").orElse("debug").get()
+
   signingConfigs {
     create("fixedDebug") {
       storeFile = file(System.getenv("CYCLECARE_DEBUG_KEYSTORE") ?: "${rootDir}/.private/cyclecare-debug.jks")
@@ -63,6 +68,14 @@ android {
       include("arm64-v8a")
       isUniversalApk = false
     }
+  }
+
+  sourceSets {
+    // Transitional Rust-core slice: the cdylib built in Androidapp/rust/core-jni
+    // is copied into jniLibs/<abi>/libcyclecare_core.so by the packageRustCore
+    // task. When no .so exists the app packages without it and
+    // CycleCareCoreBridge falls back to the Kotlin implementations.
+    getByName("main") { jniLibs.srcDir("$rootDir/rust/core-jni/jniLibs") }
   }
 
   buildTypes {
@@ -111,6 +124,41 @@ android {
       isShrinkResources = !noMinify
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
+    // Rust-execution lab: R8-processed like slim, but with an explicit lab
+    // caller path (com.cyclecare.app.lab.RustLabSelfCheck, kept via
+    // proguard-lab.pro) so the packaged native dispatcher is actually
+    // exercised. Disposable identity and cert, emulator/device-test only,
+    // never distributed. Does NOT enable any production Rust flag; the UI
+    // caller adapters stay const-false here too.
+    create("lab") {
+      initWith(getByName("slim"))
+      applicationIdSuffix = ".lab" // com.cyclecare.app.lab - isolated data namespace
+      versionNameSuffix = "-lab"
+      // Non-debuggable like slim so R8 runs in full mode (repo rule: AGP
+      // compiles debuggable variants through R8 debug mode, which silently
+      // disables obfuscation). Instrumentation does not need debuggable:
+      // the test APK shares the same debug signing cert.
+      isDebuggable = false
+      // Disposable signing: AGP auto-generated debug keystore (~/.android),
+      // never the release/upload key, never a committed keystore.
+      signingConfig = signingConfigs.getByName("debug")
+      proguardFiles("proguard-lab.pro")
+      // The lab androidTest APK stays R8-processed: in application modules
+      // the androidTest shrinker follows the build type's isMinifyEnabled
+      // (AGP 9.1.1 OptimizationDslInfoImpl.codeShrinkerEnabled; the
+      // androidTest{enableMinification} DSL exists only on LibraryBuildType).
+      // The app/test DEX boundary is instead closed by EXACT derived keeps:
+      // proguard-lab.pro keeps, under original names, precisely the classes
+      // the selected lab test needs from the shared app classpath (classes
+      // the androidTest build subtracts from its program inputs as
+      // app-provided - kotlin-stdlib, androidx.tracing), while
+      // proguard-lab-androidtest.pro carries the test-side rules. The lab
+      // test source set is isolated (src/androidTestLab only) and UI-test
+      // dependencies are debug-only, so the boundary surface is minimal and
+      // ci/lab-dex-closure.py fail-closed verifies it on every build.
+      testProguardFiles("proguard-lab-androidtest.pro")
+      buildConfigField("boolean", "RUST_LAB", "true")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -156,6 +204,7 @@ dependencies {
     artifact { type = "aar"; extension = "aar" }
   }
   implementation(libs.androidx.sqlite)
+  implementation(libs.androidx.webkit)
   implementation(libs.androidx.biometric)
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.androidx.security.crypto)
@@ -178,14 +227,21 @@ dependencies {
   // JVM 21 at configuration) is still applied only with -Ppaparazzi.
   testImplementation("app.cash.paparazzi:paparazzi:2.0.0-alpha05")
   testImplementation(libs.mockwebserver)
-  androidTestImplementation(platform(libs.androidx.compose.bom))
-  androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-  androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
+  // UI-test-only dependencies are debug-scoped: the isolated lab test
+  // (src/androidTestLab) uses only runner + androidx.test.ext:junit, and
+  // every androidTest dependency overlapping the app's runtime classpath is
+  // subtracted from the test APK's packaged classes (app-provided model),
+  // so the lab test classpath stays minimal on purpose.
+  "androidTestDebugImplementation"(platform(libs.androidx.compose.bom))
+  "androidTestDebugImplementation"(libs.androidx.compose.ui.test.junit4)
+  "androidTestDebugImplementation"(libs.androidx.espresso.core)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
+  // Test-source KSP for RoomHostProbeDatabase (Room boundary host evidence).
+  "kspTest"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
 
@@ -202,4 +258,67 @@ tasks.withType<Test>().configureEach {
     // layoutlib holds native image buffers; a fresh JVM per test class stops
     // them accumulating across the render matrix in this 2GB sandbox.
     forkEvery = 1
+}
+
+// Copies cargo-built cyclecare-core cdylibs into jniLibs/<abi>/ for packaging.
+// Build the .so first (outside Gradle):
+//   cd rust/core-jni && cargo build --release --target aarch64-linux-android
+// ABI map: aarch64-linux-android -> arm64-v8a, armv7-linux-androideabi ->
+// armeabi-v7a, i686-linux-android -> x86, x86_64-linux-android -> x86_64.
+// Missing targets are skipped, never errors: packaging proceeds Kotlin-only.
+val rustAbiMap = mapOf(
+    "aarch64-linux-android" to "arm64-v8a",
+    "armv7-linux-androideabi" to "armeabi-v7a",
+    "i686-linux-android" to "x86",
+    "x86_64-linux-android" to "x86_64",
+)
+tasks.register("packageRustCore") {
+    doLast {
+        rustAbiMap.forEach { (triple, abi) ->
+            // The migration owner's FFI crate artifact, packaged under the
+            // single runtime name libcyclecare_core.so (rust/HOST-INTEGRATION.md).
+            // core-ffi >= v6 emits libcyclecare_core.so ([lib] name); older
+            // artifacts emit libcyclecare_core_ffi.so. Accept both.
+            val so = listOf("libcyclecare_core.so", "libcyclecare_core_ffi.so")
+                .map { File("$rootDir/rust/core-ffi/target/$triple/release/$it") }
+                .firstOrNull { it.exists() }
+            if (so != null) {
+                val outDir = File("$rootDir/rust/core-jni/jniLibs/$abi")
+                outDir.mkdirs()
+                val out = File(outDir, "libcyclecare_core.so")
+                so.copyTo(out, overwrite = true)
+                logger.lifecycle("packaged Rust core for $abi")
+            } else {
+                logger.info("no Rust core cdylib for $triple; Kotlin fallback will be used")
+            }
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn("packageRustCore") }
+
+// Lab ONLY: identical reviewed L8 root union, with shrinking still enabled.
+// Uses pinned INTERNAL AGP APIs. Re-review on AGP/source/dependency change.
+// Dynamic reflection/JNI names are not proved by the static root audit.
+if (providers.gradleProperty("cyclecare.testBuildType").orNull == "lab") {
+gradle.projectsEvaluated {
+    check(com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION == "9.1.1")
+    val sharedRoots = file("lab-l8-union-roots.pro").readText()
+    check(sharedRoots.lines().count { it.startsWith("-keep class ") } == 27)
+    check(!sharedRoots.contains("-dontshrink"))
+    val labL8Tasks = listOf("l8DexDesugarLibLab", "l8DexDesugarLibLabAndroidTest")
+    labL8Tasks.forEach { taskName ->
+        val l8 = tasks.named<com.android.build.gradle.internal.tasks.L8DexDesugarLibTask>(taskName).get()
+        l8.keepRulesConfigurations.addAll(listOf("-dontobfuscate", "-dontoptimize", sharedRoots))
+        l8.doFirst {
+            check(l8.keepRulesConfigurations.get().none { it.trim() == "-dontshrink" })
+            logger.lifecycle("LAB_L8_FLAGS task=$taskName minSdk=${l8.minSdkVersion.get()} rules=${l8.keepRulesConfigurations.get()}")
+        }
+        check(l8.minSdkVersion.get() == 24)
+        check(l8.keepRules.isPresent) // AGP TraceReferences root generation/shrinking enabled.
+        check(l8.keepRulesConfigurations.get().none { it.trim() == "-dontshrink" })
+    }
+    check(android.buildTypes.getByName("lab").isMinifyEnabled)
+    check(android.buildTypes.getByName("lab").isShrinkResources)
+    logger.lifecycle("LAB_L8_SCOPE property=lab AGP=9.1.1 unionRoots=27 L8shrink=true appR8=true resourceShrink=true minSdk=24 productionVariantsUnchanged=true")
+}
 }

@@ -1,0 +1,21 @@
+vp01	u1	[{"user_id":"u1","status":"active","coin_balance":363.5,"lifetime_earned":1000,"lifetime_spent":10,"tier":"supporter","rank":"aurelia","active_frame":"f1","active_avatar_art":"a1","last_mined_date":"2026-11-01","unlocked_items":["custom_x"],"artifacts":[{"id":"gift1"}]}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp02	u1	[{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-10-01T00:00:00Z","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp03	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"BANNED","suspension_reason":"abuse"}	2026-11-02T10:00:00Z
+vp04	u1	[{"user_id":"u2","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp05	u1	[]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp06	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3},{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp07	u1	{bad	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp08	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":"36","lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp09	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":-1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp10	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":36.6,"lifetime_earned":1700000000000,"lifetime_spent":5.0}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp11	u1	[{"user_id":"u1","status":"WEIRD","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp12	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	notjson	2026-11-02T10:00:00Z
+vp13	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u2","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp14	u1	[{"user_id":"u1","status":"SUSPENDED","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3,"suspension_reason":"econ"}]	{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-12-01T00:00:00Z","suspension_reason":"prof"}	2026-11-02T10:00:00Z
+vp15	u1	[{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-11-05T00:00:00Z","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3,"suspension_reason":" "}]	{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-12-01T00:00:00Z","suspension_reason":"prof reason"}	2026-11-02T10:00:00Z
+vp16	u1	[{"user_id":"u1","status":"SUSPENDED","suspended_until":"2027-01-01T00:00:00Z","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3,"suspension_reason":"econ reason"}]	{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-12-01T00:00:00Z","suspension_reason":"prof reason"}	2026-11-02T10:00:00Z
+vp17	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp18	u1	[{"user_id":"u1","status":"ACTIVE","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3,"unlocked_items":["  ",{"id":"obj_id"},{"name":"obj_name"},{"id":""},42]}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp19	u1	[{"user_id":"u1","status":"SUSPENDED","suspended_until":"garbage","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp20	u1	[{"user_id":"u1","status":"SUSPENDED","suspended_until":"2026-11-02T10:00:00Z","coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z
+vp21	u1	[{"user_id":"u1","status":36.0,"coin_balance":1,"lifetime_earned":2,"lifetime_spent":3}]	{"user_id":"u1","status":"ACTIVE"}	2026-11-02T10:00:00Z

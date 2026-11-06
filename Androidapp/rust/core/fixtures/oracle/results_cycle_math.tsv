@@ -1,0 +1,16 @@
+c01	1	MENSTRUAL	true	false	false	Calendar Estimate	Not calculated from calendar dates
+c02	5	MENSTRUAL	true	false	false	Calendar Estimate	Not calculated from calendar dates
+c03	6	FOLLICULAR	false	false	false	Calendar Estimate	Not calculated from calendar dates
+c04	9	FOLLICULAR	false	false	false	Calendar Estimate	Not calculated from calendar dates
+c05	14	OVULATION	false	true	true	Calendar Estimate	Not calculated from calendar dates
+c06	15	OVULATION	false	true	false	Calendar Estimate	Not calculated from calendar dates
+c07	16	LUTEAL	false	false	false	Calendar Estimate	Not calculated from calendar dates
+c08	28	LUTEAL	false	false	false	Calendar Estimate	Not calculated from calendar dates
+c09	1	MENSTRUAL	true	false	false	Calendar Estimate	Not calculated from calendar dates
+c10	28	LUTEAL	false	false	false	Calendar Estimate	Not calculated from calendar dates
+c11	NULL
+c12	NULL
+c13	10	MENSTRUAL	true	false	false	Calendar Estimate	Not calculated from calendar dates
+c14	11	OVULATION	false	true	false	Calendar Estimate	Not calculated from calendar dates
+c15	13	OVULATION	false	true	false	Calendar Estimate	Not calculated from calendar dates
+c16	1	MENSTRUAL	true	false	false	Calendar Estimate	Not calculated from calendar dates

@@ -1,0 +1,12 @@
+ep01	<NULL>	5	false	<NULL>	Period start date is required
+ep02	<NULL>	5	false	<NULL>	Period start date is required
+ep03	<NULL>	5	false	<NULL>	Period end date is required
+ep04	<NULL>	5	false	<NULL>	Period end date cannot be earlier than start date
+ep05	<NULL>	5	false	<NULL>	Period dates cannot be in the future
+ep06	<NULL>	5	false	<NULL>	Period dates cannot be in the future
+ep07	2026-11-01	5	false	<NULL>	<NULL>
+ep08	2026-10-29	5	true	Your period lasted 10 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.	<NULL>
+ep09	2026-10-29	5	true	Your period has lasted 10 days so far. That's longer than usual. Please check the start date. If it's right, it's worth speaking with a healthcare professional soon.	<NULL>
+ep10	2026-11-01	3	false	<NULL>	<NULL>
+ep11	2026-11-02	1	false	<NULL>	<NULL>
+ep12	2026-11-02	4	true	Your period lasted 9 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.	<NULL>

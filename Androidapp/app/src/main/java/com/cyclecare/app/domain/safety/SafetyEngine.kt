@@ -7,6 +7,9 @@ import com.cyclecare.app.data.model.SafetyLevel
 /** Local-only safety triage. This is a conservative prompt for care, not a diagnosis. */
 object SafetyEngine {
     fun evaluate(log: CycleDayLog?): SafetyEvaluation {
+        // Native core port first (identical semantics incl. verbatim strings);
+        // null -> the Kotlin engine below. Clinical wording stays authored here.
+        com.cyclecare.app.rust.CycleCareCoreBridge.evaluateSafety(log)?.let { return it }
         if (log == null) return low("No acute symptoms are recorded.")
         val symptoms = values(log.symptomsCsv)
         val vaginal = values(log.vaginalHealthCsv)

@@ -1,0 +1,11 @@
+pp01	OK:{"selected_goals":"a","last_period_date":"2026-10-01","last_period_end_date":"2026-10-05","approximate_period_choice":"KNOWS","cycle_length_option":"REGULAR","cycle_length_days":28,"period_duration_days":5,"typical_symptoms":"cramps","typical_energy":"LOW","typical_sleep_quality":"POOR","has_completed_deep_baseline":true}|preserved:c=false,ts=0,av=false,ta=false,am=PRIVATE,rfw=false
+pp02	ERR:record_identity
+pp03	ERR:invalid_date
+pp04	ERR:invalid_end_date
+pp05	ERR:type_last_period_end_date
+pp06	OK:{"selected_goals":"","last_period_date":"","last_period_end_date":"","approximate_period_choice":"","cycle_length_option":"","cycle_length_days":28,"period_duration_days":5,"typical_symptoms":"","typical_energy":"","typical_sleep_quality":"","has_completed_deep_baseline":false}|preserved:c=false,ts=0,av=false,ta=false,am=PRIVATE,rfw=false
+pp07	ERR:type_cycle_length_days
+pp08	ERR:missing_has_completed_deep_baseline
+pp09	OK:{"selected_goals":"","last_period_date":"2024-02-29","last_period_end_date":"","approximate_period_choice":"","cycle_length_option":"","cycle_length_days":28,"period_duration_days":5,"typical_symptoms":"","typical_energy":"","typical_sleep_quality":"","has_completed_deep_baseline":false}|preserved:c=false,ts=0,av=false,ta=false,am=PRIVATE,rfw=false
+pp10	OK:{"selected_goals":"","last_period_date":"","last_period_end_date":"","approximate_period_choice":"","cycle_length_option":"","cycle_length_days":28,"period_duration_days":5,"typical_symptoms":"","typical_energy":"","typical_sleep_quality":"","has_completed_deep_baseline":true}|preserved:c=true,ts=1700000000000,av=true,ta=true,am=SYNC_ACCOUNT,rfw=true
+pp11	OK:{"selected_goals":"","last_period_date":"","last_period_end_date":"","approximate_period_choice":"","cycle_length_option":"","cycle_length_days":28,"period_duration_days":5,"typical_symptoms":"","typical_energy":"","typical_sleep_quality":"","has_completed_deep_baseline":false}|preserved:c=false,ts=0,av=false,ta=false,am=PRIVATE,rfw=false

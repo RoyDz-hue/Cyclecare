@@ -20,7 +20,7 @@ interface CycleDayLogDao {
     @Query("SELECT * FROM cycle_day_logs WHERE dateString = :date LIMIT 1")
     fun getLogByDateFlow(date: String): Flow<CycleDayLog?>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = CycleDayLog::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateLog(log: CycleDayLog)
 
     @Query("DELETE FROM cycle_day_logs WHERE dateString = :date")
@@ -35,7 +35,7 @@ interface CycleDayLogDao {
     @Query("SELECT * FROM cycle_settings WHERE id = 1 LIMIT 1")
     suspend fun getSettings(): CycleSettings?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = CycleSettings::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSettings(settings: CycleSettings)
 
     @Query("DELETE FROM cycle_settings WHERE id = 1")

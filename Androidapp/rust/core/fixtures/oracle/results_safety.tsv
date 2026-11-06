@@ -1,0 +1,18 @@
+s01	LOW	Routine health status	No acute symptoms are recorded.	Continue tracking and seek care for severe or worsening symptoms.	false
+s02	URGENT	Urgent medical attention advised	Fainting and unusually heavy bleeding were recorded together.	Please seek urgent medical care now, especially if symptoms are continuing, worsening, or you feel unsafe.	true
+s03	URGENT	Urgent medical attention advised	Unusually heavy bleeding and severe pain were recorded together.	Please seek urgent medical care now. Do not rely on this app to assess the cause.	true
+s04	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	Unusually heavy bleeding was recorded.	Please contact a healthcare professional promptly; seek urgent help if it is worsening or you feel faint.	true
+s05	URGENT	Urgent medical attention advised	A fainting episode was recorded.	Please seek prompt medical evaluation and avoid driving if you feel faint or unwell.	true
+s06	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	New sores or lesions were recorded.	Arrange a clinical assessment, and avoid products that irritate the area.	true
+s07	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	New sores or lesions were recorded.	Arrange a clinical assessment, and avoid products that irritate the area.	true
+s08	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	Severe pain was recorded.	Arrange a clinical review, particularly if pain is new, persistent, or worsening.	true
+s09	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	Severe pain was recorded.	Arrange a clinical review, particularly if pain is new, persistent, or worsening.	true
+s10	MONITOR	Symptoms to monitor	Symptoms were recorded without an urgent combination.	Notice whether they persist, change, or worsen.	false
+s11	MONITOR	Symptoms to monitor	Symptoms were recorded without an urgent combination.	Notice whether they persist, change, or worsen.	false
+s12	LOW	Routine health status	No acute symptoms are recorded.	Continue tracking and seek care for severe or worsening symptoms.	false
+s13	MONITOR	Symptoms to monitor	Symptoms were recorded without an urgent combination.	Notice whether they persist, change, or worsen.	false
+s14	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	Several urinary symptoms were recorded together.	Consider prompt clinical advice for assessment. Seek urgent help for fever, flank pain, or worsening illness.	true
+s15	LOW	Routine health status	No acute symptoms are recorded.	Continue tracking and seek care for severe or worsening symptoms.	false
+s16	REVIEW	Review recommended	Vaginal irritation or discharge changes were recorded.	Avoid douching and scented irritants; seek clinical advice if symptoms persist or worsen.	false
+s17	SEEK_PROFESSIONAL_ADVICE	Professional advice recommended	Unusually heavy bleeding was recorded.	Please contact a healthcare professional promptly; seek urgent help if it is worsening or you feel faint.	true
+s18	URGENT	Urgent medical attention advised	Fainting and unusually heavy bleeding were recorded together.	Please seek urgent medical care now, especially if symptoms are continuing, worsening, or you feel unsafe.	true

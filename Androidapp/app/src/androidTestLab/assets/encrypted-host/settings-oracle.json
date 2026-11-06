@@ -1,0 +1,100 @@
+{
+  "cases": [
+    {
+      "present": false,
+      "previousAverage": 28,
+      "newLength": 28,
+      "period": 6,
+      "beforeOption": null,
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":28,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": null,
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": null
+    },
+    {
+      "present": false,
+      "previousAverage": 28,
+      "newLength": 30,
+      "period": 6,
+      "beforeOption": null,
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":30,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": null,
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": null
+    },
+    {
+      "present": false,
+      "previousAverage": 30,
+      "newLength": 28,
+      "period": 6,
+      "beforeOption": null,
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":28,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": null,
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": null
+    },
+    {
+      "present": false,
+      "previousAverage": 30,
+      "newLength": 30,
+      "period": 6,
+      "beforeOption": null,
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":30,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": null,
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": null
+    },
+    {
+      "present": true,
+      "previousAverage": 28,
+      "newLength": 28,
+      "period": 6,
+      "beforeOption": "It changes a lot",
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":28,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": "{\"selected_goals\":\"preserve\",\"last_period_date\":\"2024-01-01\",\"last_period_end_date\":\"\",\"approximate_period_choice\":\"EXACT\",\"cycle_length_option\":\"It changes a lot\",\"cycle_length_days\":28,\"period_duration_days\":6,\"typical_symptoms\":\"\",\"typical_energy\":\"\",\"typical_sleep_quality\":\"\",\"has_completed_deep_baseline\":false}",
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": false
+    },
+    {
+      "present": true,
+      "previousAverage": 28,
+      "newLength": 30,
+      "period": 6,
+      "beforeOption": "It changes a lot",
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":30,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": "{\"selected_goals\":\"preserve\",\"last_period_date\":\"2024-01-01\",\"last_period_end_date\":\"\",\"approximate_period_choice\":\"EXACT\",\"cycle_length_option\":\"30 days\",\"cycle_length_days\":30,\"period_duration_days\":6,\"typical_symptoms\":\"\",\"typical_energy\":\"\",\"typical_sleep_quality\":\"\",\"has_completed_deep_baseline\":false}",
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": false
+    },
+    {
+      "present": true,
+      "previousAverage": 30,
+      "newLength": 28,
+      "period": 6,
+      "beforeOption": "It changes a lot",
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":28,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": "{\"selected_goals\":\"preserve\",\"last_period_date\":\"2024-01-01\",\"last_period_end_date\":\"\",\"approximate_period_choice\":\"EXACT\",\"cycle_length_option\":\"28 days\",\"cycle_length_days\":28,\"period_duration_days\":6,\"typical_symptoms\":\"\",\"typical_energy\":\"\",\"typical_sleep_quality\":\"\",\"has_completed_deep_baseline\":false}",
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": false
+    },
+    {
+      "present": true,
+      "previousAverage": 30,
+      "newLength": 30,
+      "period": 6,
+      "beforeOption": "It changes a lot",
+      "settingsPayload": "{\"selected_goals\":\"new\",\"last_period_start_date\":\"2024-02-01\",\"average_cycle_length\":30,\"period_duration\":6,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "profilePayload": "{\"selected_goals\":\"preserve\",\"last_period_date\":\"2024-01-01\",\"last_period_end_date\":\"\",\"approximate_period_choice\":\"EXACT\",\"cycle_length_option\":\"It changes a lot\",\"cycle_length_days\":30,\"period_duration_days\":6,\"typical_symptoms\":\"\",\"typical_energy\":\"\",\"typical_sleep_quality\":\"\",\"has_completed_deep_baseline\":false}",
+      "retainedLocalAppLock": true,
+      "retainedLocalReminder": true,
+      "retainedAge": false
+    }
+  ]
+}

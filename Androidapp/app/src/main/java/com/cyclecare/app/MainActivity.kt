@@ -67,8 +67,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
@@ -87,6 +89,7 @@ import com.cyclecare.app.security.BiometricHelper
 import com.cyclecare.app.ui.auth.AuthSheet
 import com.cyclecare.app.ui.auth.QuickUnlockSetupDialog
 import com.cyclecare.app.ui.auth.WelcomeAuthScreen
+import com.cyclecare.app.rust.RustAppLockScreen
 import com.cyclecare.app.ui.screens.AppLockScreen
 import com.cyclecare.app.ui.screens.AtelierScreen
 import com.cyclecare.app.ui.screens.CareScreen
@@ -174,6 +177,15 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
 
     CycleCareTheme {
         when {
+            uiState.localReadFailed -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("We couldn't open your saved data.")
+                        TextButton(onClick = { viewModel.retryLocalRead() }) { Text("Try again") }
+                    }
+                }
+            }
+
             // First Launch Auth Flow (Account Creation / Sign In / Guest) BEFORE Onboarding
             !uiState.hasCompletedInitialAuth -> {
                 WelcomeAuthScreen(
@@ -207,8 +219,28 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
 
             // Private App Lock Overlay (Prompted on launch for repeat users if PIN or Fingerprint enabled)
             uiState.isAppLocked -> {
-                AppLockScreen(
-                    isFingerprintEnabled = uiState.isFingerprintEnabled,
+                val composeAppLock: @Composable () -> Unit = {
+                    AppLockScreen(
+                        isFingerprintEnabled = uiState.isFingerprintEnabled,
+                        onUnlock = { pin -> viewModel.unlockApp(pin) },
+                        onTriggerBiometric = {
+                            activity?.let { act ->
+                                BiometricHelper.showBiometricPrompt(
+                                    activity = act,
+                                    onSuccess = { viewModel.unlockViaBiometric() },
+                                    onError = { /* Handled gracefully in prompt */ }
+                                )
+                            }
+                        },
+                        onForgotCredentials = {
+                            viewModel.setShowAuthSheet(true)
+                        }
+                    )
+                }
+                // Rust screen is a second rendering of the same auth contract;
+                // Compose remains default + fallback until runtime proof.
+                RustAppLockScreen(
+                    isFingerprintEnabled = { uiState.isFingerprintEnabled },
                     onUnlock = { pin -> viewModel.unlockApp(pin) },
                     onTriggerBiometric = {
                         activity?.let { act ->
@@ -221,12 +253,17 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                     },
                     onForgotCredentials = {
                         viewModel.setShowAuthSheet(true)
-                    }
+                    },
+                    fallback = composeAppLock
                 )
             }
 
             // Onboarding Flow
             uiState.showOnboarding -> {
+              Box(modifier = Modifier.fillMaxSize()) {
+                // While saving, the form is hidden from accessibility services and the overlay
+                // below consumes touches, so nothing underneath can be activated.
+                Box(modifier = if (uiState.isCompletingOnboarding) Modifier.fillMaxSize().clearAndSetSemantics { } else Modifier.fillMaxSize()) {
                 OnboardingScreen(
                     onComplete = { goals, lastPeriod, periodEndDate, periodStartChoice, cycleLength, cycleLengthOption, periodDuration, pin, enableLock, remindFertile, typicalSymptoms, typicalEnergy, typicalSleep, hasCompletedDeepBaseline, isCloudSyncAllowed, dynamicAnswers ->
                         viewModel.completeOnboarding(
@@ -249,6 +286,24 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
                         )
                     }
                 )
+                }
+                if (uiState.isCompletingOnboarding) {
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f))
+                            .pointerInput(Unit) { detectTapGestures { } }
+                            .semantics { contentDescription = "Saving your answers" },
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+                }
+                uiState.onboardingCompletionMessage?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+              }
             }
 
             // Account restrictions apply to cloud privileges, never the private health shell.

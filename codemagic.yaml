@@ -260,3 +260,91 @@ workflows:
     artifacts:
       - device-verify/*.png
       - build-logs/*.log
+  cyclecare-release-r8-unsigned:
+    name: CycleCare release R8 + resource shrink qualification (unsigned, task-only)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact final candidate commit, supplied after commit creation
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.m2
+    scripts:
+      - name: Verify pinned source and forbid signing custody
+        script: |
+          set -euo pipefail
+          mkdir -p build-logs
+          test ! -e Androidapp/.private/cyclecare-debug.jks
+          test ! -e Androidapp/my-upload-key.jks
+          test -z "${CYCLECARE_DEBUG_KEYSTORE:-}"
+          test -z "${CYCLECARE_DEBUG_STORE_PASSWORD:-}"
+          test -z "${CYCLECARE_DEBUG_KEY_PASSWORD:-}"
+          test -z "${KEYSTORE_PATH:-}"
+          test -z "${STORE_PASSWORD:-}"
+          test -z "${KEY_PASSWORD:-}"
+          test -n "${EXPECTED_SOURCE_SHA:-}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git rev-parse HEAD | tee build-logs/source-commit.txt
+      - name: Explicit toolchain setup (JDK21, from cyclecare-goldens)
+        script: |
+          set -e
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          "$JAVA_HOME/bin/java" -version
+          test -d "$ANDROID_HOME/platforms/android-36"
+      - name: SDK inventory (informational only, not a setup check)
+        script: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | grep -E "build-tools|platforms;android" || true
+      - name: Release R8 minification + resource optimization (real tasks, unsigned)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          mkdir -p ../build-logs
+          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" \
+            minifyReleaseWithR8 optimizeReleaseResources \
+            2>&1 | tee ../build-logs/release-r8-run.log
+      - name: Bridge class and JNI methods kept (validated parser v3.1)
+        script: |
+          set -e
+          MAP=Androidapp/app/build/outputs/mapping/release/mapping.txt
+          test -s "$MAP"
+          grep -Fx 'com.cyclecare.app.rust.CycleCareCoreBridge -> com.cyclecare.app.rust.CycleCareCoreBridge:' "$MAP"
+          awk '/^com\.cyclecare\.app\.rust\.CycleCareCoreBridge -> com\.cyclecare\.app\.rust\.CycleCareCoreBridge:$/{b=1;next} /^#/{next} /^[^[:blank:]].* -> [^[:blank:]]+$/{if(b) exit} b&&/^[[:blank:]]/' "$MAP" > build-logs/bridge-mapping-block.txt
+          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?int nativeCoreHandshake\(\)(:[0-9]+(:[0-9]+)?)? -> nativeCoreHandshake$' build-logs/bridge-mapping-block.txt
+          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?java\.lang\.String nativeCall\(java\.lang\.String,java\.lang\.String\)(:[0-9]+(:[0-9]+)?)? -> nativeCall$' build-logs/bridge-mapping-block.txt
+      - name: Obfuscation positive control (file-gated, no pipe mask)
+        script: |
+          set -e
+          MAP=Androidapp/app/build/outputs/mapping/release/mapping.txt
+          awk -F' -> ' '/^com\.cyclecare\.app\..* -> /{rhs=$2; sub(/:$/,"",rhs); if (rhs !~ /^com\.cyclecare\./) print}' "$MAP" > build-logs/obfuscation-control.txt
+          test -s build-logs/obfuscation-control.txt
+          head -5 build-logs/obfuscation-control.txt
+      - name: optimizeReleaseResources output present (release-anchored, AGP 9.1.1 contract)
+        script: |
+          set -e
+          OUT=$(find Androidapp/app/build/intermediates/optimized_processed_res/release -type f -name 'optimize.ap_' -size +0c -print)
+          test "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1
+          ls -la "$OUT" | tee build-logs/shrink-output-evidence.txt
+          shasum -a 256 "$OUT" >> build-logs/shrink-output-evidence.txt
+          grep -F '> Task :app:optimizeReleaseResources' build-logs/release-r8-run.log
+          grep -F 'BUILD SUCCESSFUL' build-logs/release-r8-run.log
+      - name: 'Guard: no package/sign task substitution'
+        script: |
+          set -e
+          ! grep -E '> Task :app:(packageRelease|signRelease|assembleRelease|bundleRelease)' build-logs/release-r8-run.log
+    artifacts:
+      - Androidapp/app/build/outputs/mapping/release/mapping.txt
+      - Androidapp/app/build/outputs/mapping/release/seeds.txt
+      - Androidapp/app/build/outputs/mapping/release/usage.txt
+      - Androidapp/app/build/intermediates/optimized_processed_res/**/optimize.ap_
+      - build-logs/*.log
+      - build-logs/*.txt

@@ -3,6 +3,7 @@ package com.cyclecare.app.data.supabase
 import android.net.Uri
 import android.util.Base64
 import com.cyclecare.app.security.AuthPreferences
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,6 +35,16 @@ class SupabaseAuthService(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     val isSecureStorageAvailable: Boolean get() = authPreferences.isSecureStorageAvailable
 
+    private class RequestOrigin(val identity:AuthPreferences.RustOperationSnapshot,val lifecycle:com.cyclecare.app.data.local.OwnerDataGate.Snapshot,var job:kotlinx.coroutines.Job?=null)
+    private fun requestOrigin():RequestOrigin{
+        val identity=authPreferences.rustOperationSnapshot()
+        return RequestOrigin(identity,com.cyclecare.app.data.local.OwnerDataGate.snapshot(authPreferences.context,identity.operation.owner))
+    }
+    private fun originCurrent(origin:RequestOrigin)=(origin.job?.isActive!=false)&&(authPreferences.publicationAdmission==null||
+        (authPreferences.rustOperationSnapshot()==origin.identity&&com.cyclecare.app.data.local.OwnerDataGate.snapshot(authPreferences.context,origin.identity.operation.owner)==origin.lifecycle))
+    private fun commitOrigin(origin:RequestOrigin,action:()->Unit)=authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,{originCurrent(origin)},action)
+    private fun staleAttempt()=AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
+
     companion object {
         const val AUTH_REDIRECT_URL = "cyclecare://auth/callback"
         private const val AUTH_ACTION_SIGN_UP = "SIGN_UP"
@@ -45,12 +56,13 @@ class SupabaseAuthService(
     }
 
     /** Build a Supabase Google OAuth URL using PKCE; existing local accounts must not be replaced. */
-    fun createGoogleSignInUrl(): String {
+    fun createGoogleSignInUrl(): String = createGoogleSignInUrl(requestOrigin())
+    private fun createGoogleSignInUrl(origin:RequestOrigin): String {
         check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Sign-in is disabled until device security is restored." }
         if (!authPreferences.userId.isNullOrBlank()) {
             throw IllegalStateException("To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.")
         }
-        val challenge = beginPkceFlow(AUTH_ACTION_GOOGLE)
+        val challenge = beginPkceFlow(AUTH_ACTION_GOOGLE,origin).challenge
         val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
         return "$authApiUrl/authorize?provider=google" +
             "&redirect_to=${encodedRedirect()}" +
@@ -62,12 +74,17 @@ class SupabaseAuthService(
      * identity-link flow (keeps this account and its data), signed-out devices
      * get plain Google sign-in.
      */
-    suspend fun resolveGoogleAuthUrl(): String = withContext(Dispatchers.IO) {
+    suspend fun resolveGoogleAuthUrl(): String {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        check(originCurrent(origin)){"stale_auth_attempt"}
         if (authPreferences.accountMode == "ANONYMOUS" && !authPreferences.userId.isNullOrBlank()) {
-            createGoogleLinkUrl()
+            createGoogleLinkUrl(origin)
         } else {
-            createGoogleSignInUrl()
+            createGoogleSignInUrl(origin)
         }
+    }
+
     }
 
     /**
@@ -75,11 +92,13 @@ class SupabaseAuthService(
      * URL bound to the CURRENT anonymous session, so completing the flow
      * upgrades the guest account instead of creating a new one.
      */
-    private suspend fun createGoogleLinkUrl(): String {
+    private suspend fun createGoogleLinkUrl(origin:RequestOrigin): String {
         check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Linking is disabled until device security is restored." }
         val token = SupabaseSessionManager.validAccessToken(authPreferences)
             ?: throw IllegalStateException("Your guest session needs a refresh. Reconnect and try again.")
-        val challenge = beginPkceFlow(AUTH_ACTION_GOOGLE_LINK)
+        val flow = beginPkceFlow(AUTH_ACTION_GOOGLE_LINK,origin)
+        val challenge = flow.challenge
+        val current={originCurrent(origin)&&flow.matches(authPreferences)}
         val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
         val request = Request.Builder()
             .url("${authApiUrl.trimEnd('/')}/user/identities/authorize?provider=google" +
@@ -92,21 +111,26 @@ class SupabaseAuthService(
             .build()
         val response = client.newBuilder().followRedirects(false).build().newCall(request).execute()
         val body = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        check(current()){"stale_auth_attempt"}
         if (!response.isSuccessful) {
-            clearPendingAuthFlow()
+            authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()}
             throw IllegalStateException(AuthErrorMessages.forResponse(body, AuthOperation.ACCOUNT_LINK))
         }
         val url = JSONObject(body).optString("url").ifBlank {
             response.header("Location").orEmpty()
         }
         if (url.isBlank()) {
-            clearPendingAuthFlow()
+            authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()}
             throw IllegalStateException(AuthErrorMessages.fallback(AuthOperation.ACCOUNT_LINK))
         }
         return url
     }
 
-    suspend fun signUp(email: String, password: String): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun signUp(email: String, password: String): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         val normalizedEmail = email.trim().lowercase()
         if (normalizedEmail.isBlank() || !normalizedEmail.contains("@") || password.length < 8) {
@@ -116,7 +140,7 @@ class SupabaseAuthService(
             val existingToken = SupabaseSessionManager.validAccessToken(authPreferences)
             if (!existingToken.isNullOrBlank()) {
                 return@withContext if (authPreferences.accountMode == "ANONYMOUS") {
-                    linkGuestAccount(normalizedEmail)
+                    linkGuestAccount(normalizedEmail,origin)
                 } else {
                     AuthResult.Error("You are already signed in. Sign out before creating a different account.")
                 }
@@ -136,14 +160,18 @@ class SupabaseAuthService(
                     put("app_name", "CycleCare")
                 })
             }
-            addPkceFields(body, AUTH_ACTION_SIGN_UP)
+            if(!originCurrent(origin))return@withContext staleAttempt()
+            val flow=addPkceFields(body, AUTH_ACTION_SIGN_UP,origin)
+            val current={originCurrent(origin)&&flow.matches(authPreferences)}
             val response = client.newCall(authRequest(
                 path = "signup?redirect_to=${encodedRedirect()}",
                 body = body
             )).execute()
             val responseBody = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if(!current())return@withContext staleAttempt()
             if (!response.isSuccessful) {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
                 return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_UP))
             }
 
@@ -152,21 +180,26 @@ class SupabaseAuthService(
             val confirmed = emailIsConfirmed(user)
             val accessToken = json.optString("access_token")
             if (accessToken.isNotBlank() && confirmed) {
-                clearPendingAuthFlow(clearPendingEmail = true)
-                saveSession(json, "EMAIL")
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true);saveSession(json, "EMAIL")})return@withContext staleAttempt()
                 AuthResult.Success(readUser(user, normalizedEmail), "Your verified CycleCare account is ready.")
             } else {
                 // Never retain an unverified session, even if the project is configured to issue one.
-                authPreferences.pendingEmail = normalizedEmail
-                authPreferences.pendingAuthAction = AUTH_ACTION_SIGN_UP
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
+                    authPreferences.pendingEmail = normalizedEmail
+                    authPreferences.pendingAuthAction = AUTH_ACTION_SIGN_UP
+                })return@withContext staleAttempt()
                 AuthResult.VerificationRequired("Check $normalizedEmail for your CycleCare verification link. The app will open automatically after you verify; you can enter only then.")
             }
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("We couldn't create your account right now. Check your connection and try again.")
         }
     }
+    }
 
-    suspend fun signIn(email: String, password: String): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun signIn(email: String, password: String): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         val normalizedEmail = email.trim().lowercase()
         try {
@@ -189,23 +222,29 @@ class SupabaseAuthService(
             }
             val response = client.newCall(authRequest("token?grant_type=password", body)).execute()
             val responseBody = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if(!originCurrent(origin))return@withContext staleAttempt()
             if (!response.isSuccessful) {
                 return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_IN))
             }
             val json = JSONObject(responseBody)
             val user = json.optJSONObject("user") ?: JSONObject()
             if (!emailIsConfirmed(user)) {
-                authPreferences.clearSession()
+                if(!commitOrigin(origin){authPreferences.clearSession()})return@withContext staleAttempt()
                 return@withContext AuthResult.Error("Please verify your email using the CycleCare link before signing in.")
             }
-            saveSession(json, "EMAIL")
+            if(!commitOrigin(origin){saveSession(json, "EMAIL")})return@withContext staleAttempt()
             AuthResult.Success(readUser(user, normalizedEmail), "Successfully signed in to CycleCare.")
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please check your network connection.")
         }
     }
+    }
 
-    suspend fun sendMagicLink(email: String): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun sendMagicLink(email: String): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         val normalizedEmail = email.trim().lowercase()
         if (normalizedEmail.isBlank() || !normalizedEmail.contains("@")) {
@@ -215,7 +254,7 @@ class SupabaseAuthService(
             val existingToken = SupabaseSessionManager.validAccessToken(authPreferences)
             if (!existingToken.isNullOrBlank()) {
                 return@withContext if (authPreferences.accountMode == "ANONYMOUS") {
-                    linkGuestAccount(normalizedEmail)
+                    linkGuestAccount(normalizedEmail,origin)
                 } else {
                     AuthResult.Error("You are already signed in. Sign out before requesting another sign-in link.")
                 }
@@ -229,23 +268,33 @@ class SupabaseAuthService(
                 put("email", normalizedEmail)
                 put("create_user", false)
             }
-            addPkceFields(body, AUTH_ACTION_MAGIC_LINK)
+            if(!originCurrent(origin))return@withContext staleAttempt()
+            val flow=addPkceFields(body, AUTH_ACTION_MAGIC_LINK,origin)
+            val current={originCurrent(origin)&&flow.matches(authPreferences)}
             val response = client.newCall(authRequest("otp?redirect_to=${encodedRedirect()}", body)).execute()
             val responseBody = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if(!current())return@withContext staleAttempt()
             if (!response.isSuccessful) {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
                 AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.MAGIC_LINK))
             } else {
-                authPreferences.pendingEmail = normalizedEmail
-                authPreferences.pendingAuthAction = AUTH_ACTION_MAGIC_LINK
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
+                    authPreferences.pendingEmail = normalizedEmail
+                    authPreferences.pendingAuthAction = AUTH_ACTION_MAGIC_LINK
+                })return@withContext staleAttempt()
                 AuthResult.VerificationRequired("A secure CycleCare sign-in link was sent to $normalizedEmail. Open it on this device to continue.")
             }
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please check your network connection.")
         }
     }
+    }
 
-    suspend fun sendPasswordReset(email: String): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun sendPasswordReset(email: String): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         val normalizedEmail = email.trim().lowercase()
         if (normalizedEmail.isBlank() || !normalizedEmail.contains("@")) {
@@ -253,24 +302,34 @@ class SupabaseAuthService(
         }
         try {
             val body = JSONObject().put("email", normalizedEmail)
-            addPkceFields(body, AUTH_ACTION_PASSWORD_RESET)
+            if(!originCurrent(origin))return@withContext staleAttempt()
+            val flow=addPkceFields(body, AUTH_ACTION_PASSWORD_RESET,origin)
+            val current={originCurrent(origin)&&flow.matches(authPreferences)}
             val response = client.newCall(authRequest("recover?redirect_to=${encodedRedirect()}", body)).execute()
             val responseBody = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if(!current())return@withContext staleAttempt()
             if (response.isSuccessful) {
-                authPreferences.pendingAuthAction = AUTH_ACTION_PASSWORD_RESET
-                authPreferences.pendingEmail = normalizedEmail
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
+                    authPreferences.pendingAuthAction = AUTH_ACTION_PASSWORD_RESET
+                    authPreferences.pendingEmail = normalizedEmail
+                })return@withContext staleAttempt()
                 AuthResult.VerificationRequired("Password reset instructions were sent to $normalizedEmail. Open the CycleCare link on this device.")
             } else {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
                 AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.PASSWORD_RESET))
             }
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please check your network connection.")
         }
     }
+    }
 
     /** Create a real Supabase anonymous user before allowing guest access. */
-    suspend fun continueAsGuest(): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun continueAsGuest(): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         try {
             val current = SupabaseSessionManager.validAccessToken(authPreferences)
@@ -295,6 +354,8 @@ class SupabaseAuthService(
             })
             val response = client.newCall(authRequest("signup", body)).execute()
             val responseBody = response.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if(!originCurrent(origin))return@withContext staleAttempt()
             if (!response.isSuccessful) {
                 return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.GUEST))
             }
@@ -305,16 +366,31 @@ class SupabaseAuthService(
             if (userId.isBlank() || accessToken.isBlank()) {
                 return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.GUEST))
             }
-            saveSession(json, "ANONYMOUS")
-            authPreferences.userEmail = null
+            val committed=commitOrigin(origin) {
+                saveSession(json, "ANONYMOUS")
+                authPreferences.userEmail = null
+            }
+            if(!committed)return@withContext staleAttempt()
             AuthResult.Success(SupabaseUser(id = userId, isAnonymous = true), "Your private guest session is ready.")
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("A secure guest session needs an internet connection. Please retry when online.")
         }
     }
+    }
 
     /** Handles the native URI returned by Supabase after email verification or magic-link auth. */
-    suspend fun completeEmailLink(uri: Uri): AuthResult = withContext(Dispatchers.IO) {
+    suspend fun completeEmailLink(uri: Uri): AuthResult {
+        val callbackJob=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+        val callbackContext=authPreferences.rustOperationSnapshot()
+        val callbackFlow=authPreferences.googlePkceVerifier to authPreferences.pendingAuthAction
+        val callbackLifecycle=com.cyclecare.app.data.local.OwnerDataGate.snapshot(authPreferences.context,callbackContext.operation.owner)
+        val callbackCurrent={callbackJob?.isActive!=false&&(authPreferences.publicationAdmission==null||
+            (callbackFlow==(authPreferences.googlePkceVerifier to authPreferences.pendingAuthAction)&&
+            callbackLifecycle==com.cyclecare.app.data.local.OwnerDataGate.snapshot(authPreferences.context,callbackContext.operation.owner)))}
+        return withContext(Dispatchers.IO) {
+        if(authPreferences.publicationAdmission!=null&&
+            (authPreferences.rustOperationSnapshot()!=callbackContext||!callbackCurrent()))
+            return@withContext AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         if (parseAuthCallbackParameters(uri) == null) {
             return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
@@ -329,7 +405,7 @@ class SupabaseAuthService(
             if (value("access_token") != null || value("refresh_token") != null) {
                 return@withContext AuthResult.Error("This CycleCare sign-in link contains conflicting session data. Request a new link.")
             }
-            return@withContext completeAuthCode(authCode)
+            return@withContext completeAuthCode(authCode,callbackContext,callbackCurrent)
         }
         val accessToken = value("access_token").orEmpty()
         val refreshToken = value("refresh_token").orEmpty()
@@ -344,6 +420,7 @@ class SupabaseAuthService(
                 .build()
             val userResponse = client.newCall(userRequest).execute()
             val userBody = userResponse.body?.string().orEmpty()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if (!userResponse.isSuccessful) return@withContext AuthResult.Error(AuthErrorMessages.forResponse(userBody, AuthOperation.CALLBACK))
             val user = JSONObject(userBody)
             if (user.optString("id").isBlank()) return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
@@ -357,21 +434,23 @@ class SupabaseAuthService(
                 return@withContext AuthResult.Error("This link belongs to a different account. Request a new CycleCare link on this device.")
             }
 
+            val linkedGuest = authPreferences.isPendingGuestEmailLink && !isAnonymous
+            val passwordRecovery = value("type").equals("recovery", ignoreCase = true) || authPreferences.pendingAuthAction == AUTH_ACTION_PASSWORD_RESET
+            val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
+            val committed=authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent) {
             authPreferences.accessToken = accessToken
             authPreferences.refreshToken = refreshToken
             authPreferences.sessionExpiresAtSeconds = value("expires_at")?.toLongOrNull()
                 ?: ((System.currentTimeMillis() / 1000) + (value("expires_in")?.toLongOrNull() ?: 3600L))
             authPreferences.userId = user.optString("id")
-            val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
             authPreferences.userEmail = email.ifBlank { null }
             authPreferences.accountMode = if (isAnonymous) "ANONYMOUS" else "EMAIL"
-            val linkedGuest = authPreferences.isPendingGuestEmailLink && !isAnonymous
             authPreferences.isPendingGuestEmailLink = false
             authPreferences.pendingEmail = null
-            val passwordRecovery = value("type").equals("recovery", ignoreCase = true) ||
-                authPreferences.pendingAuthAction == AUTH_ACTION_PASSWORD_RESET
             clearPendingAuthFlow()
             authPreferences.needsPasswordSetup = linkedGuest || passwordRecovery
+            }
+            if(!committed)return@withContext AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
             AuthResult.Success(
                 readUser(user, email),
                 when {
@@ -380,12 +459,17 @@ class SupabaseAuthService(
                     else -> "Your CycleCare email is verified and you are signed in."
                 }
             )
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("We couldn't verify this CycleCare link right now. Check your connection and try again.")
         }
     }
 
-    suspend fun setPassword(password: String): AuthResult = withContext(Dispatchers.IO) {
+    }
+
+    suspend fun setPassword(password: String): AuthResult {
+        val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
+        return withContext(Dispatchers.IO) {
+        if(!originCurrent(origin))return@withContext staleAttempt()
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
         if (password.length < 8) return@withContext AuthResult.Error("Use a password with at least 8 characters.")
         val token = SupabaseSessionManager.validAccessToken(authPreferences)
@@ -400,13 +484,15 @@ class SupabaseAuthService(
                 .build()
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
+            if(!originCurrent(origin))return@withContext staleAttempt()
             if (!response.isSuccessful) return@withContext AuthResult.Error(AuthErrorMessages.forResponse(body, AuthOperation.SET_PASSWORD))
-            authPreferences.needsPasswordSetup = false
+            if(!commitOrigin(origin){authPreferences.needsPasswordSetup = false})return@withContext staleAttempt()
             val user = runCatching { JSONObject(body) }.getOrElse { JSONObject() }
             AuthResult.Success(readUser(user, authPreferences.userEmail.orEmpty()), "Your password is set.")
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please try again.")
         }
+    }
     }
 
     suspend fun isCycleCareAdmin(): Boolean = withContext(Dispatchers.IO) {
@@ -423,7 +509,7 @@ class SupabaseAuthService(
             client.newCall(request).execute().use { response ->
                 response.isSuccessful && response.body?.string()?.trim().equals("true", ignoreCase = true)
             }
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             false
         }
     }
@@ -432,11 +518,14 @@ class SupabaseAuthService(
         authPreferences.clearSession()
     }
 
-    private suspend fun linkGuestAccount(email: String): AuthResult {
+    private suspend fun linkGuestAccount(email: String,origin:RequestOrigin): AuthResult {
+        if(!originCurrent(origin))return staleAttempt()
         val token = SupabaseSessionManager.validAccessToken(authPreferences)
             ?: return AuthResult.Error("Your guest session expired. Continue as guest again, then link your email.")
         val body = JSONObject().put("email", email)
-        addPkceFields(body, AUTH_ACTION_GUEST_LINK)
+        if(!originCurrent(origin))return staleAttempt()
+        val flow=addPkceFields(body, AUTH_ACTION_GUEST_LINK,origin)
+        val current={originCurrent(origin)&&flow.matches(authPreferences)}
         val request = Request.Builder()
             .url("$authApiUrl/user?redirect_to=${encodedRedirect()}")
             .header("apikey", apiKey)
@@ -446,17 +535,21 @@ class SupabaseAuthService(
             .build()
         val response = client.newCall(request).execute()
         val responseBody = response.body?.string().orEmpty()
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if(!current())return staleAttempt()
         if (!response.isSuccessful) {
-            clearPendingAuthFlow()
+            if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()})return staleAttempt()
             return AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.ACCOUNT_LINK))
         }
-        authPreferences.pendingEmail = email
-        authPreferences.isPendingGuestEmailLink = true
-        authPreferences.pendingAuthAction = AUTH_ACTION_GUEST_LINK
+        if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
+            authPreferences.pendingEmail = email
+            authPreferences.isPendingGuestEmailLink = true
+            authPreferences.pendingAuthAction = AUTH_ACTION_GUEST_LINK
+        })return staleAttempt()
         return AuthResult.VerificationRequired("A verification link was sent to $email. Open it on this device to attach this guest data to your account; you will not enter until verification completes.")
     }
 
-    private fun completeAuthCode(authCode: String): AuthResult {
+    private suspend fun completeAuthCode(authCode: String, callbackContext:AuthPreferences.RustOperationSnapshot,callbackCurrent:()->Boolean): AuthResult {
         val verifier = authPreferences.googlePkceVerifier
             ?: return AuthResult.Error(AuthErrorMessages.forResponse("expired code", AuthOperation.CALLBACK))
         val action = authPreferences.pendingAuthAction ?:
@@ -466,7 +559,7 @@ class SupabaseAuthService(
             action == AUTH_ACTION_GOOGLE_LINK
         val existingUserId = authPreferences.userId
         if (!existingUserId.isNullOrBlank() && !linkingGuest) {
-            clearPendingAuthFlow()
+            authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow()}
             return AuthResult.Error("An account is already signed in on this device. Sign out before switching accounts.")
         }
         return try {
@@ -477,32 +570,35 @@ class SupabaseAuthService(
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
                 return AuthResult.Error(AuthErrorMessages.forResponse(body, operation))
             }
             val json = JSONObject(body)
             val user = json.optJSONObject("user") ?: JSONObject()
             val userId = user.optString("id")
             if (json.optString("access_token").isBlank() || userId.isBlank()) {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
                 return AuthResult.Error(AuthErrorMessages.fallback(operation))
             }
             if (linkingGuest && !existingUserId.isNullOrBlank() && existingUserId != userId) {
                 // A link callback must upgrade THIS account, never switch to another one.
-                clearPendingAuthFlow(clearPendingEmail = true)
+                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
                 return AuthResult.Error("This link belongs to a different account. Request a new CycleCare link on this device.")
             }
             if (!emailIsConfirmed(user)) {
-                clearPendingAuthFlow(clearPendingEmail = true)
+                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
                 return AuthResult.Error("Please verify your email using the CycleCare link before continuing.")
             }
-            saveSession(json, "EMAIL")
             val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
-            authPreferences.isPendingGuestEmailLink = false
-            clearPendingAuthFlow(clearPendingEmail = true)
-            authPreferences.needsPasswordSetup = action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET
+            val committed=authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){
+                saveSession(json, "EMAIL")
+                authPreferences.isPendingGuestEmailLink = false
+                clearPendingAuthFlow(clearPendingEmail = true)
+                authPreferences.needsPasswordSetup = action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET
+            }
+            if(!committed)return AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
             AuthResult.Success(readUser(user, email), successMessageForAction(action))
-        } catch (_: Exception) {
+        } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error(AuthErrorMessages.fallback(operation))
         }
     }
@@ -538,24 +634,33 @@ class SupabaseAuthService(
         return result
     }
 
-    private fun beginPkceFlow(action: String): String {
+    /** Synthetic scheduling probe only. No production caller installs it. */
+    internal var afterPkceCreatedForTests:(()->Unit)?=null
+    private data class PkceFlow(val challenge:String,val verifier:String,val action:String){
+        fun matches(preferences:AuthPreferences)=verifier==preferences.googlePkceVerifier&&action==preferences.pendingAuthAction
+    }
+    private fun beginPkceFlow(action: String,origin:RequestOrigin?=null): PkceFlow {
         val randomBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val verifier = Base64.encodeToString(randomBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val challengeBytes = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(StandardCharsets.US_ASCII))
         val challenge = Base64.encodeToString(challengeBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        authPreferences.googlePkceVerifier = verifier
-        authPreferences.pendingAuthAction = action
-        return challenge
+        val write={authPreferences.googlePkceVerifier = verifier;authPreferences.pendingAuthAction = action}
+        if(origin==null)authPreferences.mutatePublicationIdentity(write)
+        else check(commitOrigin(origin,write)){"stale_auth_attempt"}
+        val flow=PkceFlow(challenge,verifier,action)
+        afterPkceCreatedForTests?.invoke()
+        return flow
     }
 
-    private fun addPkceFields(body: JSONObject, action: String) {
-        val challenge = beginPkceFlow(action)
-        body.put("code_challenge", challenge)
+    private fun addPkceFields(body: JSONObject, action: String,origin:RequestOrigin?=null):PkceFlow {
+        val flow = beginPkceFlow(action,origin)
+        body.put("code_challenge", flow.challenge)
         body.put("code_challenge_method", "s256")
+        return flow
     }
 
-    private fun clearPendingAuthFlow(clearPendingEmail: Boolean = false) {
+    private fun clearPendingAuthFlow(clearPendingEmail: Boolean = false) = authPreferences.mutatePublicationIdentity {
         authPreferences.googlePkceVerifier = null
         authPreferences.pendingAuthAction = null
         if (clearPendingEmail) {
@@ -591,7 +696,7 @@ class SupabaseAuthService(
 
     private fun encodedRedirect(): String = URLEncoder.encode(AUTH_REDIRECT_URL, StandardCharsets.UTF_8.name())
 
-    private fun saveSession(json: JSONObject, mode: String) {
+    private fun saveSession(json: JSONObject, mode: String) = authPreferences.mutatePublicationIdentity {
         val user = json.optJSONObject("user") ?: json
         authPreferences.accountMode = mode
         authPreferences.userId = user.optString("id").ifBlank { authPreferences.userId }

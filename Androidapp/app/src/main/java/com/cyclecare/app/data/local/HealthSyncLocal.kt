@@ -66,13 +66,13 @@ interface HealthSyncLocalDao {
     @Query("SELECT * FROM health_sync_revisions WHERE ownerId = :ownerId AND recordId = :recordId LIMIT 1")
     suspend fun revision(ownerId: String, recordId: String): HealthSyncRevision?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = HealthSyncRevision::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun putRevision(value: HealthSyncRevision)
 
     @Query("SELECT * FROM health_sync_outbox WHERE ownerId = :ownerId ORDER BY nextAttemptAt, revision")
     suspend fun pending(ownerId: String): List<HealthSyncOutboxEntry>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = HealthSyncOutboxEntry::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun enqueue(value: HealthSyncOutboxEntry)
 
     @Query("DELETE FROM health_sync_outbox WHERE ownerId = :ownerId AND operationId = :operationId AND recordId = :recordId AND revision = :revision")
@@ -100,7 +100,7 @@ interface HealthSyncLocalDao {
     @Query("SELECT * FROM health_sync_conflicts WHERE ownerId = :ownerId AND resolvedAt IS NULL ORDER BY createdAt")
     suspend fun conflicts(ownerId: String): List<HealthSyncConflictEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = HealthSyncConflictEntity::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun putConflict(value: HealthSyncConflictEntity)
 
     @Query("UPDATE health_sync_conflicts SET resolvedAt = :resolvedAt, resolution = :resolution WHERE ownerId = :ownerId AND recordId = :recordId AND resolvedAt IS NULL")
@@ -109,7 +109,7 @@ interface HealthSyncLocalDao {
     @Query("SELECT * FROM health_sync_cursors WHERE ownerId = :ownerId LIMIT 1")
     suspend fun cursor(ownerId: String): HealthSyncCursor?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(entity = HealthSyncCursor::class, onConflict = OnConflictStrategy.REPLACE)
     suspend fun putCursor(value: HealthSyncCursor)
 
     /** Erasure must remove every local replay footprint, not just current health rows. */

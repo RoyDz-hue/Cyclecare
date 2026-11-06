@@ -1,0 +1,6 @@
+use cyclecare_core::local_date::LocalDate;
+#[test]
+fn full_java_range_and_epoch_oracle(){let rows:serde_json::Value=serde_json::from_str(include_str!("fixtures/local_date_oracle.json")).unwrap();let mut n=0;for r in rows.as_array().unwrap(){let input=r["input"].as_str().unwrap();let result=LocalDate::parse(input);if r["canonical"].as_str()!=Some(input){assert_eq!(result,None);continue}let d=result.unwrap();assert_eq!(d.epoch_day(),r["epoch"].as_i64().unwrap(),"{input}");assert_eq!(d.canonical(),input);let max=LocalDate::parse("+999999999-12-31").unwrap();if r["plus15Epoch"].is_null(){assert_eq!(max.anchor_moves_after(d),Err(()))}else{assert_eq!(max.anchor_moves_after(d),Ok(max.epoch_day()>r["plus15Epoch"].as_i64().unwrap()))}n+=1;}println!("Executed JVM oracle {} rows, {n} canonical valid dates",rows.as_array().unwrap().len());}
+
+#[test]
+fn prior_anchor_java_parse_acceptance_not_canonical_input_gate(){let rows:serde_json::Value=serde_json::from_str(include_str!("fixtures/local_date_oracle.json")).unwrap();for r in rows.as_array().unwrap(){let parsed=LocalDate::parse_java(r["input"].as_str().unwrap());if r["canonical"].is_null(){assert_eq!(parsed,None)}else{let d=parsed.unwrap();assert_eq!(d.canonical(),r["canonical"].as_str().unwrap());assert_eq!(d.epoch_day(),r["epoch"].as_i64().unwrap());}}}
