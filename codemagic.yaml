@@ -297,7 +297,7 @@ workflows:
           set -e
           export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
           "$JAVA_HOME/bin/java" -version
-          test -d "$ANDROID_HOME/platforms/android-36"
+          test -d "$ANDROID_HOME/platforms/android-36.1" || { echo "MISSING android-36.1 platform (compileSdk 36 minorApiLevel 1); installed:"; ls "$ANDROID_HOME/platforms"; exit 1; }
       - name: SDK inventory (informational only, not a setup check)
         script: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | grep -E "build-tools|platforms;android" || true
