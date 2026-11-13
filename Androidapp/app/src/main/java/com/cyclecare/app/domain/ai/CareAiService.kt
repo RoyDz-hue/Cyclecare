@@ -7,6 +7,7 @@ import com.cyclecare.app.data.model.SafetyLevel
 import com.cyclecare.app.data.supabase.SupabaseConfig
 import com.cyclecare.app.domain.care.CareKnowledgeBase
 import com.cyclecare.app.domain.safety.SafetyEngine
+import com.cyclecare.app.rust.CycleCareCoreBridge
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -79,6 +80,29 @@ internal data class CareRequestPrivacySnapshot(
 }
 
 object CareAiService {
+
+    /**
+     * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the
+     * original gateway response parse + validation block, reached whenever
+     * the native care_gateway_parse_v1 reply is null. Its JSONObject throw
+     * propagates to consult()'s unchanged catch, exactly as before.
+     */
+    private fun kotlinGatewayParse(raw: String): CycleCareCoreBridge.GatewayCareFields? {
+        val root = JSONObject(raw)
+        val data = root.optJSONObject("data")
+        val fields = listOf("summary", "whatText", "understandText", "careText", "watchText", "escalateText")
+        return if (root.optBoolean("success") && data != null && fields.all {
+                data.opt(it) is String && data.getString(it).isNotBlank() && data.getString(it).length <= 4000
+            }) {
+            CycleCareCoreBridge.GatewayCareFields(
+                summary = data.getString("summary"), whatText = data.getString("whatText"),
+                understandText = data.getString("understandText"), careText = data.getString("careText"),
+                watchText = data.getString("watchText"), escalateText = data.getString("escalateText"),
+                source = serverSelectedSource(root)
+            )
+        } else null
+    }
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
@@ -166,19 +190,24 @@ object CareAiService {
                     source?.request(64 * 1024L + 1)
                     val raw = source?.buffer?.readByteArray(minOf(source.buffer.size, 64 * 1024L + 1))
                     if (response.isSuccessful && raw != null && raw.size <= 64 * 1024) {
-                        val root = JSONObject(raw.toString(Charsets.UTF_8))
-                        val data = root.optJSONObject("data")
-                        val fields = listOf("summary", "whatText", "understandText", "careText", "watchText", "escalateText")
-                        if (root.optBoolean("success") && data != null && fields.all {
-                                data.opt(it) is String && data.getString(it).isNotBlank() && data.getString(it).length <= 4000
-                            }) {
+                        // NEW IMPLEMENTATION (2026-11-13): native-first via
+                        // care_gateway_parse_v1. The byte-bound gate and the
+                        // UTF-8 decoding stay here; the decoded text is
+                        // captured ONCE and handed to the native route and,
+                        // on any null reply, to the verbatim Kotlin twin. A
+                        // null verdict (payload failing the source's own
+                        // validation) falls through exactly as before.
+                        val rawText = raw.toString(Charsets.UTF_8)
+                        val gatewayFields = CycleCareCoreBridge.careGatewayParse(rawText)
+                            ?: kotlinGatewayParse(rawText)
+                        if (gatewayFields != null) {
                             check(requestPrivacy.isCurrent(authPreferences)) { "Privacy decision changed" }
                             return@withContext CareResponse(
-                                summary = data.getString("summary"), whatText = data.getString("whatText"),
-                                understandText = data.getString("understandText"), careText = data.getString("careText"),
-                                watchText = data.getString("watchText"), escalateText = data.getString("escalateText"),
+                                summary = gatewayFields.summary, whatText = gatewayFields.whatText,
+                                understandText = gatewayFields.understandText, careText = gatewayFields.careText,
+                                watchText = gatewayFields.watchText, escalateText = gatewayFields.escalateText,
                                 safetyAlert = if (safetyEval.level != SafetyLevel.LOW) safetyEval else null,
-                                source = serverSelectedSource(root)
+                                source = gatewayFields.source
                             )
                         }
                     }

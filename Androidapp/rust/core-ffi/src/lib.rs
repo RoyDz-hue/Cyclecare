@@ -1043,6 +1043,25 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let rank = corelib::economy_rules::calculate_rank_for_lifetime_coins(&coins);
             serde_json::json!({"ok":{"version":1,"rank":corelib::economy_rules::rank_kotlin_name(rank)}}).to_string()
         })(),
+        "care_gateway_parse_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port care_ai::parse_gateway_response (CareAiService
+            // consult()'s gateway response validation, main@31b88f5 lineage;
+            // CareAiParity corpus). Pure interpretation of the caller's
+            // already byte-bounded (<= 64 KiB) UTF-8 text: no I/O, no clock,
+            // no consent state. Lone-surrogate/hex-float constructs in the
+            // body trip the central unsupported-semantics marker and the
+            // transport declines to the Kotlin twin (real org.json). A None
+            // verdict is the source's own fall-through, not a decline.
+            let raw = match v.get("raw").and_then(|x| x.as_str()) { Some(s) => s, None => return err("raw missing or not a string") };
+            match corelib::care_ai::parse_gateway_response(raw) {
+                Some((f, source)) => serde_json::json!({"ok":{"version":1,"fields":{
+                    "summary": f.summary, "whatText": f.what_text, "understandText": f.understand_text,
+                    "careText": f.care_text, "watchText": f.watch_text, "escalateText": f.escalate_text,
+                    "source": source}}}).to_string(),
+                None => serde_json::json!({"ok":{"version":1,"fields":null}}).to_string(),
+            }
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry

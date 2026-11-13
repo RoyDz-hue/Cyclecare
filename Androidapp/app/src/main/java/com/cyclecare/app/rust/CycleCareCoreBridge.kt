@@ -1142,6 +1142,50 @@ object CycleCareCoreBridge {
         }
     }
 
+    /** The six validated gateway fields plus the normalized source label. */
+    data class GatewayCareFields(
+        val summary: String,
+        val whatText: String,
+        val understandText: String,
+        val careText: String,
+        val watchText: String,
+        val escalateText: String,
+        val source: String,
+    )
+
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first AI gateway response
+     * validation (care_gateway_parse_v1). Pure interpretation of the caller's
+     * byte-bounded raw text; a null reply (native absent, {"error"}, a
+     * strict-decode decline, or the payload failing the source's own
+     * validation) means the caller runs its verbatim Kotlin twin, whose own
+     * null is the source's fall-through.
+     */
+    fun careGatewayParse(raw: String): GatewayCareFields? {
+        val reply = call("care_gateway_parse_v1", JSONObject()
+            .put("raw", raw)) ?: return null
+        return decodeCareGatewayParse(reply)
+    }
+
+    internal fun decodeCareGatewayParse(reply: JSONObject): GatewayCareFields? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // Native validation failure is a verdict: decline to the twin, whose
+        // identical validation yields its own null (the fall-through).
+        val fields = ok.optJSONObject("fields") ?: return null
+        val summary = fields.opt("summary") as? String ?: return null
+        val whatText = fields.opt("whatText") as? String ?: return null
+        val understandText = fields.opt("understandText") as? String ?: return null
+        val careText = fields.opt("careText") as? String ?: return null
+        val watchText = fields.opt("watchText") as? String ?: return null
+        val escalateText = fields.opt("escalateText") as? String ?: return null
+        // The server-selected label normalizes to exactly one constant.
+        val source = fields.opt("source") as? String ?: return null
+        if (source != "CycleCare Assistant") return null
+        return GatewayCareFields(summary, whatText, understandText, careText, watchText, escalateText, source)
+    }
+
     internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")
