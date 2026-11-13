@@ -1354,6 +1354,46 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     serde_json::json!({"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":notes_hz,"note_spacing_ms":note_spacing_ms,"total_duration_ms":total_duration_ms}}}).to_string(),
             }
         })(),
+        "notification_parse_v1" => (|| {
+            // NEW IMPLEMENTATION (recovery rebuild): JNI wiring of the
+            // existing parity port notifications
+            // (data/notification/SupabaseNotificationService.kt
+            // parseIsoTimestamp + explicitPriorityOrNormal, main@31b88f5
+            // lineage; notifications.rs mirrors NotificationParsingTest).
+            // One contract, two pure ops selected by "op". The timezone is
+            // always explicit (UTC base or the string's own offset); the
+            // device clock/zone never participates. Conservative FFI
+            // declines route shapes where Java's strict SimpleDateFormat and
+            // the port's chrono parse are not verified-equal to the
+            // verbatim Kotlin twin: leap-second values (:60, accepted by
+            // chrono, rejected by Java non-lenient SECOND range) and years
+            // before 1583 (Java's default GregorianCalendar is a
+            // Julian/Gregorian hybrid before the 1582-10-15 cutover; chrono
+            // is proleptic Gregorian). The unparseable verdict (epoch 0)
+            // declines to the twin, whose identical parse yields the same
+            // 0, so a native verdict is never consumed independently.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let raw = match v.get("raw") {
+                None => None,
+                Some(x) if x.is_null() => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("raw not a string") },
+            };
+            match op {
+                "priority" => serde_json::json!({"ok":{"version":1,"priority":corelib::notifications::explicit_priority_or_normal(raw)}}).to_string(),
+                "timestamp" => {
+                    if let Some(t) = raw.map(corelib::kotlin_text::kotlin_trim) {
+                        let b = t.as_bytes();
+                        if b.len() >= 19 && b[4] == b'-' && b[7] == b'-' && b[10] == b'T' && b[13] == b':' && b[16] == b':' {
+                            if &b[0..4] < b"1583".as_slice() || &b[17..19] == b"60" {
+                                return err("calendar/clock shape outside verified parity");
+                            }
+                        }
+                    }
+                    serde_json::json!({"ok":{"version":1,"epoch_ms":corelib::notifications::parse_iso_timestamp(raw)}}).to_string()
+                }
+                _ => err("unknown op"),
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
@@ -2355,3 +2395,4 @@ mod erasure_storage_jni;
 pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeErase<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {
     erasure_storage_jni::execute(env,session)
 }
+

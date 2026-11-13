@@ -180,7 +180,14 @@ class SupabaseNotificationService(
 
 /** Urgency must come from an explicit sender-set priority; a missing, blank or
  * unrecognized value must never render as urgent. */
+// NEW IMPLEMENTATION (recovery rebuild): native-first via the
+// notification_parse_v1 bridge (priority op). The verbatim Kotlin twin
+// below runs on any null reply (native absent, transport error, or a
+// strict-decode decline).
 internal fun explicitPriorityOrNormal(raw: String?): String =
+    com.cyclecare.app.rust.CycleCareCoreBridge.notificationPriorityOrNormal(raw) ?: kotlinExplicitPriorityOrNormal(raw)
+
+private fun kotlinExplicitPriorityOrNormal(raw: String?): String =
     when (raw?.trim()?.uppercase(Locale.US)) {
         "URGENT" -> "URGENT"
         "HIGH" -> "HIGH"
@@ -198,7 +205,16 @@ private val ISO_TIMESTAMP_PATTERN =
  * impossible dates and trailing garbage are rejected. Unparseable input
  * returns 0 so a malformed row sorts oldest instead of masquerading as fresh.
  */
-internal fun parseIsoTimestamp(isoString: String?): Long {
+// NEW IMPLEMENTATION (recovery rebuild): native-first via the
+// notification_parse_v1 bridge (timestamp op). The verbatim Kotlin twin
+// below runs on any null reply (native absent, transport error, a
+// strict-decode decline, the conservative leap-second / pre-1583 calendar
+// shapes the FFI declines, or the unparseable epoch-0 verdict, which the
+// twin's identical parse also yields).
+internal fun parseIsoTimestamp(isoString: String?): Long =
+    com.cyclecare.app.rust.CycleCareCoreBridge.notificationParseTimestamp(isoString) ?: kotlinParseIsoTimestamp(isoString)
+
+private fun kotlinParseIsoTimestamp(isoString: String?): Long {
     if (isoString.isNullOrBlank()) return 0L
     return runCatching {
         val match = ISO_TIMESTAMP_PATTERN.matchEntire(isoString.trim()) ?: return 0L

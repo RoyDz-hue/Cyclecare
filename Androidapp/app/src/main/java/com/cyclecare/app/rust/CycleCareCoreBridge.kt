@@ -1288,6 +1288,50 @@ object CycleCareCoreBridge {
         val durationMs: Int,
     )
 
+    // NEW IMPLEMENTATION (recovery rebuild): notification_parse_v1 bridge.
+    // Two pure notification parsing rules (SupabaseNotificationService
+    // parseIsoTimestamp + explicitPriorityOrNormal) behind one contract.
+    fun notificationParseTimestamp(raw: String?): Long? {
+        val payload = JSONObject()
+            .put("op", "timestamp")
+            .put("raw", raw ?: JSONObject.NULL)
+        val reply = call("notification_parse_v1", payload) ?: return null
+        return decodeNotificationTimestamp(reply)
+    }
+
+    internal fun decodeNotificationTimestamp(reply: JSONObject): Long? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val value = when (val epoch = ok.opt("epoch_ms")) {
+            is Int -> epoch.toLong()
+            is Long -> epoch
+            else -> return null
+        }
+        // The unparseable verdict (0) declines: the twin's identical parse
+        // yields the same 0, so a native verdict is never consumed
+        // independently.
+        if (value == 0L) return null
+        return value
+    }
+
+    fun notificationPriorityOrNormal(raw: String?): String? {
+        val payload = JSONObject()
+            .put("op", "priority")
+            .put("raw", raw ?: JSONObject.NULL)
+        val reply = call("notification_parse_v1", payload) ?: return null
+        return decodeNotificationPriority(reply)
+    }
+
+    internal fun decodeNotificationPriority(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (val p = ok.opt("priority")) {
+            "URGENT", "HIGH", "NORMAL" -> p as String
+            else -> null
+        }
+    }
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
      * core (sound_feedback_v1). Pure decision: the caller's single
