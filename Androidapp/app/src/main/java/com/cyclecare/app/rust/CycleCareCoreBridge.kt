@@ -1062,6 +1062,59 @@ object CycleCareCoreBridge {
         }
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first Kenyan phone validation
+     * (payment_phone_v1, op=validate). Pure interpretation of the caller's
+     * raw input; a null reply means the caller runs its verbatim Kotlin twin.
+     */
+    fun paymentPhoneValidate(raw: String): com.cyclecare.app.util.ValidationResult? {
+        val reply = call("payment_phone_v1", JSONObject()
+            .put("op", "validate")
+            .put("raw", raw)) ?: return null
+        return decodePaymentPhoneValidate(reply)
+    }
+
+    internal fun decodePaymentPhoneValidate(reply: JSONObject): com.cyclecare.app.util.ValidationResult? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("valid")) {
+            true -> if (!ok.has("message") || ok.isNull("message")) {
+                com.cyclecare.app.util.ValidationResult.Valid
+            } else {
+                null
+            }
+            false -> when (val m = ok.opt("message")) {
+                // The validator's four verbatim messages; anything else is drift.
+                "Phone number is required.",
+                "Phone number must contain digits only.",
+                "Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).",
+                "Kenyan mobile numbers must start with 07XX or 01XX." ->
+                    com.cyclecare.app.util.ValidationResult.Invalid(m as String)
+                else -> null
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first Kenyan phone sanitize
+     * (payment_phone_v1, op=sanitize). Null reply -> verbatim Kotlin twin.
+     */
+    fun paymentPhoneSanitize(raw: String): String? {
+        val reply = call("payment_phone_v1", JSONObject()
+            .put("op", "sanitize")
+            .put("raw", raw)) ?: return null
+        return decodePaymentPhoneSanitize(reply)
+    }
+
+    internal fun decodePaymentPhoneSanitize(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok.opt("sanitized") as? String
+    }
+
     internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")

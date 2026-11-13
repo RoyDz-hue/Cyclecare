@@ -1013,6 +1013,23 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let status = corelib::payment_safety::transaction_history_status(http_successful, body);
             serde_json::json!({"ok":{"version":1,"status":status}}).to_string()
         })(),
+        "payment_phone_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port payment_validation::{validate,sanitize}_kenyan_phone_number
+            // (util/PaymentInputValidator.kt, main@31b88f5 lineage). Pure
+            // string interpretation: no I/O, no clock. Ops stay lazy like
+            // the source: sanitize is only computed when the caller asks.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let raw = match v.get("raw").and_then(|x| x.as_str()) { Some(s) => s, None => return err("raw missing or not a string") };
+            match op {
+                "validate" => {
+                    let r = corelib::payment_validation::validate_kenyan_phone_number(raw);
+                    serde_json::json!({"ok":{"version":1,"valid":r.is_valid(),"message":r.message()}}).to_string()
+                }
+                "sanitize" => serde_json::json!({"ok":{"version":1,"sanitized":corelib::payment_validation::sanitize_kenyan_phone_number(raw)}}).to_string(),
+                _ => err("unknown op"),
+            }
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry

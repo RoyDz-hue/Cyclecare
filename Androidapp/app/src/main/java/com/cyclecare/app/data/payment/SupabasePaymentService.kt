@@ -39,14 +39,22 @@ class SupabasePaymentService(
         profile: EconomyProfile
     ): UnifiedPaymentResult = withContext(Dispatchers.IO) {
         if (!releasePolicy.allows(PaymentProvider.PAYHERO, PaymentOperation.INITIATE)) return@withContext UnifiedPaymentResult(false, message = "Payments are unavailable until checkout safety review is complete.")
-        val phoneValidation = com.cyclecare.app.util.PaymentInputValidator.validateKenyanPhoneNumber(phoneNumber)
+        // NEW IMPLEMENTATION (2026-11-13): native-first via payment_phone_v1
+        // (op=validate); null reply -> the verbatim Kotlin twin. Pure string
+        // interpretation; no validation-order or transport change.
+        val phoneValidation = CycleCareCoreBridge.paymentPhoneValidate(phoneNumber)
+            ?: kotlinValidateKenyanPhone(phoneNumber)
         if (!phoneValidation.isValid) {
             return@withContext UnifiedPaymentResult(
                 isSuccess = false,
                 message = phoneValidation.message ?: "Invalid phone number."
             )
         }
-        val sanitizedPhone = com.cyclecare.app.util.PaymentInputValidator.sanitizeKenyanPhoneNumber(phoneNumber)
+        // NEW IMPLEMENTATION (2026-11-13): native-first via payment_phone_v1
+        // (op=sanitize); null reply -> the verbatim Kotlin twin. Reached only
+        // after validation passes, exactly as before (lazy op dispatch).
+        val sanitizedPhone = CycleCareCoreBridge.paymentPhoneSanitize(phoneNumber)
+            ?: kotlinSanitizeKenyanPhone(phoneNumber)
         val totalCoins = pkg.coins + pkg.bonusCoins
         val userId = ownerProvider.currentOwnerId()?.takeIf { it.isNotBlank() }
             ?: return@withContext UnifiedPaymentResult(false, message = "Sign in again before starting checkout.")
@@ -244,6 +252,17 @@ class SupabasePaymentService(
      */
     private fun kotlinCaptureStatus(httpSuccessful: Boolean, body: String): PaymentStatus =
         PaymentStatusVerifier.captureStatus(httpSuccessful, body)
+
+    /**
+     * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twins, 2026-11-13): the
+     * original phone validate/sanitize calls, reached whenever the native
+     * payment_phone_v1 reply is null.
+     */
+    private fun kotlinValidateKenyanPhone(raw: String) =
+        com.cyclecare.app.util.PaymentInputValidator.validateKenyanPhoneNumber(raw)
+
+    private fun kotlinSanitizeKenyanPhone(raw: String) =
+        com.cyclecare.app.util.PaymentInputValidator.sanitizeKenyanPhoneNumber(raw)
 
     /**
      * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the

@@ -170,3 +170,48 @@ pub fn validate_card_cvv(raw: &str) -> ValidationResult {
     }
     ValidationResult::Valid
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ValidationResult as VR;
+    use super::{sanitize_kenyan_phone_number as sanitize, validate_kenyan_phone_number as validate};
+
+    /// Wired-surface pins (NEW IMPLEMENTATION, 2026-11-13); mirrored by the
+    /// Kotlin twin parity test against the real validator. Written, NOT
+    /// executed in this workspace.
+    #[test]
+    fn kenyan_phone_pins() {
+        // Accepted forms.
+        assert_eq!(validate("0712345678"), VR::Valid);
+        assert_eq!(validate("0112345678"), VR::Valid);
+        assert_eq!(validate("+254712345678"), VR::Valid);
+        assert_eq!(validate("254712345678"), VR::Valid);
+        assert_eq!(validate("712345678"), VR::Valid); // 9 digits starting 7
+        assert_eq!(validate(" 0712345678 "), VR::Valid); // Kotlin trim
+        assert_eq!(validate("0712 345 678"), VR::Valid); // ASCII \s+ stripped
+        // Errors, verbatim messages and ORDER (first failing check wins).
+        assert_eq!(validate(""), VR::Invalid("Phone number is required."));
+        assert_eq!(validate("   "), VR::Invalid("Phone number is required."));
+        assert_eq!(validate("07a2345678"), VR::Invalid("Phone number must contain digits only."));
+        // NBSP is NOT regex \s (ASCII-only): it survives the strip and fails
+        // the digit check - Kotlin trim() removes it only at the EDGES.
+        assert_eq!(validate("0712\u{00A0}345678"), VR::Invalid("Phone number must contain digits only."));
+        assert_eq!(
+            validate("07123456789"),
+            VR::Invalid("Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678).")
+        );
+        assert_eq!(
+            validate("+254212345678"),
+            VR::Invalid("Kenyan mobile numbers must start with 07XX or 01XX.")
+        );
+        // A second '+' is not stripped; a bare '+' is empty digits.
+        assert_eq!(validate("++254712345678"), VR::Invalid("Phone number must contain digits only."));
+        assert_eq!(validate("+"), VR::Invalid("Please enter a valid 10-digit number (e.g. 0712345678 or 0112345678)."));
+        // Sanitize mirrors validation's normalization; unmatched -> digits-only.
+        assert_eq!(sanitize("0712 345 678"), "254712345678");
+        assert_eq!(sanitize("+254 712 345 678"), "254712345678");
+        assert_eq!(sanitize("712345678"), "254712345678");
+        assert_eq!(sanitize("abc"), "");
+        assert_eq!(sanitize("12345"), "12345");
+    }
+}
