@@ -812,6 +812,97 @@ fn dispatch(contract: &str, payload: &str) -> String {
             };
             serde_json::json!({"ok": ok}).to_string()
         })(),
+        "health_consent_receipt_read_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port auth_prefs_health::HealthAuthPrefs::
+            // server_health_consent_generation (AuthPreferences.kt:264
+            // getter, main@31b88f5 lineage). Seeds an in-memory ScratchPrefs
+            // with the exact keys the Kotlin caller already read, then runs
+            // the parity-locked guard verbatim. Decision only: no host
+            // preference is read or written here.
+            use corelib::auth_prefs_health::HealthAuthPrefs;
+            use corelib::prefs_scratch::ScratchPrefs;
+            let b = |k: &str| v.get(k).and_then(|x| x.as_bool());
+            let l = |k: &str| v.get(k).and_then(|x| x.as_i64());
+            let secure_available = match b("secureAvailable") { Some(x) => x, None => return err("secureAvailable missing or not a boolean") };
+            let user_id = match v.get("userId") {
+                None => return err("userId missing"),
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err("userId not a string or null") },
+            };
+            let device_fallback_owner = match v.get("deviceFallbackOwner").and_then(|x| x.as_str()) { Some(s) => s.to_string(), None => return err("deviceFallbackOwner missing or not a string") };
+            let session_generation = match l("sessionGeneration") { Some(x) => x, None => return err("sessionGeneration missing or not an integer") };
+            let cloud_sync_allowed = match b("cloudSyncAllowed") { Some(x) => x, None => return err("cloudSyncAllowed missing or not a boolean") };
+            let health_consent_generation = match l("healthConsentGeneration") { Some(x) => x, None => return err("healthConsentGeneration missing or not an integer") };
+            let pending_revoke = match b("pendingRevoke") { Some(x) => x, None => return err("pendingRevoke missing or not a boolean") };
+            let receipt_server = match l("receiptServer") { Some(x) => x, None => return err("receiptServer missing or not an integer") };
+            let receipt_local = match l("receiptLocal") { Some(x) => x, None => return err("receiptLocal missing or not an integer") };
+            let receipt_session = match l("receiptSession") { Some(x) => x, None => return err("receiptSession missing or not an integer") };
+            let mut scratch = ScratchPrefs::open_in_memory();
+            {
+                let probe = HealthAuthPrefs { prefs: &mut scratch, secure_available, secure_user_id: user_id.clone(), device_fallback_owner: device_fallback_owner.clone(), owner_wiped: false, live_user_id: None, live_owner_wiped: None };
+                let owner = probe.effective_user_id();
+                probe.prefs.edit()
+                    .put_bool(&format!("cloud_sync_allowed_v2_{owner}"), cloud_sync_allowed)
+                    .put_long(&format!("health_consent_generation_{owner}"), health_consent_generation)
+                    .put_bool(&format!("health_sync_pending_revoke_{owner}"), pending_revoke)
+                    .put_long(&format!("health_sync_receipt_server_{owner}"), receipt_server)
+                    .put_long(&format!("health_sync_receipt_local_{owner}"), receipt_local)
+                    .put_long(&format!("health_sync_receipt_session_{owner}"), receipt_session)
+                    .put_long("session_generation_v3", session_generation)
+                    .commit();
+            }
+            let hp = HealthAuthPrefs { prefs: &mut scratch, secure_available, secure_user_id: user_id, device_fallback_owner, owner_wiped: false, live_user_id: None, live_owner_wiped: None };
+            let receipt = hp.server_health_consent_generation();
+            match receipt {
+                Some(g) => serde_json::json!({"ok":{"version":1,"receipt":g}}).to_string(),
+                None => serde_json::json!({"ok":{"version":1,"receipt":null}}).to_string(),
+            }
+        })(),
+        "health_consent_receipt_save_guard_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port auth_prefs_health::HealthAuthPrefs::
+            // save_server_health_consent_receipt guards (AuthPreferences.kt
+            // saveServerHealthConsentReceipt, main@31b88f5 lineage). Returns
+            // the guard decision ONLY; the caller applies the exact key
+            // mutation to the real SharedPreferences and returns the real
+            // commit() result, exactly as the source does.
+            use corelib::auth_prefs_health::HealthAuthPrefs;
+            use corelib::prefs_scratch::ScratchPrefs;
+            let b = |k: &str| v.get(k).and_then(|x| x.as_bool());
+            let l = |k: &str| v.get(k).and_then(|x| x.as_i64());
+            let secure_available = match b("secureAvailable") { Some(x) => x, None => return err("secureAvailable missing or not a boolean") };
+            let user_id = match v.get("userId") {
+                None => return err("userId missing"),
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err("userId not a string or null") },
+            };
+            let device_fallback_owner = match v.get("deviceFallbackOwner").and_then(|x| x.as_str()) { Some(s) => s.to_string(), None => return err("deviceFallbackOwner missing or not a string") };
+            let session_generation = match l("sessionGeneration") { Some(x) => x, None => return err("sessionGeneration missing or not an integer") };
+            let cloud_sync_allowed = match b("cloudSyncAllowed") { Some(x) => x, None => return err("cloudSyncAllowed missing or not a boolean") };
+            let health_consent_generation = match l("healthConsentGeneration") { Some(x) => x, None => return err("healthConsentGeneration missing or not an integer") };
+            let pending_revoke = match b("pendingRevoke") { Some(x) => x, None => return err("pendingRevoke missing or not a boolean") };
+            let owner = match v.get("owner").and_then(|x| x.as_str()) { Some(s) => s.to_string(), None => return err("owner missing or not a string") };
+            let session = match l("session") { Some(x) => x, None => return err("session missing or not an integer") };
+            let local_generation = match l("localGeneration") { Some(x) => x, None => return err("localGeneration missing or not an integer") };
+            let server_generation = match l("serverGeneration") { Some(x) => x, None => return err("serverGeneration missing or not an integer") };
+            let enabled = match b("enabled") { Some(x) => x, None => return err("enabled missing or not a boolean") };
+            let owner_wiped = match b("ownerWiped") { Some(x) => x, None => return err("ownerWiped missing or not a boolean") };
+            let mut scratch = ScratchPrefs::open_in_memory();
+            {
+                let probe = HealthAuthPrefs { prefs: &mut scratch, secure_available, secure_user_id: user_id.clone(), device_fallback_owner: device_fallback_owner.clone(), owner_wiped, live_user_id: None, live_owner_wiped: None };
+                let effective = probe.effective_user_id();
+                probe.prefs.edit()
+                    .put_bool(&format!("cloud_sync_allowed_v2_{effective}"), cloud_sync_allowed)
+                    .put_long(&format!("health_consent_generation_{effective}"), health_consent_generation)
+                    .put_bool(&format!("health_sync_pending_revoke_{effective}"), pending_revoke)
+                    .put_long("session_generation_v3", session_generation)
+                    .commit();
+            }
+            let mut hp = HealthAuthPrefs { prefs: &mut scratch, secure_available, secure_user_id: user_id, device_fallback_owner, owner_wiped, live_user_id: None, live_owner_wiped: None };
+            let allowed = hp.save_server_health_consent_receipt(&owner, session, local_generation, server_generation, enabled);
+            serde_json::json!({"ok":{"version":1,"allowed":allowed}}).to_string()
+        })(),
         "compute_baseline" => {
             let s = &v["settings"];
             let settings = PatternSettings {

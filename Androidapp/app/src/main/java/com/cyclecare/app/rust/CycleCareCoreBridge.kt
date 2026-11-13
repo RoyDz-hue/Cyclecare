@@ -793,6 +793,110 @@ object CycleCareCoreBridge {
     }.getOrNull()
 
     /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
+    /** Reply of [healthConsentReceiptRead]: [receipt] is the server-side
+     * health-consent generation when every source guard passes, null when
+     * the receipt is absent. A null return of the FUNCTION means native
+     * unavailable/malformed - the caller keeps the Kotlin read. */
+    data class HealthConsentReceiptRead(val receipt: Long?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * auth_prefs_health parity port for the AuthPreferences.kt:264
+     * serverHealthConsentGeneration read guard. Decision only: every value
+     * is supplied by the caller's own preference reads; nothing is read or
+     * persisted native-side. */
+    fun healthConsentReceiptRead(
+        secureAvailable: Boolean,
+        userId: String?,
+        deviceFallbackOwner: String,
+        sessionGeneration: Long,
+        cloudSyncAllowed: Boolean,
+        healthConsentGeneration: Long,
+        pendingRevoke: Boolean,
+        receiptServer: Long,
+        receiptLocal: Long,
+        receiptSession: Long
+    ): HealthConsentReceiptRead? {
+        val reply = call("health_consent_receipt_read_v1", JSONObject()
+            .put("secureAvailable", secureAvailable)
+            .put("userId", userId ?: JSONObject.NULL)
+            .put("deviceFallbackOwner", deviceFallbackOwner)
+            .put("sessionGeneration", sessionGeneration)
+            .put("cloudSyncAllowed", cloudSyncAllowed)
+            .put("healthConsentGeneration", healthConsentGeneration)
+            .put("pendingRevoke", pendingRevoke)
+            .put("receiptServer", receiptServer)
+            .put("receiptLocal", receiptLocal)
+            .put("receiptSession", receiptSession)) ?: return null
+        return decodeHealthConsentReceiptRead(reply)
+    }
+
+    /** Strict decode bound to the actual reply: "ok" a real object,
+     * "version" exactly 1, "receipt" JSON null or a genuine Int/Long with
+     * the source's >0 shape (optLong would coerce a malformed echo into an
+     * authoritative 0, so types are checked first). */
+    internal fun decodeHealthConsentReceiptRead(reply: JSONObject): HealthConsentReceiptRead? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val receipt = ok.opt("receipt") ?: return null
+        if (receipt === JSONObject.NULL) return HealthConsentReceiptRead(null)
+        if (receipt !is Int && receipt !is Long) return null
+        val value = (receipt as Number).toLong()
+        if (value <= 0L) return null
+        return HealthConsentReceiptRead(value)
+    }
+
+    /** NEW IMPLEMENTATION (2026-11-13): native guard decision for
+     * AuthPreferences.saveServerHealthConsentReceipt (same parity port).
+     * Returns the guard verdict ONLY: when true the caller applies the
+     * exact source key mutation to the real SharedPreferences and returns
+     * the real commit() result; when false it returns false without
+     * writing. null = native unavailable/malformed -> caller keeps the
+     * Kotlin guard chain. */
+    fun healthConsentReceiptSaveAllowed(
+        secureAvailable: Boolean,
+        userId: String?,
+        deviceFallbackOwner: String,
+        sessionGeneration: Long,
+        cloudSyncAllowed: Boolean,
+        healthConsentGeneration: Long,
+        pendingRevoke: Boolean,
+        owner: String,
+        session: Long,
+        localGeneration: Long,
+        serverGeneration: Long,
+        enabled: Boolean,
+        ownerWiped: Boolean
+    ): Boolean? {
+        val reply = call("health_consent_receipt_save_guard_v1", JSONObject()
+            .put("secureAvailable", secureAvailable)
+            .put("userId", userId ?: JSONObject.NULL)
+            .put("deviceFallbackOwner", deviceFallbackOwner)
+            .put("sessionGeneration", sessionGeneration)
+            .put("cloudSyncAllowed", cloudSyncAllowed)
+            .put("healthConsentGeneration", healthConsentGeneration)
+            .put("pendingRevoke", pendingRevoke)
+            .put("owner", owner)
+            .put("session", session)
+            .put("localGeneration", localGeneration)
+            .put("serverGeneration", serverGeneration)
+            .put("enabled", enabled)
+            .put("ownerWiped", ownerWiped)) ?: return null
+        return decodeHealthConsentReceiptSaveAllowed(reply)
+    }
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "allowed" a
+     * genuine Boolean (optBoolean would coerce a malformed reply into an
+     * authoritative false that skips a real receipt write). */
+    internal fun decodeHealthConsentReceiptSaveAllowed(reply: JSONObject): Boolean? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val allowed = ok.opt("allowed")
+        if (allowed !is Boolean) return null
+        return allowed
+    }
+
     fun call(contract: String, payload: JSONObject): JSONObject? {
         if (ensureLoaded() != NativeState.LOADED) return null
         return runCatching {

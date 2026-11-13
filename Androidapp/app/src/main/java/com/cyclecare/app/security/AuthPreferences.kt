@@ -270,11 +270,39 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     val serverHealthConsentGeneration: Long?
         get() {
             val owner = effectiveUserId
+            // Native-first: core auth_prefs_health parity port of this exact
+            // read guard (NEW IMPLEMENTATION wiring, 2026-11-13; userId is
+            // blank-filtered at this boundary, which the guard outcomes are
+            // identical under). A null reply (native unavailable/malformed)
+            // keeps the Kotlin read below, byte for byte.
+            val nativeReceipt = com.cyclecare.app.rust.CycleCareCoreBridge.healthConsentReceiptRead(
+                isSecureStorageAvailable, userId?.takeIf { it.isNotBlank() }, owner,
+                sessionGeneration, isCloudSyncAllowed, healthConsentGeneration, hasPendingHealthSyncRevoke,
+                prefs.getLong("health_sync_receipt_server_$owner", 0),
+                prefs.getLong("health_sync_receipt_local_$owner", -1),
+                prefs.getLong("health_sync_receipt_session_$owner", -1))
+            if (nativeReceipt != null) return nativeReceipt.receipt
             if (!isSecureStorageAvailable || !isCloudSyncAllowed || hasPendingHealthSyncRevoke || prefs.getLong("health_sync_receipt_local_$owner", -1) != healthConsentGeneration || prefs.getLong("health_sync_receipt_session_$owner", -1) != sessionGeneration) return null
             return prefs.getLong("health_sync_receipt_server_$owner", 0).takeIf { it > 0 }
         }
     fun saveServerHealthConsentReceipt(owner: String, session: Long, localGeneration: Long, serverGeneration: Long, enabled: Boolean): Boolean = mutatePublicationResult(false) {  synchronized(prefs) {
-        if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session || healthConsentGeneration != localGeneration || serverGeneration <= 0 || (enabled && (!isCloudSyncAllowed || hasPendingHealthSyncRevoke || OwnerDataGate.isWiped(context, owner)))) return@synchronized false
+        // Native-first: core auth_prefs_health parity port of this guard
+        // chain (NEW IMPLEMENTATION wiring, 2026-11-13). Native returns the
+        // guard verdict only; the mutation below stays the verbatim source
+        // write and still reports the real commit() result. A null reply
+        // (native unavailable/malformed) keeps the Kotlin guard, byte for
+        // byte. userId is blank-filtered at the bridge boundary: a blank
+        // secure id fails "userId != owner" identically to a missing one.
+        val nativeAllowed = com.cyclecare.app.rust.CycleCareCoreBridge.healthConsentReceiptSaveAllowed(
+            isSecureStorageAvailable, userId?.takeIf { it.isNotBlank() }, effectiveUserId,
+            sessionGeneration, isCloudSyncAllowed, healthConsentGeneration, hasPendingHealthSyncRevoke,
+            owner, session, localGeneration, serverGeneration, enabled,
+            enabled && OwnerDataGate.isWiped(context, owner))
+        if (nativeAllowed != null) {
+            if (!nativeAllowed) return@synchronized false
+        } else {
+            if (!isSecureStorageAvailable || userId != owner || sessionGeneration != session || healthConsentGeneration != localGeneration || serverGeneration <= 0 || (enabled && (!isCloudSyncAllowed || hasPendingHealthSyncRevoke || OwnerDataGate.isWiped(context, owner)))) return@synchronized false
+        }
         val edit = prefs.edit().putBoolean("health_sync_pending_revoke_$owner", false)
         if (enabled) edit.putLong("health_sync_receipt_server_$owner", serverGeneration).putLong("health_sync_receipt_local_$owner", localGeneration).putLong("health_sync_receipt_session_$owner", session)
         else edit.remove("health_sync_receipt_server_$owner").remove("health_sync_receipt_local_$owner").remove("health_sync_receipt_session_$owner")
