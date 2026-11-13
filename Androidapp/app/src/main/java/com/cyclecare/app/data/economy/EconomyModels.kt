@@ -206,7 +206,29 @@ object EconomyCatalog {
         )
     )
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first via
+     * economy_catalog_find_item_v1. Pure lookup: the trimmed query crosses
+     * JNI; only the matched item id returns (drawableRes and the rest of
+     * EconomyItem never cross - the UI keeps its own mapping). The native
+     * side declines non-ASCII queries, because Kotlin equals(ignoreCase)
+     * is Unicode case folding while the port is ASCII-exact; a no-match
+     * verdict also decodes to a decline. Any null reply runs the verbatim
+     * pre-wiring body, kept as the private twin [kotlinFindItem], whose
+     * own null is the source's no-match result. A native id that is not
+     * in ALL_ITEMS (table drift) also falls through to the twin.
+     */
     fun findItem(idOrName: String?): EconomyItem? {
+        val clean = idOrName?.trim().orEmpty()
+        if (clean.isEmpty()) return null
+        com.cyclecare.app.rust.CycleCareCoreBridge.economyCatalogFindItemId(clean)?.let { nativeId ->
+            ALL_ITEMS.find { it.id == nativeId }?.let { return it }
+        }
+        return kotlinFindItem(idOrName)
+    }
+
+    /** Verbatim pre-wiring body of [findItem]. */
+    private fun kotlinFindItem(idOrName: String?): EconomyItem? {
         val clean = idOrName?.trim().orEmpty()
         if (clean.isEmpty()) return null
         return ALL_ITEMS.find {

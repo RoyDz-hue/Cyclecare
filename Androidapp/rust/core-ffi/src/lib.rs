@@ -1301,6 +1301,23 @@ fn dispatch(contract: &str, payload: &str) -> String {
             dp::build(&mut rec, &settings, profile.as_ref(), &logs, &exported_at);
             serde_json::json!({"ok":{"version":1,"ops":rec.ops}}).to_string()
         })(),
+        "economy_catalog_find_item_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port economy_catalog::find_item (EconomyCatalog.findItem
+            // in EconomyModels.kt, main@31b88f5 lineage; economy_catalog.rs
+            // corpus). Pure lookup: no I/O, no clock. The query arrives
+            // caller-trimmed (the port's internal kotlin_trim is a no-op on
+            // it). Kotlin equals(ignoreCase=true) is Unicode case folding
+            // while the port is ASCII-exact (eq_ignore_ascii_case); the two
+            // agree exactly on ASCII input, so non-ASCII queries decline to
+            // the verbatim Kotlin twin. The reply distinguishes a match
+            // (match: id) from the no-match verdict (match: null), which
+            // the bridge declines to the twin.
+            let clean = match v.get("clean").and_then(|x| x.as_str()) { Some(s) => s, None => return err("clean missing or not a string") };
+            if !clean.is_ascii() { return err("clean not ASCII"); }
+            let m = corelib::economy_catalog::find_item(clean).map(|i| i.id);
+            serde_json::json!({"ok":{"version":1,"match":m}}).to_string()
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService

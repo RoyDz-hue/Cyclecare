@@ -1252,6 +1252,30 @@ object CycleCareCoreBridge {
         return ok.opt("json") as? String
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first economy catalog alias
+     * resolution (economy_catalog_find_item_v1). Pure lookup: only the
+     * trimmed query crosses JNI; only the matched item id returns. A null
+     * return (native absent, {"error"}, a strict-decode decline, the
+     * port's non-ASCII decline, or a no-match verdict) means the caller
+     * runs its verbatim Kotlin twin, whose own null is the source's
+     * no-match result.
+     */
+    fun economyCatalogFindItemId(clean: String): String? {
+        val reply = call("economy_catalog_find_item_v1", JSONObject()
+            .put("clean", clean)) ?: return null
+        return decodeEconomyCatalogFindItem(reply)
+    }
+
+    internal fun decodeEconomyCatalogFindItem(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // A no-match verdict (match absent or null) declines to the twin,
+        // whose identical lookup yields the same no-match.
+        return ok.opt("match") as? String
+    }
+
     const val PDF_PAINT_TITLE = 0
     const val PDF_PAINT_SECTION = 1
     const val PDF_PAINT_BODY = 2
