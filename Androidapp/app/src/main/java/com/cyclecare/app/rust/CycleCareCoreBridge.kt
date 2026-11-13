@@ -1494,34 +1494,50 @@ object CycleCareCoreBridge {
         return strictStringArray(ok.opt("subs"))
     }
 
-    fun somethingSheetQuickChips(): List<String>? =
-        decodeSheetQuickChips(somethingSheetReply("quick_chips", JSONObject()) ?: return null)
+    fun somethingSheetQuickChips(): List<String>? {
+        val reply = somethingSheetReply("quick_chips", JSONObject()) ?: return null
+        return decodeSheetQuickChips(reply)
+    }
 
-    fun somethingSheetDomainChips(): List<Pair<String, List<String>>>? =
-        decodeSheetDomainChips(somethingSheetReply("domain_chips", JSONObject()) ?: return null)
+    fun somethingSheetDomainChips(): List<Pair<String, List<String>>>? {
+        val reply = somethingSheetReply("domain_chips", JSONObject()) ?: return null
+        return decodeSheetDomainChips(reply)
+    }
 
     fun somethingSheetSubOptions(domain: String?): List<String>? {
         if (domain == null) return null // caller's twin covers the null/else branch
         return decodeSheetSubOptions(somethingSheetReply("sub_options", JSONObject().put("domain", domain)) ?: return null)
     }
 
-    fun somethingSheetShouldParse(text: String): Boolean? =
-        decodeSheetBool(somethingSheetReply("should_parse", JSONObject().put("text", text)) ?: return null, "parse")
+    fun somethingSheetShouldParse(text: String): Boolean? {
+        val reply = somethingSheetReply("should_parse", JSONObject().put("text", text)) ?: return null
+        return decodeSheetBool(reply, "parse")
+    }
 
-    fun somethingSheetAppendSensation(textInput: String, item: String): String? =
-        decodeSheetString(somethingSheetReply("append_sensation", JSONObject().put("text_input", textInput).put("item", item)) ?: return null, "text")
+    fun somethingSheetAppendSensation(textInput: String, item: String): String? {
+        val reply = somethingSheetReply("append_sensation", JSONObject().put("text_input", textInput).put("item", item)) ?: return null
+        return decodeSheetString(reply, "text")
+    }
 
-    fun somethingSheetCardVisible(present: Boolean, itemsCount: Int): Boolean? =
-        decodeSheetBool(somethingSheetReply("card_visible", JSONObject().put("present", present).put("items_count", itemsCount)) ?: return null, "visible")
+    fun somethingSheetCardVisible(present: Boolean, itemsCount: Int): Boolean? {
+        val reply = somethingSheetReply("card_visible", JSONObject().put("present", present).put("items_count", itemsCount)) ?: return null
+        return decodeSheetBool(reply, "visible")
+    }
 
-    fun somethingSheetSubItemLabel(subItem: String): String? =
-        decodeSheetString(somethingSheetReply("sub_item_label", JSONObject().put("sub_item", subItem)) ?: return null, "label")
+    fun somethingSheetSubItemLabel(subItem: String): String? {
+        val reply = somethingSheetReply("sub_item_label", JSONObject().put("sub_item", subItem)) ?: return null
+        return decodeSheetString(reply, "label")
+    }
 
-    fun somethingSheetItemLine(label: String, detail: String): String? =
-        decodeSheetString(somethingSheetReply("item_line", JSONObject().put("label", label).put("detail", detail)) ?: return null, "line")
+    fun somethingSheetItemLine(label: String, detail: String): String? {
+        val reply = somethingSheetReply("item_line", JSONObject().put("label", label).put("detail", detail)) ?: return null
+        return decodeSheetString(reply, "line")
+    }
 
-    fun somethingSheetFollowUp(question: String): String? =
-        decodeSheetString(somethingSheetReply("follow_up", JSONObject().put("question", question)) ?: return null, "text")
+    fun somethingSheetFollowUp(question: String): String? {
+        val reply = somethingSheetReply("follow_up", JSONObject().put("question", question)) ?: return null
+        return decodeSheetString(reply, "text")
+    }
 
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
