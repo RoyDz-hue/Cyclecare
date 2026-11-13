@@ -365,20 +365,24 @@ fun SettingsScreenContent(
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
                         Text("Backup check", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        // NEW IMPLEMENTATION (recovery rebuild): native-first
+                        // "Backup check" chain via the settings_backup_v1
+                        // bridge; verbatim Kotlin twins run on any null reply.
                         Text(
-                            if (!uiState.isOnlineBackupActive) "Online backup is off in this version. Your records stay on this device."
-                            else if (uiState.lastSyncSuccess) "Everything looks good."
-                            else "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first.",
+                            com.cyclecare.app.rust.CycleCareCoreBridge.settingsBackupStatusMessage(uiState.isOnlineBackupActive, uiState.lastSyncSuccess)
+                                ?: kotlinBackupStatusMessage(uiState.isOnlineBackupActive, uiState.lastSyncSuccess),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         // Hide a stale past result while backup is off in this
                         // version; the current state line above is the truth.
-                        if (uiState.isOnlineBackupActive) {
+                        if (com.cyclecare.app.rust.CycleCareCoreBridge.settingsBackupShow("show_last_sync", uiState.isOnlineBackupActive, uiState.lastSyncSuccess)
+                            ?: kotlinShowLastSyncMessage(uiState.isOnlineBackupActive)) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(uiState.lastSyncMessage, style = MaterialTheme.typography.bodySmall)
                         }
-                        if (uiState.isOnlineBackupActive && !uiState.lastSyncSuccess) {
+                        if (com.cyclecare.app.rust.CycleCareCoreBridge.settingsBackupShow("show_check_again", uiState.isOnlineBackupActive, uiState.lastSyncSuccess)
+                            ?: kotlinShowCheckAgainButton(uiState.isOnlineBackupActive, uiState.lastSyncSuccess)) {
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(onClick = onTriggerManualSync, modifier = Modifier.testTag("review_sync_button")) {
                                 Text("Check again")
@@ -1104,3 +1108,13 @@ private fun kotlinIncreaseCycleLength(v: Int): Int? = if (v < 45) v + 1 else nul
 private fun kotlinDecreasePeriodDuration(v: Int): Int? = if (v > 2) v - 1 else null
 
 private fun kotlinIncreasePeriodDuration(v: Int): Int? = if (v < 10) v + 1 else null
+
+private fun kotlinBackupStatusMessage(isOnlineBackupActive: Boolean, lastSyncSuccess: Boolean): String =
+    if (!isOnlineBackupActive) "Online backup is off in this version. Your records stay on this device."
+    else if (lastSyncSuccess) "Everything looks good."
+    else "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first."
+
+private fun kotlinShowLastSyncMessage(isOnlineBackupActive: Boolean): Boolean = isOnlineBackupActive
+
+private fun kotlinShowCheckAgainButton(isOnlineBackupActive: Boolean, lastSyncSuccess: Boolean): Boolean =
+    isOnlineBackupActive && !lastSyncSuccess

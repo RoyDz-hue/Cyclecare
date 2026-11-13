@@ -1368,6 +1368,47 @@ object CycleCareCoreBridge {
         return ok.opt("next") as? Int
     }
 
+    // NEW IMPLEMENTATION (recovery rebuild): settings_backup_v1 bridge.
+    // The SettingsScreen "Backup check" chain: one status message and two
+    // visibility decisions from the uiState booleans.
+    fun settingsBackupStatusMessage(active: Boolean, success: Boolean): String? {
+        val payload = JSONObject()
+            .put("op", "status_message")
+            .put("active", active)
+            .put("success", success)
+        val reply = call("settings_backup_v1", payload) ?: return null
+        return decodeSettingsBackupMessage(reply)
+    }
+
+    internal fun decodeSettingsBackupMessage(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // The port's actual contract is exactly these three strings.
+        return when (val m = ok.opt("message")) {
+            "Online backup is off in this version. Your records stay on this device.",
+            "Everything looks good.",
+            "Backup is paused or needs attention. CycleCare never overwrites one of your records without asking you first." -> m as String
+            else -> null
+        }
+    }
+
+    fun settingsBackupShow(op: String, active: Boolean, success: Boolean): Boolean? {
+        val payload = JSONObject()
+            .put("op", op)
+            .put("active", active)
+            .put("success", success)
+        val reply = call("settings_backup_v1", payload) ?: return null
+        return decodeSettingsBackupShow(reply)
+    }
+
+    internal fun decodeSettingsBackupShow(reply: JSONObject): Boolean? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok.opt("show") as? Boolean
+    }
+
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
      * core (sound_feedback_v1). Pure decision: the caller's single

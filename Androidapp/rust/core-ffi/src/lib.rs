@@ -1429,6 +1429,31 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown op"),
             }
         })(),
+        "settings_backup_v1" => (|| {
+            // NEW IMPLEMENTATION (recovery rebuild): JNI wiring of the
+            // existing parity port settings_core "Backup check" chain
+            // (ui/screens/SettingsScreen.kt :366-378, main@31b88f5 lineage;
+            // settings_core JVM-oracle corpus, backup rules). Three pure
+            // visibility/message decisions from two uiState booleans; no
+            // clock, no I/O. The status message is strict-decoded on the
+            // Kotlin side against the exact three-string table.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let active = match v.get("active").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("active missing or not a bool") };
+            match op {
+                "show_last_sync" =>
+                    serde_json::json!({"ok":{"version":1,"show":corelib::settings_core::show_last_sync_message(active)}}).to_string(),
+                "status_message" | "show_check_again" => {
+                    let success = match v.get("success").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("success missing or not a bool") };
+                    match op {
+                        "status_message" =>
+                            serde_json::json!({"ok":{"version":1,"message":corelib::settings_core::backup_status_message(active, success)}}).to_string(),
+                        _ =>
+                            serde_json::json!({"ok":{"version":1,"show":corelib::settings_core::show_check_again_button(active, success)}}).to_string(),
+                    }
+                }
+                _ => err("unknown op"),
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
