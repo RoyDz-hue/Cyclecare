@@ -1428,6 +1428,101 @@ object CycleCareCoreBridge {
         return draft
     }
 
+    // NEW IMPLEMENTATION (recovery rebuild): something_sheet_v1 bridge.
+    // SomethingDifferentSheet decision points (main@31b88f5 lineage): quick
+    // chips, domain chips, sub-option when-chain, parse gates, sensation
+    // append, interpretation card gate, item line, sub-item label and
+    // follow-up text. Every reply is strict-decoded; any null runs the
+    // caller's verbatim Kotlin twin.
+    private fun somethingSheetReply(op: String, payload: JSONObject): JSONObject? {
+        payload.put("op", op)
+        return call("something_sheet_v1", payload)
+    }
+
+    internal fun decodeSheetOk(reply: JSONObject): JSONObject? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok
+    }
+
+    internal fun strictStringArray(value: Any?): List<String>? {
+        val arr = value as? org.json.JSONArray ?: return null
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val s = arr.opt(i) as? String ?: return null
+            if (s.isEmpty()) return null
+            out.add(s)
+        }
+        return out
+    }
+
+    internal fun decodeSheetString(reply: JSONObject, key: String): String? =
+        decodeSheetOk(reply)?.opt(key) as? String
+
+    internal fun decodeSheetBool(reply: JSONObject, key: String): Boolean? =
+        decodeSheetOk(reply)?.opt(key) as? Boolean
+
+    internal fun decodeSheetQuickChips(reply: JSONObject): List<String>? {
+        val ok = decodeSheetOk(reply) ?: return null
+        val chips = strictStringArray(ok.opt("chips")) ?: return null
+        if (chips.size != 10) return null // port's actual shape: QUICK_CHIPS [(&str); 10]
+        return chips
+    }
+
+    internal fun decodeSheetDomainChips(reply: JSONObject): List<Pair<String, List<String>>>? {
+        val ok = decodeSheetOk(reply) ?: return null
+        val arr = ok.optJSONArray("domains") ?: return null
+        if (arr.length() != 5) return null // port's actual shape: UNPACK_DOMAIN_CHIPS [(..); 5]
+        val out = ArrayList<Pair<String, List<String>>>(5)
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: return null
+            val domain = obj.opt("domain") as? String ?: return null
+            if (domain.isEmpty()) return null
+            val subs = strictStringArray(obj.opt("subs")) ?: return null
+            if (subs.isEmpty()) return null
+            out.add(domain to subs)
+        }
+        return out
+    }
+
+    internal fun decodeSheetSubOptions(reply: JSONObject): List<String>? {
+        val ok = decodeSheetOk(reply) ?: return null
+        // An empty subs array is a VALID reply (unknown domain -> [] in both
+        // port and twin); a missing or wrongly-typed field declines.
+        if (!ok.has("subs")) return null
+        return strictStringArray(ok.opt("subs"))
+    }
+
+    fun somethingSheetQuickChips(): List<String>? =
+        decodeSheetQuickChips(somethingSheetReply("quick_chips", JSONObject()) ?: return null)
+
+    fun somethingSheetDomainChips(): List<Pair<String, List<String>>>? =
+        decodeSheetDomainChips(somethingSheetReply("domain_chips", JSONObject()) ?: return null)
+
+    fun somethingSheetSubOptions(domain: String?): List<String>? {
+        if (domain == null) return null // caller's twin covers the null/else branch
+        return decodeSheetSubOptions(somethingSheetReply("sub_options", JSONObject().put("domain", domain)) ?: return null)
+    }
+
+    fun somethingSheetShouldParse(text: String): Boolean? =
+        decodeSheetBool(somethingSheetReply("should_parse", JSONObject().put("text", text)) ?: return null, "parse")
+
+    fun somethingSheetAppendSensation(textInput: String, item: String): String? =
+        decodeSheetString(somethingSheetReply("append_sensation", JSONObject().put("text_input", textInput).put("item", item)) ?: return null, "text")
+
+    fun somethingSheetCardVisible(present: Boolean, itemsCount: Int): Boolean? =
+        decodeSheetBool(somethingSheetReply("card_visible", JSONObject().put("present", present).put("items_count", itemsCount)) ?: return null, "visible")
+
+    fun somethingSheetSubItemLabel(subItem: String): String? =
+        decodeSheetString(somethingSheetReply("sub_item_label", JSONObject().put("sub_item", subItem)) ?: return null, "label")
+
+    fun somethingSheetItemLine(label: String, detail: String): String? =
+        decodeSheetString(somethingSheetReply("item_line", JSONObject().put("label", label).put("detail", detail)) ?: return null, "line")
+
+    fun somethingSheetFollowUp(question: String): String? =
+        decodeSheetString(somethingSheetReply("follow_up", JSONObject().put("question", question)) ?: return null, "text")
+
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
      * core (sound_feedback_v1). Pure decision: the caller's single

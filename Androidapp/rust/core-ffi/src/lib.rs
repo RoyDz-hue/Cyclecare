@@ -1465,6 +1465,60 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let raw = match v.get("raw").and_then(|x| x.as_str()) { Some(s) => s, None => return err("raw missing or not a string") };
             serde_json::json!({"ok":{"version":1,"draft":corelib::settings_core::pin_draft_filter(raw)}}).to_string()
         })(),
+        "something_sheet_v1" => (|| {
+            // NEW IMPLEMENTATION (recovery rebuild): JNI wiring of the
+            // existing parity port something_sheet (ui/screens/
+            // SomethingDifferentSheet.kt, main@31b88f5 lineage;
+            // something_sheet JVM-oracle corpus fixtures). Pure sheet
+            // decision points only: quick chips (:70-81), domain chips
+            // literal (:191-196), sub-option when-chain (:229-236), parse
+            // gates (:152-165), sensation appends (:249/:281),
+            // interpretation card gate (:292), item line (:330), sub-item
+            // label (:254), follow-up text (:347). The parser itself,
+            // Compose rendering and confirmParsedLog stay seams.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let ver = || serde_json::json!(1);
+            match op {
+                "quick_chips" => serde_json::json!({"ok":{"version":ver(),"chips":corelib::something_sheet::QUICK_CHIPS}}).to_string(),
+                "domain_chips" => {
+                    let rows: Vec<serde_json::Value> = corelib::something_sheet::UNPACK_DOMAIN_CHIPS.iter()
+                        .map(|(d, subs)| serde_json::json!({"domain":d,"subs":subs})).collect();
+                    serde_json::json!({"ok":{"version":ver(),"domains":rows}}).to_string()
+                }
+                "sub_options" => {
+                    let domain = match v.get("domain").and_then(|x| x.as_str()) { Some(s) => s, None => return err("domain missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"subs":corelib::something_sheet::unpack_sub_options(domain)}}).to_string()
+                }
+                "should_parse" => {
+                    let text = match v.get("text").and_then(|x| x.as_str()) { Some(s) => s, None => return err("text missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"parse":corelib::something_sheet::should_parse(text)}}).to_string()
+                }
+                "append_sensation" => {
+                    let text_input = match v.get("text_input").and_then(|x| x.as_str()) { Some(s) => s, None => return err("text_input missing or not a string") };
+                    let item = match v.get("item").and_then(|x| x.as_str()) { Some(s) => s, None => return err("item missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"text":corelib::something_sheet::append_sensation(text_input, item)}}).to_string()
+                }
+                "card_visible" => {
+                    let present = match v.get("present").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("present missing or not a bool") };
+                    let items_count = match v.get("items_count").and_then(|x| x.as_u64()) { Some(n) => n, None => return err("items_count missing or not a non-negative int") };
+                    serde_json::json!({"ok":{"version":ver(),"visible":corelib::something_sheet::interpretation_card_visible(present, items_count as usize)}}).to_string()
+                }
+                "sub_item_label" => {
+                    let sub_item = match v.get("sub_item").and_then(|x| x.as_str()) { Some(s) => s, None => return err("sub_item missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"label":corelib::something_sheet::sub_item_label(sub_item)}}).to_string()
+                }
+                "item_line" => {
+                    let label = match v.get("label").and_then(|x| x.as_str()) { Some(s) => s, None => return err("label missing or not a string") };
+                    let detail = match v.get("detail").and_then(|x| x.as_str()) { Some(s) => s, None => return err("detail missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"line":corelib::something_sheet::interpretation_item_line(label, detail)}}).to_string()
+                }
+                "follow_up" => {
+                    let question = match v.get("question").and_then(|x| x.as_str()) { Some(s) => s, None => return err("question missing or not a string") };
+                    serde_json::json!({"ok":{"version":ver(),"text":corelib::something_sheet::follow_up_text(question)}}).to_string()
+                }
+                _ => err("unknown op"),
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
