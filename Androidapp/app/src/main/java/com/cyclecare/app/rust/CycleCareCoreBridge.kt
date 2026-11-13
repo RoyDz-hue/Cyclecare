@@ -1142,6 +1142,27 @@ object CycleCareCoreBridge {
         }
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first coin amount display
+     * formatting (coin_format_v1). Pure display interpretation of the exact
+     * BigDecimal, which crosses as its exact toPlainString() form (never a
+     * double, never scientific notation); no I/O, no clock. A null reply
+     * (native absent, {"error"}, or a strict-decode decline) means the
+     * caller runs its verbatim Kotlin twin.
+     */
+    fun coinFormat(value: java.math.BigDecimal): String? {
+        val reply = call("coin_format_v1", JSONObject()
+            .put("value", value.toPlainString())) ?: return null
+        return decodeCoinFormat(reply)
+    }
+
+    internal fun decodeCoinFormat(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok.opt("formatted") as? String
+    }
+
     /** The six validated gateway fields plus the normalized source label. */
     data class GatewayCareFields(
         val summary: String,

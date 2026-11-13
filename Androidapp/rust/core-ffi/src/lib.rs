@@ -1043,6 +1043,18 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let rank = corelib::economy_rules::calculate_rank_for_lifetime_coins(&coins);
             serde_json::json!({"ok":{"version":1,"rank":corelib::economy_rules::rank_kotlin_name(rank)}}).to_string()
         })(),
+        "coin_format_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port coin_format::format (util/CoinFormatter.kt,
+            // main@31b88f5 lineage; DecimalFormat("#,##0.###", US) with
+            // HALF_EVEN, corpus-pinned in payment_oracle.rs against the
+            // JVM probe corpus corpus_coin_format.tsv). Pure display
+            // formatting: no I/O, no clock. The BigDecimal crosses as the
+            // caller's toPlainString() form - exact decimal, never a double.
+            let value = match v.get("value").and_then(|x| x.as_str()) { Some(s) => s, None => return err("value missing or not a string") };
+            let value = match bigdecimal::BigDecimal::from_str(value) { Ok(b) => b, Err(_) => return err("value not a decimal string") };
+            serde_json::json!({"ok":{"version":1,"formatted":corelib::coin_format::format(&value)}}).to_string()
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
