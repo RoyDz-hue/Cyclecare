@@ -646,12 +646,12 @@ class SupabaseAuthService(
         // isPendingGuestEmailLink, then userId (the source read it after
         // the action default). The seam call, the request body and the
         // response seam use these captures - no prefs re-reads anywhere.
-        val verifier = authPreferences.googlePkceVerifier
+        val verifierCapture = authPreferences.googlePkceVerifier
         val pendingAuthAction = authPreferences.pendingAuthAction
         val pendingGuestEmailLink = authPreferences.isPendingGuestEmailLink
         val existingUserId = authPreferences.userId
         val pre = com.cyclecare.app.rust.CycleCareCoreBridge.authCbCodePre(
-            verifier != null,
+            verifierCapture != null,
             pendingAuthAction,
             pendingGuestEmailLink,
             existingUserId)
@@ -670,7 +670,11 @@ class SupabaseAuthService(
         val operation = operationForAction(action)
         // Unreachable when the pre decision worked (it returns the same
         // error first); the elvis guards the CAPTURED local, no re-read.
-        val verifier = verifier
+        // COMPILE RESTORE (2026-11-13): the pre-loss wiring redeclared
+        // `val verifier = verifier ?:` (conflicting declarations). The
+        // capture is renamed; the guarded non-null val keeps the source's
+        // original name and the downstream code is unchanged.
+        val verifier = verifierCapture
             ?: return AuthResult.Error(AuthErrorMessages.forResponse("expired code", AuthOperation.CALLBACK))
         return try {
             val request = authRequest("token?grant_type=pkce", JSONObject().apply {

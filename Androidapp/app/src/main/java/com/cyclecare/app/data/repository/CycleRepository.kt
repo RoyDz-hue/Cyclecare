@@ -81,8 +81,6 @@ class OwnerTransitionException : IllegalStateException("owner_transition")
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CycleRepository(database: CycleCareDatabase) {
-    companion object {
-    }
     private val routingLock=Any()
     private val replacingPort=java.util.concurrent.atomic.AtomicBoolean(false)
     // A JVM monitor is reentrant. Explicit count rejects same-thread callbacks

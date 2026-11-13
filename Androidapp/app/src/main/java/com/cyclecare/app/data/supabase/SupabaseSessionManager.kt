@@ -101,8 +101,30 @@ object SupabaseSessionManager {
                 // source's, verbatim), the `val now` read, and the
                 // reportedExpiry bounds. A null native reply keeps the
                 // verbatim Kotlin shape handling.
-                val shape = when (val rs = com.cyclecare.app.rust.CycleCareCoreBridge.sessionRefreshShape(
-                    response.code, response.body, owner) ?: refreshShapeKotlin(response.code, response.body, owner)) {
+                // COMPILE RESTORE (2026-11-13): the bridge's flat reply type
+                // adapts onto this caller's private RefreshShape. The pre-loss
+                // wiring compared INCOMPATIBLE types: the Elvis widened to
+                // Any (non-exhaustive when) and the native result could never
+                // match. Mapping mirrors the twin: REAUTH ->
+                // ReauthenticationRequired, UNAVAILABLE ->
+                // TemporarilyUnavailable; a SHAPE with null token declines
+                // to the twin. Behavior unchanged.
+                val adaptedShape: RefreshShape = when (val native = com.cyclecare.app.rust.CycleCareCoreBridge.sessionRefreshShape(
+                    response.code, response.body, owner)) {
+                    null -> refreshShapeKotlin(response.code, response.body, owner)
+                    else -> when (native.kind) {
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshShape.Kind.REAUTH ->
+                            RefreshShape.Terminal(AccessTokenResolution.ReauthenticationRequired)
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshShape.Kind.UNAVAILABLE ->
+                            RefreshShape.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshShape.Kind.SHAPE -> {
+                            val renewed = native.accessToken
+                            if (renewed == null) refreshShapeKotlin(response.code, response.body, owner)
+                            else RefreshShape.Shape(renewed, native.rotatedRefresh, native.expiresAt, native.expiresIn, native.userEmail, native.anonymous)
+                        }
+                    }
+                }
+                val shape = when (val rs = adaptedShape) {
                     is RefreshShape.Terminal -> return@withLock rs.resolution
                     is RefreshShape.Shape -> rs
                 }

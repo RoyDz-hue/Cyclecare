@@ -105,7 +105,10 @@ data class OnboardingUiState(
             if (selectedExactDate != null) {
                 return selectedExactDate
             }
-            internal val daysAgo = when (selectedApproximateChip) {
+            // COMPILE RESTORE (2026-11-13): `internal` on a local val is
+            // illegal Kotlin (replay artifact from the Nov 6-7 lineage,
+            // also present on master). Modifier dropped; behavior unchanged.
+            val daysAgo = when (selectedApproximateChip) {
                 "Today" -> 0
                 "A few days ago" -> 4
                 "About a week ago" -> 7

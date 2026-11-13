@@ -109,7 +109,7 @@ internal class RustPortInstaller(
                         // rejected (mutateResult) instead of mutating identity
                         // inline during the routing swap.
                         admission.callbacks {
-                            repository.installRustPort(RustRepositoryPort(host, token))
+                            repository.replaceRustPort(RustRepositoryPort(host, token)) // COMPILE RESTORE (2026-11-13): the replay referenced a never-existent installRustPort; the repository's actual publish method is replaceRustPort (CycleRepository.kt:487)
                         }
                         installed = true
                     } catch (t: Throwable) {

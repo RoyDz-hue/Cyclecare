@@ -109,6 +109,7 @@ import com.cyclecare.app.ui.theme.rememberSystemMotionEnabled
 import com.cyclecare.app.ui.viewmodel.AppNavTab
 import com.cyclecare.app.ui.viewmodel.CycleCareViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
     private val pendingAuthLink = MutableStateFlow<Uri?>(null)
@@ -172,7 +173,7 @@ class MainActivity : FragmentActivity() {
                     is com.cyclecare.app.data.repository.RustPortInstallResolver.Result.Resolved -> {
                         val host = com.cyclecare.app.data.local.rust.RustBoundRoomHost(authPreferences)
                         when (val outcome = com.cyclecare.app.data.repository.RustPortInstaller(
-                            repository, host, resolution
+                            repository, host, resolution.resolution // COMPILE RESTORE (2026-11-13): Resolved carries the binding Resolution
                         ).install().also{receipt->
                             com.cyclecare.app.security.StartupRouteDiagnostics.record(com.cyclecare.app.security.StartupRouteDiagnostics.Event.INSTALL_OUTCOME,repository,
                                 attempt.toLong(),when(receipt){
