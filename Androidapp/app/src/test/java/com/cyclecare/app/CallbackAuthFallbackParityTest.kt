@@ -222,6 +222,29 @@ class CallbackAuthFallbackParityTest {
     }
 
     @Test
+    fun parseParamsDecoderShapes() {
+        // invalid verdict -> INVALID (a real parse outcome, not drift).
+        val invalid = CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "invalid")))
+        assertEquals(CycleCareCoreBridge.CbParseParamsKind.INVALID, invalid!!.kind)
+        // Empty pairs array is a VALID empty map (the source returns an
+        // empty map, not null, when query and fragment are both absent).
+        val empty = CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params")
+                .put("pairs", org.json.JSONArray())))
+        assertEquals(CycleCareCoreBridge.CbParseParamsKind.PARAMS, empty!!.kind)
+        assertTrue(empty!!.pairs.isEmpty())
+        // Ordered pairs survive, including an empty VALUE (a key with no
+        // '=' decodes to "").
+        val d = CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params")
+                .put("pairs", org.json.JSONArray()
+                    .put(org.json.JSONArray().put("code").put("C"))
+                    .put(org.json.JSONArray().put("state").put("")))))
+        assertEquals(listOf("code" to "C", "state" to ""), d!!.pairs)
+    }
+
+    @Test
     fun decodersRejectMalformedReplies() {
         // Missing/unknown verdict -> null (the caller keeps its Kotlin twin).
         assertNull(CycleCareCoreBridge.decodeCbLinkParamsDecision(JSONObject().put("ok", JSONObject().put("version", 1))))
@@ -232,6 +255,19 @@ class CallbackAuthFallbackParityTest {
         assertNull(CycleCareCoreBridge.decodeCbLinkParamsDecision(JSONObject().put("ok", JSONObject()
             .put("version", 1).put("verdict", "tokens")
             .put("accessToken", "").put("refreshToken", "r"))))
+        // Parse-params strictness: missing pairs array, non-array pair,
+        // wrong pair arity and non-string members are all drift -> null.
+        assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params"))))
+        assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params")
+                .put("pairs", org.json.JSONArray().put("notanarray")))))
+        assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params")
+                .put("pairs", org.json.JSONArray().put(org.json.JSONArray().put("code"))))))
+        assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(
+            JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "params")
+                .put("pairs", org.json.JSONArray().put(org.json.JSONArray().put("code").put(7))))))
     }
 }
 

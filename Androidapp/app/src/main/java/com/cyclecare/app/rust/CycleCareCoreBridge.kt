@@ -1,5 +1,6 @@
 package com.cyclecare.app.rust
 
+import android.net.Uri
 import android.util.Log
 import com.cyclecare.app.ui.screens.isCompletePin as kotlinIsCompletePin
 import org.json.JSONArray
@@ -1290,14 +1291,57 @@ object CycleCareCoreBridge {
      * completeAuthCode. TOKENS: proceed to the /user request with the raw
      * link fields (expiry values stay STRINGS - the commit converts with
      * toLongOrNull at its own clock point). */
+    enum class CbParseParamsKind { INVALID, PARAMS }
+    data class CbParseParamsDecision(val kind: CbParseParamsKind, val pairs: List<Pair<String, String>> = emptyList())
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of
+     * parseAuthCallbackParameters' NON-CLOCK gate/absorb/conflict logic
+     * (auth_uri::interpret_cb_parse_params). android.net.Uri's own PARSING
+     * stays here: the live Uri's accessor values cross in; userInfo crosses
+     * as a presence bool only (the gate checks presence, never the value).
+     * Uri.decode (AOSP UriCodec) runs natively, corpus-locked. */
+    fun authCbParseParams(uri: Uri): CbParseParamsDecision? {
+        val reply = call("auth_cb_parse_params_v1", JSONObject()
+            .put("scheme", uri.scheme ?: JSONObject.NULL)
+            .put("host", uri.host ?: JSONObject.NULL)
+            .put("path", uri.path ?: "")
+            .put("userInfoPresent", uri.userInfo != null)
+            .put("port", uri.port)
+            .put("encodedQuery", uri.encodedQuery ?: JSONObject.NULL)
+            .put("encodedFragment", uri.encodedFragment ?: JSONObject.NULL)) ?: return null
+        return decodeCbParseParamsDecision(reply)
+    }
+
+    internal fun decodeCbParseParamsDecision(reply: JSONObject): CbParseParamsDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "invalid" -> CbParseParamsDecision(CbParseParamsKind.INVALID)
+            "params" -> {
+                val arr = ok.opt("pairs") as? JSONArray ?: return null
+                val out = ArrayList<Pair<String, String>>(arr.length())
+                for (i in 0 until arr.length()) {
+                    val pair = arr.opt(i) as? JSONArray ?: return null
+                    if (pair.length() != 2) return null
+                    val k = pair.opt(0) as? String ?: return null
+                    val v = pair.opt(1) as? String ?: return null
+                    out.add(k to v)
+                }
+                CbParseParamsDecision(CbParseParamsKind.PARAMS, out)
+            }
+            else -> null
+        }
+    }
+
     enum class CbLinkParamsKind { ERROR, CODE, TOKENS }
     data class CbLinkTokens(val accessToken: String, val refreshToken: String, val expiresAt: String?, val expiresIn: String?, val linkType: String?)
     data class CbLinkParamsDecision(val kind: CbLinkParamsKind, val message: String?, val code: String?, val tokens: CbLinkTokens?)
 
     /** NEW IMPLEMENTATION (2026-11-13): native wiring of completeEmailLink's
      * NON-CLOCK callback-parameter interpretation (auth_link::
-     * interpret_cb_link_params). parseAuthCallbackParameters (android.net.Uri
-     * semantics) stays Kotlin; `params` is its output map. */
+     * interpret_cb_link_params). `params` is the output map of
+     * parseAuthCallbackParameters, whose gate/absorb logic is itself wired
+     * native-first via [authCbParseParams] (android.net.Uri PARSING stays
+     * Kotlin in both). */
     fun authCbLinkParams(params: Map<String, String>): CbLinkParamsDecision? {
         val reply = call("auth_cb_link_params_v1", JSONObject()
             .put("params", JSONObject(params))) ?: return null

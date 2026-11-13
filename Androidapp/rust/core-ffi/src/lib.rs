@@ -1004,12 +1004,47 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
             }
         })(),
+        "auth_cb_parse_params_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): parseAuthCallbackParameters'
+            // NON-CLOCK gate + absorb + conflict logic (auth_uri::
+            // interpret_cb_parse_params). android.net.Uri PARSING stays at
+            // the Kotlin call site; the live Uri's accessor values cross
+            // in. userInfo crosses as a PRESENCE BOOL only (the gate checks
+            // presence, never the value); tokens inside the query/fragment
+            // cross IN (same-device JNI copies, standing accounting).
+            macro_rules! opt_s {
+                ($key:literal) => {
+                    match v.get($key) {
+                        None => None,
+                        Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err(concat!($key, " not a string or null")) },
+                    }
+                };
+            }
+            let scheme = opt_s!("scheme");
+            let host = opt_s!("host");
+            let path = match v.get("path").and_then(|x| x.as_str()) { Some(s) => s, None => return err("path missing or not a string") };
+            let user_info_present = match v.get("userInfoPresent").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("userInfoPresent missing or not a bool") };
+            let port = match v.get("port").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("port missing or not an integer") };
+            let encoded_query = opt_s!("encodedQuery");
+            let encoded_fragment = opt_s!("encodedFragment");
+            match corelib::auth_uri::interpret_cb_parse_params(
+                scheme.as_deref(), host.as_deref(), path, user_info_present, port,
+                encoded_query.as_deref(), encoded_fragment.as_deref()) {
+                corelib::auth_uri::CbParseParamsDecision::Invalid =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"invalid"}}).to_string(),
+                corelib::auth_uri::CbParseParamsDecision::Params(pairs) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"params",
+                        "pairs":pairs.iter().map(|(k, val)| serde_json::json!([k, val])).collect::<Vec<_>>()}}).to_string(),
+            }
+        })(),
         "auth_cb_link_params_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK pre-network
             // callback-parameter interpretation (auth_link::
-            // interpret_cb_link_params). parseAuthCallbackParameters
-            // (android.net.Uri semantics) stays Kotlin; `params` is its
-            // key/value output. Tokens from the link cross IN and back OUT
+            // interpret_cb_link_params). `params` is the key/value output
+            // of parseAuthCallbackParameters, whose gate/absorb logic is
+            // itself wired native-first via auth_cb_parse_params_v1
+            // (android.net.Uri PARSING stays Kotlin in both). Tokens from the link cross IN and back OUT
             // in the tokens verdict - same-device JNI copies, no
             // logging/persistence/egress, no zeroization (standing
             // accounting, as for the other auth ops).

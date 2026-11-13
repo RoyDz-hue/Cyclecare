@@ -430,10 +430,10 @@ class SupabaseAuthService(
             (authPreferences.rustOperationSnapshot()!=callbackContext||!callbackCurrent()))
             return@withContext AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
         if (!isSecureStorageAvailable) return@withContext secureStorageUnavailable()
-        if (parseAuthCallbackParameters(uri) == null) {
+        if (callbackParameters(uri) == null) {
             return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
         }
-        val parameters = parseAuthCallbackParameters(uri) ?: return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
+        val parameters = callbackParameters(uri) ?: return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
 
         // Native-first NON-CLOCK parameter interpretation (NEW
         // IMPLEMENTATION wiring, 2026-11-13); the completeAuthCode delegate
@@ -688,6 +688,23 @@ class SupabaseAuthService(
 
     private fun secureStorageUnavailable(): AuthResult.Error =
         AuthResult.Error("Secure credential storage is unavailable on this device. Sign-in, cloud sync, and app lock are disabled until device security is restored.")
+
+    /** Native-first parseAuthCallbackParameters (NEW IMPLEMENTATION wiring,
+     * 2026-11-13): the gate/absorb/conflict logic runs in the native core
+     * (auth_uri::interpret_cb_parse_params) on the live Uri's accessor
+     * values; android.net.Uri's own parsing stays here, and the verbatim
+     * Kotlin twin below is the fallback when the native core is unavailable.
+     * The source's double call in completeEmailLink is preserved (both
+     * calls route through here). */
+    private fun callbackParameters(uri: Uri): Map<String, String>? {
+        val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authCbParseParams(uri)
+            ?: return parseAuthCallbackParameters(uri)
+        return when (decision.kind) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbParseParamsKind.INVALID -> null
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbParseParamsKind.PARAMS ->
+                linkedMapOf(*decision.pairs.toTypedArray())
+        }
+    }
 
     internal fun parseAuthCallbackParameters(uri: Uri): Map<String, String>? {
         if (uri.scheme != "cyclecare" || uri.host != "auth" || uri.path != "/callback" ||

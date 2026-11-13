@@ -255,6 +255,51 @@ pub fn parse_auth_callback_url(url: &str) -> Option<Vec<(String, String)>> {
     parse_auth_callback_parameters(&parse_uri(url))
 }
 
+/// Wiring seam verdict for parseAuthCallbackParameters (NEW IMPLEMENTATION,
+/// 2026-11-13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CbParseParamsDecision {
+    /// parseAuthCallbackParameters returned null (invalid link).
+    Invalid,
+    /// The ordered parameter map. Possibly EMPTY: the source returns an
+    /// empty map (NOT null) when query and fragment are both absent.
+    Params(Vec<(String, String)>),
+}
+
+/// NEW IMPLEMENTATION wiring seam (2026-11-13): parseAuthCallbackParameters'
+/// NON-CLOCK logic (structural gate + absorb + conflict check) on the live
+/// Uri's ACCESSOR VALUES. android.net.Uri's own parsing stays at the Kotlin
+/// call site (the platform parser is the original execution point); only the
+/// accessors' outputs cross in. userInfo crosses as a PRESENCE BOOL only -
+/// the gate checks presence and never the value (same accounting as the
+/// verifier bool in interpret_cb_code_pre). Uri.decode (AOSP UriCodec,
+/// corpus-locked) runs here inside parse_auth_callback_parameters, which
+/// remains the ONE implementation of the parameter logic (the legacy
+/// full-port tree's parse_auth_callback_url composes on it too).
+pub fn interpret_cb_parse_params(
+    scheme: Option<&str>,
+    host: Option<&str>,
+    path: &str,
+    user_info_present: bool,
+    port: i64,
+    encoded_query: Option<&str>,
+    encoded_fragment: Option<&str>,
+) -> CbParseParamsDecision {
+    let uri = ParsedUri {
+        scheme: scheme.map(|s| s.to_string()),
+        user_info: if user_info_present { Some(String::new()) } else { None },
+        host: host.map(|s| s.to_string()),
+        port,
+        path: path.to_string(),
+        encoded_query: encoded_query.map(|s| s.to_string()),
+        encoded_fragment: encoded_fragment.map(|s| s.to_string()),
+    };
+    match parse_auth_callback_parameters(&uri) {
+        None => CbParseParamsDecision::Invalid,
+        Some(pairs) => CbParseParamsDecision::Params(pairs),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +355,83 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 22);
+    }
+
+    fn fmt_seam(d: &CbParseParamsDecision) -> String {
+        match d {
+            CbParseParamsDecision::Invalid => "null".to_string(),
+            CbParseParamsDecision::Params(v) => {
+                v.iter().map(|(k, val)| format!("{k}:{val}")).collect::<Vec<_>>().join("|")
+            }
+        }
+    }
+
+    /// The 22-row Kotlin corpus driven through the SEAM boundary: the live
+    /// Uri's accessor values (recovered here by the corpus-locked parse_uri)
+    /// cross in; the gate/absorb/conflict logic runs behind the seam.
+    #[test]
+    fn seam_matches_kotlin_corpus() {
+        let mut checked = 0;
+        for line in fixture("results_authcb.tsv").lines() {
+            let cols: Vec<&str> = line.split('\t').collect();
+            if cols.get(1) != Some(&"parse") {
+                continue;
+            }
+            let url = cols.iter().find_map(|c| c.strip_prefix("url=")).unwrap();
+            let expect = cols.iter().find_map(|c| c.strip_prefix("result=")).unwrap();
+            let u = parse_uri(url);
+            let got = fmt_seam(&interpret_cb_parse_params(
+                u.scheme.as_deref(),
+                u.host.as_deref(),
+                &u.path,
+                u.user_info.is_some(),
+                u.port,
+                u.encoded_query.as_deref(),
+                u.encoded_fragment.as_deref(),
+            ));
+            assert_eq!(&got, expect, "seam mismatch for {url}");
+            checked += 1;
+        }
+        assert_eq!(checked, 22);
+    }
+
+    #[test]
+    fn seam_gate_and_edge_pins() {
+        let base = |scheme: Option<&str>, host: Option<&str>, path: &str, ui: bool, port: i64| {
+            interpret_cb_parse_params(scheme, host, path, ui, port, Some("access_token=A"), None)
+        };
+        // Structural gate: every accessor must match exactly.
+        assert!(matches!(base(Some("cyclecare"), Some("auth"), "/callback", false, -1), CbParseParamsDecision::Params(_)));
+        assert_eq!(base(Some("CYCLECARE"), Some("auth"), "/callback", false, -1), CbParseParamsDecision::Invalid);
+        assert_eq!(base(Some("cyclecare"), Some("AUTH"), "/callback", false, -1), CbParseParamsDecision::Invalid);
+        assert_eq!(base(None, Some("auth"), "/callback", false, -1), CbParseParamsDecision::Invalid);
+        assert_eq!(base(Some("cyclecare"), None, "/callback", false, -1), CbParseParamsDecision::Invalid);
+        assert_eq!(base(Some("cyclecare"), Some("auth"), "/callback/", false, -1), CbParseParamsDecision::Invalid);
+        // userInfo PRESENCE rejects (the value never crosses).
+        assert_eq!(base(Some("cyclecare"), Some("auth"), "/callback", true, -1), CbParseParamsDecision::Invalid);
+        // Any port other than -1 rejects (the empty-port quirk parses to -1
+        // on the Kotlin side, so it never arrives here as a non-(-1)).
+        assert_eq!(base(Some("cyclecare"), Some("auth"), "/callback", false, 8080), CbParseParamsDecision::Invalid);
+        // No query and no fragment -> EMPTY map, NOT invalid (source shape).
+        assert_eq!(
+            interpret_cb_parse_params(Some("cyclecare"), Some("auth"), "/callback", false, -1, None, None),
+            CbParseParamsDecision::Params(vec![])
+        );
+        // Uri.decode semantics behind the seam: '+' preserved, %41 -> A.
+        assert_eq!(
+            interpret_cb_parse_params(Some("cyclecare"), Some("auth"), "/callback", false, -1, Some("error=a+b%41"), None),
+            CbParseParamsDecision::Params(vec![("error".to_string(), "a+bA".to_string())])
+        );
+        // Duplicate key across query and fragment -> invalid.
+        assert_eq!(
+            interpret_cb_parse_params(Some("cyclecare"), Some("auth"), "/callback", false, -1, Some("code=C"), Some("code=D")),
+            CbParseParamsDecision::Invalid
+        );
+        // code + access_token conflict -> invalid.
+        assert_eq!(
+            interpret_cb_parse_params(Some("cyclecare"), Some("auth"), "/callback", false, -1, Some("code=C&access_token=A"), None),
+            CbParseParamsDecision::Invalid
+        );
     }
 
     /// Structural corpus (14 rows): scheme/host/port/path + final parse verdict.
