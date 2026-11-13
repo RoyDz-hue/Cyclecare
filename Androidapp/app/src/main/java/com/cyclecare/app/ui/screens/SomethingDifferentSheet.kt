@@ -286,10 +286,16 @@ fun SomethingDifferentSheet(
 
             // Interpretation Card (Instant Preview)
             // NEW IMPLEMENTATION (recovery rebuild): native-first card gate
-            // (op card_visible); the original expression is the twin. The
-            // val interpretation is stable; both sides read it in the
-            // original order (null check, then items).
-            if (com.cyclecare.app.rust.CycleCareCoreBridge.somethingSheetCardVisible(interpretation != null, interpretation?.items?.size ?: 0) ?: kotlinSheetCardVisible(interpretation != null, interpretation?.items?.size ?: 0)) {
+            // (op card_visible). The EXPLICIT NULL GUARD is preserved
+            // through a scoped non-null local so the Kotlin smart cast
+            // keeps every downstream dereference valid (a Boolean bridge
+            // result cannot smart-cast). interpretation is a stable local
+            // val, captured once; the gate's null/items semantics equal
+            // the original expression.
+            val cardInterpretation = interpretation
+            if (cardInterpretation != null
+                && (com.cyclecare.app.rust.CycleCareCoreBridge.somethingSheetCardVisible(true, cardInterpretation.items.size)
+                    ?: kotlinSheetCardVisible(true, cardInterpretation.items.size))) {
                 Spacer(modifier = Modifier.height(20.dp))
                 Card(
                     modifier = Modifier
@@ -319,7 +325,7 @@ fun SomethingDifferentSheet(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        interpretation.items.forEach { item ->
+                        cardInterpretation.items.forEach { item ->
                             Row(
                                 modifier = Modifier.padding(vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -334,7 +340,7 @@ fun SomethingDifferentSheet(
                             }
                         }
 
-                        if (interpretation.followUpQuestion != null) {
+                        if (cardInterpretation.followUpQuestion != null) {
                             Spacer(modifier = Modifier.height(10.dp))
                             Box(
                                 modifier = Modifier
@@ -344,7 +350,7 @@ fun SomethingDifferentSheet(
                                     .padding(10.dp)
                             ) {
                                 Text(
-                                    text = com.cyclecare.app.rust.CycleCareCoreBridge.somethingSheetFollowUp(interpretation.followUpQuestion) ?: kotlinSheetFollowUp(interpretation.followUpQuestion), // NEW IMPLEMENTATION (recovery rebuild): native-first (op follow_up); twin on null. Smart cast: interpretation is a local val, followUpQuestion a data-class val.
+                                    text = com.cyclecare.app.rust.CycleCareCoreBridge.somethingSheetFollowUp(cardInterpretation.followUpQuestion) ?: kotlinSheetFollowUp(cardInterpretation.followUpQuestion), // NEW IMPLEMENTATION (recovery rebuild): native-first (op follow_up); twin on null. cardInterpretation is smart-cast non-null by the explicit guard above.
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -358,7 +364,7 @@ fun SomethingDifferentSheet(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Button(
-                                onClick = { viewModel.confirmParsedLog(interpretation) },
+                                onClick = { viewModel.confirmParsedLog(cardInterpretation) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(48.dp)
