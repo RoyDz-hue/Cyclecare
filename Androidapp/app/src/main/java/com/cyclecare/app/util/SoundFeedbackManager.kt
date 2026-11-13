@@ -26,9 +26,32 @@ object SoundFeedbackManager {
 
     /**
      * Plays a warm crystal fifth chord when the user taps or orbits a 3D artifact.
+     *
+     * NEW IMPLEMENTATION (2026-11-13): native-first via sound_feedback_v1
+     * (op=interaction). The decision core - the isSoundEnabled gate and the
+     * parameter table - comes from the sound_feedback parity port; the PCM
+     * synthesis, coroutine launch, and AudioTrack plumbing stay here. A
+     * null reply (native absent, {"error"}, strict-decode decline, or the
+     * disabled/no-plan verdict) runs the verbatim pre-wiring body, kept as
+     * the private twin [kotlinPlayArtifactInteraction]. isSoundEnabled is
+     * read once here (the source's original read point) and the capture is
+     * handed to both routes.
      */
     fun playArtifactInteraction(baseFreqHz: Float = 528f) {
-        if (!isSoundEnabled) return
+        val enabled = isSoundEnabled
+        if (baseFreqHz.isFinite()) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.soundFeedbackPlan("interaction", enabled, baseFreqHz)?.let { plan ->
+                scope.launch { playChord(plan.frequencies, plan.amplitudes, plan.durationMs) }
+                return
+            }
+        }
+        kotlinPlayArtifactInteraction(enabled, baseFreqHz)
+    }
+
+    /** Verbatim pre-wiring body of [playArtifactInteraction]; the gate
+     * reads the caller's single capture instead of re-reading the volatile. */
+    private fun kotlinPlayArtifactInteraction(enabled: Boolean, baseFreqHz: Float) {
+        if (!enabled) return
         scope.launch {
             playChord(
                 frequencies = floatArrayOf(baseFreqHz, baseFreqHz * 1.498f, baseFreqHz * 2.0f),
@@ -40,9 +63,24 @@ object SoundFeedbackManager {
 
     /**
      * Plays an ascending 4-note crystal arpeggio when an artifact is unlocked or gifted.
+     *
+     * NEW IMPLEMENTATION (2026-11-13): native-first via sound_feedback_v1
+     * (op=acquired); see [playArtifactInteraction] for the full boundary.
      */
     fun playArtifactAcquired(baseFreqHz: Float = 528f) {
-        if (!isSoundEnabled) return
+        val enabled = isSoundEnabled
+        if (baseFreqHz.isFinite()) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.soundFeedbackPlan("acquired", enabled, baseFreqHz)?.let { plan ->
+                scope.launch { playArpeggio(plan.frequencies, plan.noteSpacingMs, plan.durationMs) }
+                return
+            }
+        }
+        kotlinPlayArtifactAcquired(enabled, baseFreqHz)
+    }
+
+    /** Verbatim pre-wiring body of [playArtifactAcquired]. */
+    private fun kotlinPlayArtifactAcquired(enabled: Boolean, baseFreqHz: Float) {
+        if (!enabled) return
         scope.launch {
             playArpeggio(
                 notesHz = floatArrayOf(
@@ -59,9 +97,22 @@ object SoundFeedbackManager {
 
     /**
      * Plays a soft 2-note appreciative chime on daily check-in or coin claim.
+     *
+     * NEW IMPLEMENTATION (2026-11-13): native-first via sound_feedback_v1
+     * (op=chime); see [playArtifactInteraction] for the full boundary.
      */
     fun playGentleRewardChime() {
-        if (!isSoundEnabled) return
+        val enabled = isSoundEnabled
+        com.cyclecare.app.rust.CycleCareCoreBridge.soundFeedbackPlan("chime", enabled, null)?.let { plan ->
+            scope.launch { playArpeggio(plan.frequencies, plan.noteSpacingMs, plan.durationMs) }
+            return
+        }
+        kotlinPlayGentleRewardChime(enabled)
+    }
+
+    /** Verbatim pre-wiring body of [playGentleRewardChime]. */
+    private fun kotlinPlayGentleRewardChime(enabled: Boolean) {
+        if (!enabled) return
         scope.launch {
             playArpeggio(
                 notesHz = floatArrayOf(528f, 660f, 792f),

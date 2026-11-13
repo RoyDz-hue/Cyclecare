@@ -1276,6 +1276,69 @@ object CycleCareCoreBridge {
         return ok.opt("match") as? String
     }
 
+    /** A native sound plan: for a chord, [frequencies]+[amplitudes] and
+     * [durationMs]; for an arpeggio, [frequencies] (the notes),
+     * [noteSpacingMs] and [durationMs] (the total). x=MARGIN-style unused
+     * fields are empty/zero per kind. */
+    data class SoundPlayPlan(
+        val isChord: Boolean,
+        val frequencies: FloatArray,
+        val amplitudes: FloatArray,
+        val noteSpacingMs: Int,
+        val durationMs: Int,
+    )
+
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
+     * core (sound_feedback_v1). Pure decision: the caller's single
+     * isSoundEnabled capture and (for interaction/acquired) the base
+     * frequency cross JNI; only the plan table returns. A null reply
+     * (native absent, {"error"}, a strict-decode decline, or the
+     * disabled/no-plan verdict) means the caller runs its verbatim Kotlin
+     * twin. No PCM, no coroutine, no AudioTrack crosses.
+     */
+    fun soundFeedbackPlan(op: String, enabled: Boolean, baseFreqHz: Float?): SoundPlayPlan? {
+        val payload = JSONObject()
+            .put("op", op)
+            .put("enabled", enabled)
+        if (baseFreqHz != null) payload.put("base_freq_hz", baseFreqHz.toDouble())
+        val reply = call("sound_feedback_v1", payload) ?: return null
+        return decodeSoundFeedbackPlan(reply)
+    }
+
+    internal fun decodeSoundFeedbackPlan(reply: JSONObject): SoundPlayPlan? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // The no-plan (disabled) verdict declines: the twin's identical
+        // gate yields the same early return.
+        val plan = ok.optJSONObject("plan") ?: return null
+        fun floats(key: String): FloatArray? {
+            val arr = plan.optJSONArray(key) ?: return null
+            val out = FloatArray(arr.length())
+            for (i in 0 until arr.length()) {
+                val n = arr.opt(i) as? Number ?: return null
+                out[i] = n.toFloat()
+            }
+            return out
+        }
+        return when (plan.opt("kind")) {
+            "chord" -> {
+                val frequencies = floats("frequencies") ?: return null
+                val amplitudes = floats("amplitudes") ?: return null
+                val durationMs = plan.opt("duration_ms") as? Int ?: return null
+                SoundPlayPlan(isChord = true, frequencies = frequencies, amplitudes = amplitudes, noteSpacingMs = 0, durationMs = durationMs)
+            }
+            "arpeggio" -> {
+                val notes = floats("notes_hz") ?: return null
+                val spacingMs = plan.opt("note_spacing_ms") as? Int ?: return null
+                val totalMs = plan.opt("total_duration_ms") as? Int ?: return null
+                SoundPlayPlan(isChord = false, frequencies = notes, amplitudes = FloatArray(0), noteSpacingMs = spacingMs, durationMs = totalMs)
+            }
+            else -> null
+        }
+    }
+
     const val PDF_PAINT_TITLE = 0
     const val PDF_PAINT_SECTION = 1
     const val PDF_PAINT_BODY = 2

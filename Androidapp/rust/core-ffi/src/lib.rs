@@ -1318,6 +1318,42 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let m = corelib::economy_catalog::find_item(clean).map(|i| i.id);
             serde_json::json!({"ok":{"version":1,"match":m}}).to_string()
         })(),
+        "sound_feedback_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port sound_feedback (util/SoundFeedbackManager.kt
+            // decision core, main@31b88f5 lineage; sound_feedback_corpus.rs
+            // pins the gate, tables, and num_samples). Pure decision: no
+            // I/O, no clock; isSoundEnabled arrives caller-captured (the
+            // volatile read stays in Kotlin at its original point). The PCM
+            // synthesis, coroutine launch, and AudioTrack plumbing stay in
+            // Kotlin. The no-plan (disabled) verdict is a decline to the
+            // verbatim twin, whose identical gate yields the same early
+            // return. base_freq_hz crosses as its exact Double widening;
+            // non-finite plan floats serialize as null and the strict
+            // decode declines them, so they can never be replayed.
+            use corelib::sound_feedback as sf;
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let enabled = match v.get("enabled").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("enabled missing or not a bool") };
+            let base = || -> Result<f32, String> {
+                let d = v.get("base_freq_hz").and_then(|x| x.as_f64()).ok_or_else(|| "base_freq_hz missing or not a number".to_string())?;
+                let f = d as f32; // exact: the caller widened a Float
+                if !f.is_finite() { return Err("base_freq_hz non-finite".to_string()); }
+                Ok(f)
+            };
+            let plan = match op {
+                "interaction" => match base() { Ok(b) => sf::play_artifact_interaction(enabled, b), Err(e) => return err(&e) },
+                "acquired" => match base() { Ok(b) => sf::play_artifact_acquired(enabled, b), Err(e) => return err(&e) },
+                "chime" => sf::play_gentle_reward_chime(enabled),
+                _ => return err("unknown op"),
+            };
+            match plan {
+                None => serde_json::json!({"ok":{"version":1,"plan":null}}).to_string(),
+                Some(sf::PlayPlan::Chord { frequencies, amplitudes, duration_ms }) =>
+                    serde_json::json!({"ok":{"version":1,"plan":{"kind":"chord","frequencies":frequencies,"amplitudes":amplitudes,"duration_ms":duration_ms}}}).to_string(),
+                Some(sf::PlayPlan::Arpeggio { notes_hz, note_spacing_ms, total_duration_ms }) =>
+                    serde_json::json!({"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":notes_hz,"note_spacing_ms":note_spacing_ms,"total_duration_ms":total_duration_ms}}}).to_string(),
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
