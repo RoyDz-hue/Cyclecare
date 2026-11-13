@@ -900,6 +900,35 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let now_secs = match v.get("nowSecs").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("nowSecs missing or not an integer") };
             serde_json::json!({"ok":{"version":1,"valid":corelib::session_token::valid_token_for_owner(token, owner, now_secs)}}).to_string()
         })(),
+        "auth_sign_in_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the NON-CLOCK
+            // sign-in response interpretation (auth_link::
+            // interpret_sign_in_response, shared with the auth_flows port -
+            // ONE implementation). Status/error mapping (auth_errors
+            // corpus), parse, confirmation check, user read, RAW
+            // session-field extraction. clearSession/session WRITES and the
+            // expiry clock read stay at the Kotlin caller's original commit
+            // points. The PASSWORD never crosses: it lives only in the
+            // request body, which stays Kotlin-built. The response body
+            // (which carries tokens on success) crosses IN; session fields
+            // cross OUT - same no-logging/no-persistence/no-egress
+            // accounting as the session_token ops.
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let email = match v.get("normalizedEmail").and_then(|x| x.as_str()) { Some(s) => s, None => return err("normalizedEmail missing or not a string") };
+            match corelib::auth_link::interpret_sign_in_response(successful, body, email) {
+                corelib::auth_link::SignInInterpretation::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::SignInInterpretation::VerificationRequired(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"verify","message":m}}).to_string(),
+                corelib::auth_link::SignInInterpretation::Success { user, message, session } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","message":message,
+                        "user":{"id":user.id,"email":user.email,"emailConfirmedAt":user.email_confirmed_at,"anonymous":user.is_anonymous},
+                        "session":{"mode":session.mode,"userId":session.user_id,"userEmail":session.user_email,
+                            "accessToken":session.access_token,"refreshToken":session.refresh_token,
+                            "expiresAt":session.expires_at,"expiresIn":session.expires_in}}}).to_string(),
+            }
+        })(),
         "session_refresh_shape_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13, reviewer-corrected): JNI
             // wiring of the NON-CLOCK shape segment of resolveAccessToken's

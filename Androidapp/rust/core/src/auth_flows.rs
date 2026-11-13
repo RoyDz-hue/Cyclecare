@@ -257,23 +257,23 @@ pub fn sign_in(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(MSG_SIGNIN_CONNECT.to_string()),
     };
-    if !response.successful {
-        return AuthOutcome::Error(for_response(&response.body, AuthOperation::SignIn));
-    }
-    let json = match JsonParser::new(&response.body).parse() {
-        Ok(v) => v,
-        Err(_) => return AuthOutcome::Error(MSG_SIGNIN_CONNECT.to_string()),
-    };
-    let empty = JsonValue::Object(vec![]);
-    let user = opt_object_of(&json, "user").unwrap_or(&empty);
-    if !crate::auth_link::email_is_confirmed(user) {
-        prefs.clear_session();
-        return AuthOutcome::Error(MSG_SIGNIN_UNCONFIRMED.to_string());
-    }
-    save_session(prefs, &json, "EMAIL", seams.now_seconds);
-    AuthOutcome::Success {
-        user: read_user(user, Some(normalized_email.as_str())),
-        message: "Successfully signed in to CycleCare.".to_string(),
+    // The interpretation is the SHARED wiring seam (auth_link::
+    // interpret_sign_in_response, NEW IMPLEMENTATION 2026-11-13): the JNI
+    // wiring and this port run ONE implementation. DEVIATION from the
+    // previous port-internal code on an edge the f-rows do NOT lock: a
+    // 2xx body that parses as a NON-OBJECT now yields the connect
+    // catch-all message (what the Kotlin source's JSONObject(body) throw
+    // produces), not a confirmation failure.
+    match crate::auth_link::interpret_sign_in_response(response.successful, &response.body, &normalized_email) {
+        crate::auth_link::SignInInterpretation::Error(m) => AuthOutcome::Error(m),
+        crate::auth_link::SignInInterpretation::VerificationRequired(m) => {
+            prefs.clear_session();
+            AuthOutcome::Error(m)
+        }
+        crate::auth_link::SignInInterpretation::Success { user, message, session } => {
+            crate::auth_link::apply_session_fields(prefs, &session, seams.now_seconds);
+            AuthOutcome::Success { user, message }
+        }
     }
 }
 

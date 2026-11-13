@@ -294,6 +294,119 @@ pub fn save_session(prefs: &mut AuthPrefsState, json: &JsonValue, mode: &str, no
     prefs.session_expires_at_seconds = opt_long(json, "expires_at", now_seconds + expires_in);
 }
 
+// ---------- wiring seam: non-clock response interpretation ----------
+
+/// Raw session fields extracted from an auth response (NEW IMPLEMENTATION
+/// 2026-11-13, wiring seam). Write semantics of the source's saveSession:
+/// user_id None = KEEP the current value (`.ifBlank { authPreferences.userId }`);
+/// user_email/access_token/refresh_token None = SET null (`.ifBlank { null }`);
+/// expires_at None = the source's default branch (now + expires_in) fires
+/// AT THE CALLER'S COMMIT POINT - the clock read stays there, never here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionFields {
+    pub mode: String,
+    pub user_id: Option<String>,
+    pub user_email: Option<String>,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<i64>,
+    pub expires_in: i64,
+}
+
+/// org.json optLong where hitting the default branch is the signal:
+/// Number -> longValue (Double truncated toward zero), String ->
+/// Long.parseLong (no trimming, rejects junk), anything else -> None.
+fn opt_long_raw(obj: &JsonValue, key: &str) -> Option<i64> {
+    match obj_get(obj, key) {
+        Some(JsonValue::Int(v)) => Some(*v as i64),
+        Some(JsonValue::Long(v)) => Some(*v),
+        Some(JsonValue::Double(v)) => Some(*v as i64),
+        Some(JsonValue::Str(s)) => s.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+/// The field extraction of the source's saveSession, without the writes.
+/// NOTE the user fallback: saveSession uses `optJSONObject("user") ?: json`
+/// (the WHOLE body when no user object), NOT the empty object the
+/// confirmation check / readUser use.
+pub fn extract_session_fields(json: &JsonValue, mode: &str) -> SessionFields {
+    let user = opt_object(json, "user").unwrap_or(json);
+    SessionFields {
+        mode: mode.to_string(),
+        user_id: if_blank(aosp_opt_string(user, "id", "")),
+        user_email: if_blank(aosp_opt_string(user, "email", "")),
+        access_token: if_blank(aosp_opt_string(json, "access_token", "")),
+        refresh_token: if_blank(aosp_opt_string(json, "refresh_token", "")),
+        expires_at: opt_long_raw(json, "expires_at"),
+        expires_in: opt_long(json, "expires_in", 3600),
+    }
+}
+
+/// saveSession's writes, from extracted fields. PRECONDITION matching the
+/// flows' guard: secure storage is available (set_user_id force-clears on
+/// unavailable storage, which only the flows' early-exit makes equivalent).
+pub fn apply_session_fields(prefs: &mut AuthPrefsState, f: &SessionFields, now_seconds: i64) {
+    prefs.account_mode = Some(f.mode.clone());
+    if let Some(uid) = &f.user_id {
+        prefs.set_user_id(Some(uid.clone()));
+    }
+    prefs.user_email = f.user_email.clone();
+    prefs.access_token = f.access_token.clone();
+    prefs.refresh_token = f.refresh_token.clone();
+    prefs.session_expires_at_seconds = f.expires_at.unwrap_or(now_seconds + f.expires_in);
+}
+
+/// signIn response decision (NEW IMPLEMENTATION 2026-11-13, wiring seam).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignInInterpretation {
+    /// Error body mapping (auth_errors corpus) or the source catch-all's
+    /// connect message on parse failure.
+    Error(String),
+    /// Unconfirmed email: the caller commits clearSession() and shows this.
+    VerificationRequired(String),
+    Success { user: AuthUser, message: String, session: SessionFields },
+}
+
+/// The NON-CLOCK interpretation of SupabaseAuthService.signIn's response:
+/// status/error mapping, JSONObject parse, confirmation check, readUser,
+/// and saveSession's RAW field extraction. clearSession/session WRITES and
+/// the expiry clock read stay at the caller's original commit points.
+/// `JSONObject(body)` throws on non-object text (the source's catch-all);
+/// mirrored by requiring an Object here.
+pub fn interpret_sign_in_response(
+    successful: bool,
+    body: &str,
+    normalized_email: &str,
+) -> SignInInterpretation {
+    if !successful {
+        return SignInInterpretation::Error(crate::auth_errors::for_response(
+            body,
+            crate::auth_errors::AuthOperation::SignIn,
+        ));
+    }
+    let json = match JsonParser::new(body).parse() {
+        Ok(v @ JsonValue::Object(_)) => v,
+        _ => {
+            return SignInInterpretation::Error(
+                "Unable to connect. Please check your network connection.".to_string(),
+            )
+        }
+    };
+    let empty = JsonValue::Object(vec![]);
+    let user = opt_object(&json, "user").unwrap_or(&empty);
+    if !email_is_confirmed(user) {
+        return SignInInterpretation::VerificationRequired(
+            "Please verify your email using the CycleCare link before signing in.".to_string(),
+        );
+    }
+    SignInInterpretation::Success {
+        user: read_user(user, Some(normalized_email)),
+        message: "Successfully signed in to CycleCare.".to_string(),
+        session: extract_session_fields(&json, "EMAIL"),
+    }
+}
+
 // ---------- decision trees ----------
 
 /// Verbatim port of completeEmailLink. `auth_api_url` mirrors the service's
@@ -677,5 +790,87 @@ mod tests {
             assert_eq!(opt(&prefs.google_pkce_verifier), get("verifier"), "{} verifier", row.id);
             assert_eq!(canned.requests.to_string(), get("reqs"), "{} reqs", row.id);
         }
+    }
+    #[test]
+    fn interpret_sign_in_wiring_seam_pins() {
+        // NEW IMPLEMENTATION (2026-11-13) wiring-seam pins. Written for
+        // execution on a build host; NOT executed in the wiring environment.
+        let ok_body = r#"{"access_token":"AT","refresh_token":"RT","expires_in":3600,"user":{"id":"u1","email":"e@x.y","email_confirmed_at":"2026-01-01T00:00:00Z","is_anonymous":false}}"#;
+        match interpret_sign_in_response(true, ok_body, "e@x.y") {
+            SignInInterpretation::Success { user, message, session } => {
+                assert_eq!(user.id, "u1");
+                assert_eq!(user.email.as_deref(), Some("e@x.y"));
+                assert_eq!(message, "Successfully signed in to CycleCare.");
+                assert_eq!(session.mode, "EMAIL");
+                assert_eq!(session.user_id.as_deref(), Some("u1"));
+                assert_eq!(session.access_token.as_deref(), Some("AT"));
+                assert_eq!(session.refresh_token.as_deref(), Some("RT"));
+                assert_eq!(session.expires_at, None); // absent -> caller's clock point computes now+expires_in
+                assert_eq!(session.expires_in, 3600);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+        // Error-body mapping (auth_errors corpus).
+        assert_eq!(
+            interpret_sign_in_response(false, r#"{"error":"invalid_grant","error_description":"Invalid login credentials"}"#, "e@x.y"),
+            SignInInterpretation::Error("That email and password don't match. Check them and try again.".to_string())
+        );
+        // Parse failure AND non-object top level -> the source catch-all's
+        // connect message (JSONObject(body) throws on both).
+        assert_eq!(
+            interpret_sign_in_response(true, "{not json", "e@x.y"),
+            SignInInterpretation::Error("Unable to connect. Please check your network connection.".to_string())
+        );
+        assert_eq!(
+            interpret_sign_in_response(true, "[1,2]", "e@x.y"),
+            SignInInterpretation::Error("Unable to connect. Please check your network connection.".to_string())
+        );
+        // Unconfirmed -> VerificationRequired (caller commits clearSession).
+        match interpret_sign_in_response(true, r#"{"access_token":"AT","user":{"id":"u1","email":"e@x.y"}}"#, "e@x.y") {
+            SignInInterpretation::VerificationRequired(m) => {
+                assert_eq!(m, "Please verify your email using the CycleCare link before signing in.")
+            }
+            other => panic!("expected VerificationRequired, got {other:?}"),
+        }
+        // saveSession's user fallback is the WHOLE body (not the empty
+        // object readUser uses) - but on the sign-in path that fallback is
+        // UNREACHABLE on Success: no "user" key means the confirmation
+        // check sees the empty object and VerificationRequired fires first.
+        // Pinned at both levels: the sign-in outcome is VERIFY...
+        match interpret_sign_in_response(true, r#"{"id":"u9","email":"top@x.y","email_confirmed_at":"x","access_token":"AT"}"#, "fb@x.y") {
+            SignInInterpretation::VerificationRequired(_) => {}
+            other => panic!("expected VerificationRequired (confirmation sees the empty object), got {other:?}"),
+        }
+        // ...and extract_session_fields (shared with saveSession's other
+        // callers) still falls back to the WHOLE body for its raw fields.
+        let f = extract_session_fields(&JsonParser::new(r#"{"id":"u9","email":"top@x.y"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.user_id.as_deref(), Some("u9"));
+        assert_eq!(f.user_email.as_deref(), Some("top@x.y"));
+        // Raw expiry extraction: expires_at present (integer + numeric
+        // STRING coercion), negative preserved, junk string -> None.
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":1767225600,"expires_in":10}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(1767225600));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"1767225600"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(1767225600));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":-5}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(-5));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"junk"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, None);
+        assert_eq!(f.expires_in, 3600);
+        // apply_session_fields: None user_id KEEPS current (no generation
+        // bump), None tokens SET null, expiry default uses caller's now.
+        let mut prefs = AuthPrefsState { is_secure_storage_available: true, ..Default::default() };
+        prefs.set_user_id(Some("keepme".to_string()));
+        let gen_before = prefs.session_generation;
+        let mut p2 = prefs.clone();
+        apply_session_fields(&mut p2, &SessionFields {
+            mode: "EMAIL".to_string(), user_id: None, user_email: None,
+            access_token: None, refresh_token: None, expires_at: None, expires_in: 600,
+        }, 1000);
+        assert_eq!(p2.user_id.as_deref(), Some("keepme"));
+        assert_eq!(p2.session_generation, gen_before);
+        assert_eq!(p2.user_email, None);
+        assert_eq!(p2.access_token, None);
+        assert_eq!(p2.session_expires_at_seconds, 1600);
     }
 }

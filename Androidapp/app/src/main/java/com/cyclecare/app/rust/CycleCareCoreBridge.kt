@@ -1022,6 +1022,100 @@ object CycleCareCoreBridge {
         }
     }
 
+    /** Decision of [authSignInResponse]. SUCCESS always carries user +
+     * session; message is always present (the caller shows it verbatim). */
+    enum class AuthDecisionKind { ERROR, VERIFY, SUCCESS }
+    data class AuthUserFields(val id: String, val email: String?, val emailConfirmedAt: String?, val anonymous: Boolean)
+
+    /** Raw session writes decided by the native interpretation. userId null
+     * = KEEP the current value; userEmail/accessToken/refreshToken null =
+     * SET null (the source's `.ifBlank { null }`); expiresAt null = the
+     * caller computes now+expiresIn at its original commit-point clock
+     * read. */
+    data class SessionFieldWrites(val mode: String, val userId: String?, val userEmail: String?, val accessToken: String?, val refreshToken: String?, val expiresAt: Long?, val expiresIn: Long)
+
+    data class SessionAuthDecision(val kind: AuthDecisionKind, val message: String, val user: AuthUserFields?, val session: SessionFieldWrites?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the NON-CLOCK
+     * sign-in response interpretation (auth_link::interpret_sign_in_response,
+     * corpus-locked, shared with the auth_flows port). The password never
+     * crosses (request building stays Kotlin); clearSession/session writes
+     * and the expiry clock read stay at the caller's original commitOrigin
+     * points. null = native unavailable/malformed -> caller keeps its
+     * verbatim Kotlin interpretation. */
+    fun authSignInResponse(successful: Boolean, body: String, normalizedEmail: String): SessionAuthDecision? {
+        val reply = call("auth_sign_in_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body)
+            .put("normalizedEmail", normalizedEmail)) ?: return null
+        return decodeSessionAuthDecision(reply)
+    }
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "verdict" an
+     * exact kind string, "message" a nonempty string on every verdict. A
+     * SUCCESS reply must carry a real user object (id a genuine string,
+     * email/emailConfirmedAt null-or-string, anonymous a genuine Boolean)
+     * and a real session object (mode exactly "EMAIL" - this op only
+     * decides sign-in, userId/userEmail/accessToken/refreshToken
+     * null-or-NONEMPTY strings (blank maps to a marker, never a string),
+     * expiresAt null-or-genuine-integer, expiresIn a genuine integer). */
+    internal fun decodeSessionAuthDecision(reply: JSONObject): SessionAuthDecision? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val message = ok.opt("message")
+        if (message !is String || message.isEmpty()) return null
+        fun optStr(key: String, container: JSONObject, nonempty: Boolean): Any? {
+            val v = container.opt(key)
+            if (v === JSONObject.NULL || v == null) return JSONObject.NULL
+            if (v !is String) return null
+            if (nonempty && v.isEmpty()) return null
+            return v
+        }
+        return when (ok.opt("verdict")) {
+            "error" -> SessionAuthDecision(AuthDecisionKind.ERROR, message as String, null, null)
+            "verify" -> SessionAuthDecision(AuthDecisionKind.VERIFY, message as String, null, null)
+            "success" -> {
+                val user = ok.optJSONObject("user") ?: return null
+                val id = user.opt("id")
+                if (id !is String) return null
+                val email = optStr("email", user, nonempty = false); if (email == null) return null
+                val confirmed = optStr("emailConfirmedAt", user, nonempty = false); if (confirmed == null) return null
+                val anonymous = user.opt("anonymous")
+                if (anonymous !is Boolean) return null
+                val session = ok.optJSONObject("session") ?: return null
+                if (session.opt("mode") != "EMAIL") return null
+                val userId = optStr("userId", session, nonempty = true); if (userId == null) return null
+                val userEmail = optStr("userEmail", session, nonempty = true); if (userEmail == null) return null
+                val access = optStr("accessToken", session, nonempty = true); if (access == null) return null
+                val refresh = optStr("refreshToken", session, nonempty = true); if (refresh == null) return null
+                val expiresAt = when (val e = session.opt("expiresAt")) {
+                    null, JSONObject.NULL -> null
+                    is Int -> e.toLong()
+                    is Long -> e
+                    else -> return null
+                }
+                val expiresIn = when (val e = session.opt("expiresIn")) {
+                    is Int -> e.toLong()
+                    is Long -> e
+                    else -> return null
+                }
+                SessionAuthDecision(AuthDecisionKind.SUCCESS, message as String,
+                    AuthUserFields(id as String,
+                        if (email === JSONObject.NULL) null else email as String,
+                        if (confirmed === JSONObject.NULL) null else confirmed as String,
+                        anonymous as Boolean),
+                    SessionFieldWrites("EMAIL",
+                        if (userId === JSONObject.NULL) null else userId as String,
+                        if (userEmail === JSONObject.NULL) null else userEmail as String,
+                        if (access === JSONObject.NULL) null else access as String,
+                        if (refresh === JSONObject.NULL) null else refresh as String,
+                        expiresAt, expiresIn))
+            }
+            else -> null
+        }
+    }
+
     /** Reply of [supabaseConfigResolveClientSettings]. */
     data class SupabaseClientSettings(val url: String, val apiKey: String)
 

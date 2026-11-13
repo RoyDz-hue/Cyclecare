@@ -224,17 +224,33 @@ class SupabaseAuthService(
             val responseBody = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if(!originCurrent(origin))return@withContext staleAttempt()
-            if (!response.isSuccessful) {
-                return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_IN))
+            // Native-first response interpretation (NEW IMPLEMENTATION
+            // wiring, 2026-11-13): NON-CLOCK decision only - error mapping,
+            // parse, confirmation check, user read, RAW session-field
+            // extraction. The clearSession/session WRITES stay inside
+            // commitOrigin below and the expiry clock read stays inside
+            // applySessionWrites' mutation - the original clock points.
+            // A null reply keeps the verbatim Kotlin interpretation.
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authSignInResponse(response.isSuccessful, responseBody, normalizedEmail)
+                ?: interpretSignInResponseKotlin(response.isSuccessful, responseBody, normalizedEmail)
+            when (decision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.ERROR ->
+                    return@withContext AuthResult.Error(decision.message)
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.VERIFY -> {
+                    if(!commitOrigin(origin){authPreferences.clearSession()})return@withContext staleAttempt()
+                    return@withContext AuthResult.Error(decision.message)
+                }
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.SUCCESS -> {
+                    val writes = decision.session
+                        ?: return@withContext AuthResult.Error("Unable to connect. Please check your network connection.")
+                    val decidedUser = decision.user
+                        ?: return@withContext AuthResult.Error("Unable to connect. Please check your network connection.")
+                    if(!commitOrigin(origin){applySessionWrites(writes)})return@withContext staleAttempt()
+                    AuthResult.Success(SupabaseUser(id = decidedUser.id, email = decidedUser.email,
+                        emailConfirmedAt = decidedUser.emailConfirmedAt, isAnonymous = decidedUser.anonymous),
+                        decision.message)
+                }
             }
-            val json = JSONObject(responseBody)
-            val user = json.optJSONObject("user") ?: JSONObject()
-            if (!emailIsConfirmed(user)) {
-                if(!commitOrigin(origin){authPreferences.clearSession()})return@withContext staleAttempt()
-                return@withContext AuthResult.Error("Please verify your email using the CycleCare link before signing in.")
-            }
-            if(!commitOrigin(origin){saveSession(json, "EMAIL")})return@withContext staleAttempt()
-            AuthResult.Success(readUser(user, normalizedEmail), "Successfully signed in to CycleCare.")
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please check your network connection.")
         }
@@ -695,6 +711,72 @@ class SupabaseAuthService(
         .build()
 
     private fun encodedRedirect(): String = URLEncoder.encode(AUTH_REDIRECT_URL, StandardCharsets.UTF_8.name())
+
+    /** Verbatim Kotlin fallback of the native sign-in interpretation (NEW
+     * IMPLEMENTATION wiring, 2026-11-13): the original signIn statements,
+     * with the clearSession/saveSession WRITES replaced by their raw field
+     * extraction (the writes themselves stay at the call site's commitOrigin
+     * points in both paths) and the JSONObject parse throw mapped to the
+     * SAME connect message the original catch-all produced. */
+    private fun interpretSignInResponseKotlin(isSuccessful: Boolean, responseBody: String, normalizedEmail: String): com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision {
+        if (!isSuccessful) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.ERROR,
+                AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_IN), null, null)
+        }
+        val json = try { JSONObject(responseBody) } catch (e: Exception) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.ERROR,
+                "Unable to connect. Please check your network connection.", null, null)
+        }
+        val user = json.optJSONObject("user") ?: JSONObject()
+        if (!emailIsConfirmed(user)) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.VERIFY,
+                "Please verify your email using the CycleCare link before signing in.", null, null)
+        }
+        val read = readUser(user, normalizedEmail)
+        // saveSession's RAW field extraction, expression for expression
+        // (note: its user fallback is the WHOLE body, not readUser's empty
+        // object). Blank -> null here is the SET-null / keep marker the
+        // call site interprets, not a write.
+        val sessionUser = json.optJSONObject("user") ?: json
+        // Source: json.optLong("expires_at", now/1000 + expiresIn). Hitting
+        // optLong's DEFAULT branch (missing/uncoercible) is represented as
+        // the null marker so the caller computes now+expiresIn at ITS OWN
+        // commit point - the same value at the same clock point.
+        val rawExpiresAt = when (val e = json.opt("expires_at")) {
+            is Number -> e.toLong()
+            is String -> e.toLongOrNull()
+            else -> null
+        }
+        return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.SUCCESS,
+            "Successfully signed in to CycleCare.",
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous),
+            com.cyclecare.app.rust.CycleCareCoreBridge.SessionFieldWrites("EMAIL",
+                sessionUser.optString("id").ifBlank { null },
+                sessionUser.optString("email").ifBlank { null },
+                json.optString("access_token").ifBlank { null },
+                json.optString("refresh_token").ifBlank { null },
+                rawExpiresAt,
+                json.optLong("expires_in", 3600L)))
+    }
+
+    /** Applies native-decided session writes with EXACTLY saveSession's
+     * assignment semantics: accountMode set; userId kept when null
+     * (source: `.ifBlank { authPreferences.userId }` read at this point in
+     * the mutation); userEmail/accessToken/refreshToken set to null when
+     * null (source: `.ifBlank { null }`); the expiry default's clock read
+     * happens HERE - the same point the original saveSession read it. */
+    private fun applySessionWrites(w: com.cyclecare.app.rust.CycleCareCoreBridge.SessionFieldWrites) = authPreferences.mutatePublicationIdentity {
+        authPreferences.accountMode = w.mode
+        authPreferences.userId = w.userId ?: authPreferences.userId
+        authPreferences.userEmail = w.userEmail
+        authPreferences.accessToken = w.accessToken
+        authPreferences.refreshToken = w.refreshToken
+        authPreferences.sessionExpiresAtSeconds = w.expiresAt ?: (System.currentTimeMillis() / 1000 + w.expiresIn)
+    }
 
     private fun saveSession(json: JSONObject, mode: String) = authPreferences.mutatePublicationIdentity {
         val user = json.optJSONObject("user") ?: json
