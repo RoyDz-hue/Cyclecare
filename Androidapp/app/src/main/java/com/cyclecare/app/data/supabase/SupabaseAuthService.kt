@@ -611,18 +611,20 @@ class SupabaseAuthService(
     private suspend fun completeAuthCode(authCode: String, callbackContext:AuthPreferences.RustOperationSnapshot,callbackCurrent:()->Boolean): AuthResult {
         // Native-first NON-CLOCK pre-flight (NEW IMPLEMENTATION wiring,
         // 2026-11-13): verifier presence, the pendingAuthAction default,
-        // linkingGuest and the already-signed-in gate. verifier is
-        // captured once where the source read it (its first statement);
-        // existingUserId is captured once before the seam call that needs
-        // it, and no writes intervene before the source's own read. The
-        // request body and the response seam use those captures (no
-        // concurrent-mutation drift from re-reads).
+        // linkingGuest and the already-signed-in gate. Each value is
+        // captured once, in the source's original READ ORDER: verifier
+        // (its first statement), then pendingAuthAction and
+        // isPendingGuestEmailLink, then userId (the source read it after
+        // the action default). The seam call, the request body and the
+        // response seam use these captures - no prefs re-reads anywhere.
         val verifier = authPreferences.googlePkceVerifier
+        val pendingAuthAction = authPreferences.pendingAuthAction
+        val pendingGuestEmailLink = authPreferences.isPendingGuestEmailLink
         val existingUserId = authPreferences.userId
         val pre = com.cyclecare.app.rust.CycleCareCoreBridge.authCbCodePre(
             verifier != null,
-            authPreferences.pendingAuthAction,
-            authPreferences.isPendingGuestEmailLink,
+            pendingAuthAction,
+            pendingGuestEmailLink,
             existingUserId)
             ?: interpretCbCodePreKotlin()
         when (pre.kind) {

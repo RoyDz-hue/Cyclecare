@@ -36,7 +36,7 @@
 
 use crate::auth_errors::{fallback, for_response, AuthOperation};
 use crate::auth_uri::parse_auth_callback_url;
-use crate::sync_codec::{aosp_opt_string, JsonParser, JsonValue};
+use crate::sync_codec::{aosp_opt_string, json_value_to_string, JsonParser, JsonValue};
 
 pub const AUTH_ACTION_GUEST_LINK: &str = "GUEST_LINK";
 pub const AUTH_ACTION_PASSWORD_RESET: &str = "PASSWORD_RESET";
@@ -1158,13 +1158,17 @@ fn complete_auth_code(
     now_seconds: i64,
     transport: &mut Transport,
 ) -> AuthOutcome {
-    // Single captures at the source's read points.
+    // Single captures in the source's original read ORDER: verifier (its
+    // first statement), then pendingAuthAction and isPendingGuestEmailLink,
+    // then userId. No re-reads anywhere below.
     let verifier = prefs.google_pkce_verifier.clone();
+    let pending_auth_action = prefs.pending_auth_action.clone();
+    let is_pending_guest_email_link = prefs.is_pending_guest_email_link;
     let existing_user_id = prefs.user_id.clone();
     let (action, linking_guest) = match interpret_cb_code_pre(
         verifier.is_some(),
-        prefs.pending_auth_action.as_deref(),
-        prefs.is_pending_guest_email_link,
+        pending_auth_action.as_deref(),
+        is_pending_guest_email_link,
         existing_user_id.as_deref(),
     ) {
         CbCodePreDecision::Error(m) => return AuthOutcome::Error(m),
@@ -1179,10 +1183,13 @@ fn complete_auth_code(
         Some(v) => v,
         None => return AuthOutcome::Error(for_response("expired code", AuthOperation::Callback)),
     };
-    let body = format!(
-        "{{\"auth_code\":\"{}\",\"code_verifier\":\"{}\"}}",
-        auth_code, verifier
-    );
+    // Real JSON serialization (matching the wired Kotlin's JSONObject
+    // puts): values are escaped, never raw-interpolated. Insertion order
+    // matches the source's put order.
+    let body = json_value_to_string(&JsonValue::Object(vec![
+        ("auth_code".to_string(), JsonValue::Str(auth_code.to_string())),
+        ("code_verifier".to_string(), JsonValue::Str(verifier)),
+    ]));
     let token_url = format!("{auth_api_url}/token?grant_type=pkce");
     let response = match transport("POST", &token_url, Some(&body)) {
         Ok(r) => r,
