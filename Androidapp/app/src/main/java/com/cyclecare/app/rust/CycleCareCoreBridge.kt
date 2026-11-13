@@ -1177,13 +1177,12 @@ object CycleCareCoreBridge {
      * Java-verified presentation range, or a non-ASCII date string) means
      * the caller runs its verbatim Kotlin twin.
      */
-    fun dataExportJson(
-        settings: com.cyclecare.app.data.local.CycleSettings,
-        profile: com.cyclecare.app.data.local.OnboardingProfile?,
-        sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>,
-        epochMs: Long,
-    ): String? {
-        val settingsJson = JSONObject()
+    // Shared export payload builders (inc24 data_export_json_v1, inc25
+    // data_export_pdf_layout_v1): the exact field set both contracts carry.
+    // Float fields cross as their exact Double widenings (every Float value
+    // is an exact Double; the native side narrows back exactly).
+    private fun exportSettingsPayload(settings: com.cyclecare.app.data.local.CycleSettings): JSONObject =
+        JSONObject()
             .put("selected_goals_csv", settings.selectedGoalsCsv)
             .put("last_period_start_date", settings.lastPeriodStartDate)
             .put("average_cycle_length", settings.averageCycleLength)
@@ -1192,7 +1191,9 @@ object CycleCareCoreBridge {
             .put("remind_fertile", settings.remindFertile)
             .put("remind_daily_log", settings.remindDailyLog)
             .put("is_discreet_notification_mode", settings.isDiscreetNotificationMode)
-        val profileJson = profile?.let {
+
+    private fun exportProfilePayload(profile: com.cyclecare.app.data.local.OnboardingProfile?): Any =
+        profile?.let {
             JSONObject()
                 .put("selected_goals_csv", it.selectedGoalsCsv)
                 .put("last_period_date_string", it.lastPeriodDateString)
@@ -1206,6 +1207,8 @@ object CycleCareCoreBridge {
                 .put("typical_energy", it.typicalEnergy)
                 .put("typical_sleep_quality", it.typicalSleepQuality)
         } ?: JSONObject.NULL
+
+    private fun exportLogsPayload(sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>): JSONArray {
         val logsJson = JSONArray()
         sortedLogs.forEach { log ->
             logsJson.put(JSONObject()
@@ -1225,10 +1228,19 @@ object CycleCareCoreBridge {
                 .put("notes", log.notes)
                 .put("pain_intensity", log.painIntensity))
         }
+        return logsJson
+    }
+
+    fun dataExportJson(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        profile: com.cyclecare.app.data.local.OnboardingProfile?,
+        sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        epochMs: Long,
+    ): String? {
         val reply = call("data_export_json_v1", JSONObject()
-            .put("settings", settingsJson)
-            .put("profile", profileJson)
-            .put("logs", logsJson)
+            .put("settings", exportSettingsPayload(settings))
+            .put("profile", exportProfilePayload(profile))
+            .put("logs", exportLogsPayload(sortedLogs))
             .put("epoch_ms", epochMs)) ?: return null
         return decodeDataExportJson(reply)
     }
@@ -1238,6 +1250,66 @@ object CycleCareCoreBridge {
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         return ok.opt("json") as? String
+    }
+
+    const val PDF_PAINT_TITLE = 0
+    const val PDF_PAINT_SECTION = 1
+    const val PDF_PAINT_BODY = 2
+
+    /** One native layout decision: a page break, or a drawText at x=MARGIN
+     * with the given y and paint role. */
+    data class PdfDrawOp(val isPageBreak: Boolean, val text: String, val y: Float, val paint: Int)
+
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first PDF export layout
+     * (data_export_pdf_layout_v1). Pure layout decisions: the settings,
+     * profile, already-sorted log list, and the caller-captured exportedAt
+     * string cross JNI in one payload; only the draw-op stream returns
+     * (page breaks and drawText calls with y + paint role). The clock/
+     * locale/timezone read, PdfDocument, Paint, and the PDF byte writing
+     * all stay in Kotlin. A null reply (native absent, {"error"}, a
+     * strict-decode decline, or the port's own conservative decline)
+     * means the caller runs its verbatim Kotlin twin.
+     */
+    fun dataExportPdfLayout(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        profile: com.cyclecare.app.data.local.OnboardingProfile?,
+        sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        exportedAt: String,
+    ): List<PdfDrawOp>? {
+        val reply = call("data_export_pdf_layout_v1", JSONObject()
+            .put("settings", exportSettingsPayload(settings))
+            .put("profile", exportProfilePayload(profile))
+            .put("logs", exportLogsPayload(sortedLogs))
+            .put("exported_at", exportedAt)) ?: return null
+        return decodeDataExportPdfLayout(reply)
+    }
+
+    internal fun decodeDataExportPdfLayout(reply: JSONObject): List<PdfDrawOp>? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val ops = ok.optJSONArray("ops") ?: return null
+        val out = ArrayList<PdfDrawOp>(ops.length())
+        for (idx in 0 until ops.length()) {
+            val op = ops.optJSONObject(idx) ?: return null
+            when (op.opt("op")) {
+                "page" -> out.add(PdfDrawOp(isPageBreak = true, text = "", y = 0f, paint = PDF_PAINT_BODY))
+                "text" -> {
+                    val text = op.opt("text") as? String ?: return null
+                    val y = op.opt("y") as? Number ?: return null
+                    val paint = when (op.opt("paint")) {
+                        "title" -> PDF_PAINT_TITLE
+                        "section" -> PDF_PAINT_SECTION
+                        "body" -> PDF_PAINT_BODY
+                        else -> return null
+                    }
+                    out.add(PdfDrawOp(isPageBreak = false, text = text, y = y.toFloat(), paint = paint))
+                }
+                else -> return null
+            }
+        }
+        return out
     }
 
     /** The six validated gateway fields plus the normalized source label. */

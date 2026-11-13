@@ -1151,6 +1151,153 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 Err(_) => err("export failed"), // unreachable after the pre-checks; declines to the twin
             }
         })(),
+        "data_export_pdf_layout_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port data_export_pdf::build (util/DataExportPdf.kt,
+            // main@31b88f5 lineage; data_export_pdf_corpus.rs layout
+            // decision pins). Pure layout: no I/O; the exported-at string
+            // arrives caller-captured (the clock/locale/timezone read stays
+            // in Kotlin). The draw ops cross back as data; PdfDocument,
+            // Paint, and the PDF bytes stay in Kotlin. sync_codec struct
+            // fields the layout never reads are defaulted here, not
+            // transported. Conservative declines (err -> caller's verbatim
+            // Kotlin twin): a displayed float (bbt/sleep > 0) that is
+            // non-finite or non-integral outside the port's
+            // differential-verified Float.toString range [1e-3, 1e7); any
+            // string whose UTF-16 length exceeds MAX_LINE_CHARS (88) while
+            // containing non-BMP characters - the port's hard cut decodes
+            // such a split pair lossy where Kotlin hands the lone unit to
+            // drawText (rendering-only, declined anyway).
+            use corelib::data_export_pdf as dp;
+            use corelib::sync_codec as sc;
+            fn s(obj: &serde_json::Value, k: &str) -> Result<String, String> {
+                obj.get(k).and_then(|x| x.as_str()).map(|x| x.to_string()).ok_or_else(|| format!("{k} missing or not a string"))
+            }
+            fn i(obj: &serde_json::Value, k: &str) -> Result<i32, String> {
+                obj.get(k).and_then(|x| x.as_i64()).and_then(|x| i32::try_from(x).ok()).ok_or_else(|| format!("{k} missing or not an int32"))
+            }
+            fn b(obj: &serde_json::Value, k: &str) -> Result<bool, String> {
+                obj.get(k).and_then(|x| x.as_bool()).ok_or_else(|| format!("{k} missing or not a bool"))
+            }
+            fn wrap_risk(v: &str) -> bool {
+                v.encode_utf16().count() > 88 && v.chars().any(|c| (c as u32) > 0xFFFF)
+            }
+            fn check_wrap(v: &str) -> Result<(), String> {
+                if wrap_risk(v) { Err("string over wrap limit with non-BMP char".to_string()) } else { Ok(()) }
+            }
+            let settings_v = match v.get("settings") { Some(x) => x, None => return err("settings missing") };
+            let settings = match (|| {
+                let selected_goals_csv = s(settings_v, "selected_goals_csv")?;
+                let last_period_start_date = s(settings_v, "last_period_start_date")?;
+                check_wrap(&selected_goals_csv)?;
+                check_wrap(&last_period_start_date)?;
+                Ok(sc::CycleSettings {
+                    id: 1,
+                    is_onboarding_completed: false,
+                    selected_goals_csv,
+                    last_period_start_date,
+                    average_cycle_length: i(settings_v, "average_cycle_length")?,
+                    period_duration: i(settings_v, "period_duration")?,
+                    luteal_phase_days: 14,
+                    is_app_lock_enabled: false,
+                    lock_timeout_minutes: 1,
+                    is_discreet_notification_mode: b(settings_v, "is_discreet_notification_mode")?,
+                    is_pregnancy_mode: false,
+                    pregnancy_due_date: String::new(),
+                    remind_period: b(settings_v, "remind_period")?,
+                    remind_fertile: b(settings_v, "remind_fertile")?,
+                    remind_daily_log: b(settings_v, "remind_daily_log")?,
+                })
+            })() { Ok(x) => x, Err(e) => return err(&e) };
+            let profile_v = match v.get("profile") { Some(x) => x, None => return err("profile missing") };
+            let profile = if profile_v.is_null() { None } else {
+                match (|| {
+                    let fields = [
+                        "selected_goals_csv", "last_period_date_string", "last_period_end_date_string",
+                        "approximate_period_choice", "cycle_length_option", "typical_symptoms_csv",
+                        "typical_energy", "typical_sleep_quality",
+                    ];
+                    for k in fields { check_wrap(&s(profile_v, k)?)?; }
+                    Ok(sc::OnboardingProfile {
+                        selected_goals_csv: s(profile_v, "selected_goals_csv")?,
+                        last_period_date_string: s(profile_v, "last_period_date_string")?,
+                        last_period_end_date_string: s(profile_v, "last_period_end_date_string")?,
+                        approximate_period_choice: s(profile_v, "approximate_period_choice")?,
+                        cycle_length_option: s(profile_v, "cycle_length_option")?,
+                        cycle_length_days: i(profile_v, "cycle_length_days")?,
+                        period_duration_days: i(profile_v, "period_duration_days")?,
+                        typical_symptoms_csv: s(profile_v, "typical_symptoms_csv")?,
+                        typical_energy: s(profile_v, "typical_energy")?,
+                        typical_sleep_quality: s(profile_v, "typical_sleep_quality")?,
+                        has_completed_deep_baseline: false,
+                        id: 1,
+                        is_completed: true,
+                        completed_at_timestamp: 0,
+                        is_age_verified: true,
+                        is_terms_agreed: true,
+                        account_mode: String::new(),
+                        remind_fertile_window: b(profile_v, "remind_fertile_window")?,
+                    })
+                })() { Ok(x) => Some(x), Err(e) => return err(&e) }
+            };
+            let logs_v = match v.get("logs").and_then(|x| x.as_array()) { Some(x) => x, None => return err("logs missing or not an array") };
+            let mut logs = Vec::with_capacity(logs_v.len());
+            for lv in logs_v {
+                let log = match (|| {
+                    let date_string = s(lv, "date_string")?;
+                    for k in ["date_string", "flow_level", "energy_level", "mood_level", "symptoms_csv",
+                              "vaginal_health_csv", "urinary_health_csv", "cervical_mucus", "ovulation_test",
+                              "sleep_quality", "notes"] {
+                        check_wrap(&s(lv, k)?)?;
+                    }
+                    let f = |k: &str| -> Result<f32, String> {
+                        let d = lv.get(k).and_then(|x| x.as_f64()).ok_or_else(|| format!("{k} missing or not a number"))?;
+                        Ok(d as f32) // exact: the caller widened a Float
+                    };
+                    let bbt = f("bbt_celsius")?;
+                    let sleep = f("sleep_hours")?;
+                    for (k, v) in [("bbt_celsius", bbt), ("sleep_hours", sleep)] {
+                        if v > 0.0 {
+                            if !v.is_finite() { return Err(format!("{k} non-finite")); }
+                            let integral = (v as f64) == ((v as i64) as f64);
+                            if !integral && !(1e-3..1e7).contains(&(v.abs() as f64)) { return Err(format!("{k} outside verified range")); }
+                        }
+                    }
+                    Ok(sc::CycleDayLog {
+                        date: date_string,
+                        flow: s(lv, "flow_level")?,
+                        energy: s(lv, "energy_level")?,
+                        mood: s(lv, "mood_level")?,
+                        symptoms: s(lv, "symptoms_csv")?,
+                        vaginal_health: s(lv, "vaginal_health_csv")?,
+                        urinary_health: s(lv, "urinary_health_csv")?,
+                        cervical_mucus: s(lv, "cervical_mucus")?,
+                        ovulation_test: s(lv, "ovulation_test")?,
+                        bbt_celsius: bbt,
+                        sleep_hours: sleep,
+                        sleep_quality: s(lv, "sleep_quality")?,
+                        water_glasses: i(lv, "water_glasses")?,
+                        notes: s(lv, "notes")?,
+                        pain_intensity: i(lv, "pain_intensity")?,
+                    })
+                })() { Ok(x) => x, Err(e) => return err(&e) };
+                logs.push(log);
+            }
+            let exported_at = match v.get("exported_at").and_then(|x| x.as_str()) { Some(x) => x.to_string(), None => return err("exported_at missing or not a string") };
+            struct Ops { ops: Vec<serde_json::Value> }
+            impl dp::PdfSurface for Ops {
+                fn draw_text(&mut self, text: &str, _x: f32, y: f32, paint: dp::PaintKind) {
+                    let paint = match paint { dp::PaintKind::Title => "title", dp::PaintKind::Section => "section", dp::PaintKind::Body => "body" };
+                    self.ops.push(serde_json::json!({"op":"text","text":text,"y":y,"paint":paint}));
+                }
+                fn start_new_page(&mut self) {
+                    self.ops.push(serde_json::json!({"op":"page"}));
+                }
+            }
+            let mut rec = Ops { ops: Vec::new() };
+            dp::build(&mut rec, &settings, profile.as_ref(), &logs, &exported_at);
+            serde_json::json!({"ok":{"version":1,"ops":rec.ops}}).to_string()
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
