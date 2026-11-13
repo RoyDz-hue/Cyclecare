@@ -793,6 +793,36 @@ object CycleCareCoreBridge {
     }.getOrNull()
 
     /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
+    /** Reply of [supabaseConfigResolveClientSettings]. */
+    data class SupabaseClientSettings(val url: String, val apiKey: String)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * supabase_config parity port for SupabaseConfig.resolveClientSettings
+     * (ConfigProbe JVM corpus). The submitted pair is the public client
+     * config, never a secret. null = native unavailable/malformed -> caller
+     * keeps the Kotlin resolution. */
+    fun supabaseConfigResolveClientSettings(url: String?, apiKey: String?): SupabaseClientSettings? {
+        val reply = call("supabase_config_resolve_v1", JSONObject()
+            .put("url", url ?: JSONObject.NULL)
+            .put("apiKey", apiKey ?: JSONObject.NULL)) ?: return null
+        return decodeSupabaseClientSettings(reply)
+    }
+
+    /** Strict decode bound to the port's output shapes: "ok" a real object,
+     * "version" exactly 1, both fields genuine Strings, and the pair either
+     * both empty (the disabled sentinel) or both non-blank (a resolved
+     * client) - a mixed pair has no source shape and is rejected. */
+    internal fun decodeSupabaseClientSettings(reply: JSONObject): SupabaseClientSettings? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val url = ok.opt("url")
+        val apiKey = ok.opt("apiKey")
+        if (url !is String || apiKey !is String) return null
+        if (url.isEmpty() != apiKey.isEmpty()) return null
+        return SupabaseClientSettings(url, apiKey)
+    }
+
     /** Reply of [healthConsentReceiptRead]: [receipt] is the server-side
      * health-consent generation when every source guard passes, null when
      * the receipt is absent. A null return of the FUNCTION means native

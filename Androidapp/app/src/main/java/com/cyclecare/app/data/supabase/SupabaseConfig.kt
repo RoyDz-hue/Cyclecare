@@ -16,7 +16,15 @@ object SupabaseConfig {
     }
 
     private val clientSettings: ClientSettings
-        get() = resolveClientSettings(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_ANON_KEY)
+        get() {
+            // Native-first: core supabase_config parity port of this exact
+            // resolution (NEW IMPLEMENTATION wiring, 2026-11-13). A null
+            // reply (native unavailable/malformed) keeps the Kotlin
+            // resolution below, byte for byte.
+            val native = com.cyclecare.app.rust.CycleCareCoreBridge.supabaseConfigResolveClientSettings(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_ANON_KEY)
+            if (native != null) return ClientSettings(native.url, native.apiKey)
+            return resolveClientSettings(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_ANON_KEY)
+        }
 
     val url: String get() = clientSettings.url
     val anonKey: String get() = clientSettings.apiKey

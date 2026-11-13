@@ -812,6 +812,25 @@ fn dispatch(contract: &str, payload: &str) -> String {
             };
             serde_json::json!({"ok": ok}).to_string()
         })(),
+        "supabase_config_resolve_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port supabase_config::resolve_client_settings
+            // (SupabaseConfig.kt resolveClientSettings, main@31b88f5
+            // lineage; ConfigProbe/ConfigProbe2 JVM corpus). Decision only:
+            // the public client pair in, validated settings out.
+            let url = match v.get("url") {
+                None => return err("url missing"),
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("url not a string or null") },
+            };
+            let api_key = match v.get("apiKey") {
+                None => return err("apiKey missing"),
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("apiKey not a string or null") },
+            };
+            let r = corelib::supabase_config::resolve_client_settings(url, api_key);
+            serde_json::json!({"ok":{"version":1,"url":r.url,"apiKey":r.api_key}}).to_string()
+        })(),
         "health_consent_receipt_read_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port auth_prefs_health::HealthAuthPrefs::
