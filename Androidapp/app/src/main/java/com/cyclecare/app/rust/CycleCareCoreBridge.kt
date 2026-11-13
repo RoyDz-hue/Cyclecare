@@ -1409,6 +1409,25 @@ object CycleCareCoreBridge {
         return ok.opt("show") as? Boolean
     }
 
+    // NEW IMPLEMENTATION (recovery rebuild): settings_pin_draft_v1 bridge.
+    // PIN draft filter: Unicode isDigit + take(4); the result is strict-
+    // decoded against the port's actual contract (at most 4 chars, all
+    // Unicode digits).
+    fun settingsPinDraftFilter(raw: String): String? {
+        val payload = JSONObject().put("raw", raw)
+        val reply = call("settings_pin_draft_v1", payload) ?: return null
+        return decodeSettingsPinDraft(reply)
+    }
+
+    internal fun decodeSettingsPinDraft(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val draft = ok.opt("draft") as? String ?: return null
+        if (draft.length > 4 || !draft.all { it.isDigit() }) return null
+        return draft
+    }
+
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
      * core (sound_feedback_v1). Pure decision: the caller's single

@@ -691,7 +691,10 @@ fun SettingsScreenContent(
                                 value = tempPin,
                                 onValueChange = { raw ->
                                     // Draft only: typing never changes the active passcode.
-                                    tempPin = raw.filter { ch -> ch.isDigit() }.take(4)
+                                    // NEW IMPLEMENTATION (recovery rebuild): native-first
+                                    // draft filter via settings_pin_draft_v1; the verbatim
+                                    // Kotlin twin runs on any null reply.
+                                    tempPin = com.cyclecare.app.rust.CycleCareCoreBridge.settingsPinDraftFilter(raw) ?: kotlinPinDraftFilter(raw)
                                 },
                                 label = { Text("New 4-Digit Passcode") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -1118,3 +1121,5 @@ private fun kotlinShowLastSyncMessage(isOnlineBackupActive: Boolean): Boolean = 
 
 private fun kotlinShowCheckAgainButton(isOnlineBackupActive: Boolean, lastSyncSuccess: Boolean): Boolean =
     isOnlineBackupActive && !lastSyncSuccess
+
+private fun kotlinPinDraftFilter(raw: String): String = raw.filter { ch -> ch.isDigit() }.take(4)

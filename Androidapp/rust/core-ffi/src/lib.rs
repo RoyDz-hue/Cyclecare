@@ -1454,6 +1454,17 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown op"),
             }
         })(),
+        "settings_pin_draft_v1" => (|| {
+            // NEW IMPLEMENTATION (recovery rebuild): JNI wiring of the
+            // existing parity port settings_core::pin_draft_filter
+            // (ui/screens/SettingsScreen.kt PIN draft filter :694,
+            // main@31b88f5 lineage; settings_core JVM-oracle corpus,
+            // pinDraft rows). Pure draft transformation: Kotlin-Unicode
+            // isDigit filter + take(4); typing never changes the active
+            // passcode (that stays behind the existing pin contracts).
+            let raw = match v.get("raw").and_then(|x| x.as_str()) { Some(s) => s, None => return err("raw missing or not a string") };
+            serde_json::json!({"ok":{"version":1,"draft":corelib::settings_core::pin_draft_filter(raw)}}).to_string()
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService
