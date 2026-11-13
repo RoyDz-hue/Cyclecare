@@ -170,25 +170,35 @@ class SupabaseAuthService(
             val responseBody = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if(!current())return@withContext staleAttempt()
-            if (!response.isSuccessful) {
-                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
-                return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_UP))
-            }
-
-            val json = JSONObject(responseBody)
-            val user = json.optJSONObject("user") ?: json
-            val confirmed = emailIsConfirmed(user)
-            val accessToken = json.optString("access_token")
-            if (accessToken.isNotBlank() && confirmed) {
-                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true);saveSession(json, "EMAIL")})return@withContext staleAttempt()
-                AuthResult.Success(readUser(user, normalizedEmail), "Your verified CycleCare account is ready.")
-            } else {
-                // Never retain an unverified session, even if the project is configured to issue one.
-                if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
-                    authPreferences.pendingEmail = normalizedEmail
-                    authPreferences.pendingAuthAction = AUTH_ACTION_SIGN_UP
-                })return@withContext staleAttempt()
-                AuthResult.VerificationRequired("Check $normalizedEmail for your CycleCare verification link. The app will open automatically after you verify; you can enter only then.")
+            // Native-first NON-CLOCK interpretation (NEW IMPLEMENTATION
+            // wiring, 2026-11-13); every commit stays at its original point.
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authSignUpResponse(response.isSuccessful, responseBody, normalizedEmail)
+                ?: interpretSignUpResponseKotlin(response.isSuccessful, responseBody, normalizedEmail)
+            when (decision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.ERROR_CLEAR_PENDING -> {
+                    if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
+                    return@withContext AuthResult.Error(decision.message)
+                }
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.ERROR_PLAIN ->
+                    return@withContext AuthResult.Error(decision.message)
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.VERIFY -> {
+                    // Never retain an unverified session, even if the project is configured to issue one.
+                    if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
+                        authPreferences.pendingEmail = normalizedEmail
+                        authPreferences.pendingAuthAction = AUTH_ACTION_SIGN_UP
+                    })return@withContext staleAttempt()
+                    AuthResult.VerificationRequired(decision.message)
+                }
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.SUCCESS -> {
+                    val writes = decision.session
+                        ?: return@withContext AuthResult.Error("We couldn't create your account right now. Check your connection and try again.")
+                    val decidedUser = decision.user
+                        ?: return@withContext AuthResult.Error("We couldn't create your account right now. Check your connection and try again.")
+                    if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true);applySessionWrites(writes)})return@withContext staleAttempt()
+                    AuthResult.Success(SupabaseUser(id = decidedUser.id, email = decidedUser.email,
+                        emailConfirmedAt = decidedUser.emailConfirmedAt, isAnonymous = decidedUser.anonymous),
+                        decision.message)
+                }
             }
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("We couldn't create your account right now. Check your connection and try again.")
@@ -291,9 +301,13 @@ class SupabaseAuthService(
             val responseBody = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if(!current())return@withContext staleAttempt()
-            if (!response.isSuccessful) {
+            // Native-first status split + corpus error mapping (NEW
+            // IMPLEMENTATION wiring, 2026-11-13); commits and messages stay.
+            val flowStatus = com.cyclecare.app.rust.CycleCareCoreBridge.authFlowStatus("MAGIC_LINK", response.isSuccessful, responseBody)
+                ?: interpretFlowStatusKotlin(AuthOperation.MAGIC_LINK, response.isSuccessful, responseBody)
+            if (flowStatus.error) {
                 if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
-                AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.MAGIC_LINK))
+                AuthResult.Error(flowStatus.message ?: AuthErrorMessages.forResponse(responseBody, AuthOperation.MAGIC_LINK))
             } else {
                 if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
                     authPreferences.pendingEmail = normalizedEmail
@@ -325,7 +339,11 @@ class SupabaseAuthService(
             val responseBody = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if(!current())return@withContext staleAttempt()
-            if (response.isSuccessful) {
+            // Native-first status split + corpus error mapping (NEW
+            // IMPLEMENTATION wiring, 2026-11-13); commits and messages stay.
+            val flowStatus = com.cyclecare.app.rust.CycleCareCoreBridge.authFlowStatus("PASSWORD_RESET", response.isSuccessful, responseBody)
+                ?: interpretFlowStatusKotlin(AuthOperation.PASSWORD_RESET, response.isSuccessful, responseBody)
+            if (!flowStatus.error) {
                 if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
                     authPreferences.pendingAuthAction = AUTH_ACTION_PASSWORD_RESET
                     authPreferences.pendingEmail = normalizedEmail
@@ -333,7 +351,7 @@ class SupabaseAuthService(
                 AuthResult.VerificationRequired("Password reset instructions were sent to $normalizedEmail. Open the CycleCare link on this device.")
             } else {
                 if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow(clearPendingEmail = true)})return@withContext staleAttempt()
-                AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.PASSWORD_RESET))
+                AuthResult.Error(flowStatus.message ?: AuthErrorMessages.forResponse(responseBody, AuthOperation.PASSWORD_RESET))
             }
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please check your network connection.")
@@ -372,22 +390,26 @@ class SupabaseAuthService(
             val responseBody = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if(!originCurrent(origin))return@withContext staleAttempt()
-            if (!response.isSuccessful) {
-                return@withContext AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.GUEST))
+            // Native-first NON-CLOCK interpretation (NEW IMPLEMENTATION
+            // wiring, 2026-11-13); the commit stays at its original point.
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authGuestResponse(response.isSuccessful, responseBody)
+                ?: interpretGuestResponseKotlin(response.isSuccessful, responseBody)
+            when (decision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.ERROR ->
+                    return@withContext AuthResult.Error(decision.message)
+                com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.SUCCESS -> {
+                    val sessionUserId = decision.userId
+                        ?: return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.GUEST))
+                    val writes = decision.session
+                        ?: return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.GUEST))
+                    val committed=commitOrigin(origin) {
+                        applySessionWrites(writes)
+                        authPreferences.userEmail = null
+                    }
+                    if(!committed)return@withContext staleAttempt()
+                    AuthResult.Success(SupabaseUser(id = sessionUserId, isAnonymous = true), decision.message)
+                }
             }
-            val json = JSONObject(responseBody)
-            val user = json.optJSONObject("user") ?: json
-            val userId = user.optString("id")
-            val accessToken = json.optString("access_token")
-            if (userId.isBlank() || accessToken.isBlank()) {
-                return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.GUEST))
-            }
-            val committed=commitOrigin(origin) {
-                saveSession(json, "ANONYMOUS")
-                authPreferences.userEmail = null
-            }
-            if(!committed)return@withContext staleAttempt()
-            AuthResult.Success(SupabaseUser(id = userId, isAnonymous = true), "Your private guest session is ready.")
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("A secure guest session needs an internet connection. Please retry when online.")
         }
@@ -501,10 +523,24 @@ class SupabaseAuthService(
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
             if(!originCurrent(origin))return@withContext staleAttempt()
-            if (!response.isSuccessful) return@withContext AuthResult.Error(AuthErrorMessages.forResponse(body, AuthOperation.SET_PASSWORD))
-            if(!commitOrigin(origin){authPreferences.needsPasswordSetup = false})return@withContext staleAttempt()
-            val user = runCatching { JSONObject(body) }.getOrElse { JSONObject() }
-            AuthResult.Success(readUser(user, authPreferences.userEmail.orEmpty()), "Your password is set.")
+            // Native-first NON-CLOCK interpretation (NEW IMPLEMENTATION
+            // wiring, 2026-11-13). The userEmail fallback value is read for
+            // the seam BEFORE the needsPasswordSetup commit, which does not
+            // touch userEmail - the same value the source read after it.
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authSetPasswordResponse(response.isSuccessful, body, authPreferences.userEmail.orEmpty())
+                ?: interpretSetPasswordResponseKotlin(response.isSuccessful, body)
+            when (decision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordDecisionKind.ERROR ->
+                    return@withContext AuthResult.Error(decision.message)
+                com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordDecisionKind.SUCCESS -> {
+                    if(!commitOrigin(origin){authPreferences.needsPasswordSetup = false})return@withContext staleAttempt()
+                    val decidedUser = decision.user
+                        ?: return@withContext AuthResult.Error("Unable to connect. Please try again.")
+                    AuthResult.Success(SupabaseUser(id = decidedUser.id, email = decidedUser.email,
+                        emailConfirmedAt = decidedUser.emailConfirmedAt, isAnonymous = decidedUser.anonymous),
+                        decision.message)
+                }
+            }
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("Unable to connect. Please try again.")
         }
@@ -553,9 +589,13 @@ class SupabaseAuthService(
         val responseBody = response.body?.string().orEmpty()
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         if(!current())return staleAttempt()
-        if (!response.isSuccessful) {
+        // Native-first status split + corpus error mapping (NEW
+        // IMPLEMENTATION wiring, 2026-11-13); commits and message stay.
+        val flowStatus = com.cyclecare.app.rust.CycleCareCoreBridge.authFlowStatus("ACCOUNT_LINK", response.isSuccessful, responseBody)
+            ?: interpretFlowStatusKotlin(AuthOperation.ACCOUNT_LINK, response.isSuccessful, responseBody)
+        if (flowStatus.error) {
             if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()})return staleAttempt()
-            return AuthResult.Error(AuthErrorMessages.forResponse(responseBody, AuthOperation.ACCOUNT_LINK))
+            return AuthResult.Error(flowStatus.message ?: AuthErrorMessages.forResponse(responseBody, AuthOperation.ACCOUNT_LINK))
         }
         if(!authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){
             authPreferences.pendingEmail = email
@@ -736,10 +776,19 @@ class SupabaseAuthService(
                 "Please verify your email using the CycleCare link before signing in.", null, null)
         }
         val read = readUser(user, normalizedEmail)
-        // saveSession's RAW field extraction, expression for expression
-        // (note: its user fallback is the WHOLE body, not readUser's empty
-        // object). Blank -> null here is the SET-null / keep marker the
-        // call site interprets, not a write.
+        return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.SUCCESS,
+            "Successfully signed in to CycleCare.",
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous),
+            extractSessionWritesKotlin(json, "EMAIL"))
+    }
+
+    /** saveSession's RAW field extraction, expression for expression (its
+     * user fallback is the WHOLE body), shared by every flow twin so the
+     * fallback implementations stay ONE implementation like the native
+     * side's extract_session_fields. Blank -> null here is the SET-null /
+     * keep marker the call sites interpret, not a write. */
+    private fun extractSessionWritesKotlin(json: JSONObject, mode: String): com.cyclecare.app.rust.CycleCareCoreBridge.SessionFieldWrites {
         val sessionUser = json.optJSONObject("user") ?: json
         // Source: json.optLong("expires_at", now/1000 + expiresIn). Hitting
         // optLong's DEFAULT branch (missing/uncoercible) is represented as
@@ -756,17 +805,100 @@ class SupabaseAuthService(
             is String -> try { java.lang.Double.parseDouble(e).toLong() } catch (ex: NumberFormatException) { null }
             else -> null
         }
-        return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(
-            com.cyclecare.app.rust.CycleCareCoreBridge.AuthDecisionKind.SUCCESS,
-            "Successfully signed in to CycleCare.",
-            com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous),
-            com.cyclecare.app.rust.CycleCareCoreBridge.SessionFieldWrites("EMAIL",
-                sessionUser.optString("id").ifBlank { null },
-                sessionUser.optString("email").ifBlank { null },
-                json.optString("access_token").ifBlank { null },
-                json.optString("refresh_token").ifBlank { null },
-                rawExpiresAt,
-                json.optLong("expires_in", 3600L)))
+        return com.cyclecare.app.rust.CycleCareCoreBridge.SessionFieldWrites(mode,
+            sessionUser.optString("id").ifBlank { null },
+            sessionUser.optString("email").ifBlank { null },
+            json.optString("access_token").ifBlank { null },
+            json.optString("refresh_token").ifBlank { null },
+            rawExpiresAt,
+            json.optLong("expires_in", 3600L))
+    }
+
+    /** Verbatim Kotlin fallback of the native sign-up interpretation (NEW
+     * IMPLEMENTATION wiring, 2026-11-13). Note the source's parse catch-all
+     * performs NO pending-flow cleanup (ErrorPlain), and its user fallback
+     * is the WHOLE body - both mirrored here. */
+    private fun interpretSignUpResponseKotlin(isSuccessful: Boolean, responseBody: String, normalizedEmail: String): com.cyclecare.app.rust.CycleCareCoreBridge.SignUpAuthDecision {
+        if (!isSuccessful) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SignUpAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.ERROR_CLEAR_PENDING,
+                AuthErrorMessages.forResponse(responseBody, AuthOperation.SIGN_UP), null, null)
+        }
+        val json = try { JSONObject(responseBody) } catch (e: Exception) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SignUpAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.ERROR_PLAIN,
+                "We couldn't create your account right now. Check your connection and try again.", null, null)
+        }
+        val user = json.optJSONObject("user") ?: json
+        val confirmed = emailIsConfirmed(user)
+        val accessToken = json.optString("access_token")
+        return if (accessToken.isNotBlank() && confirmed) {
+            val read = readUser(user, normalizedEmail)
+            com.cyclecare.app.rust.CycleCareCoreBridge.SignUpAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.SUCCESS,
+                "Your verified CycleCare account is ready.",
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous),
+                extractSessionWritesKotlin(json, "EMAIL"))
+        } else {
+            com.cyclecare.app.rust.CycleCareCoreBridge.SignUpAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.SignUpDecisionKind.VERIFY,
+                "Check $normalizedEmail for your CycleCare verification link. The app will open automatically after you verify; you can enter only then.", null, null)
+        }
+    }
+
+    /** Verbatim Kotlin fallback of the native guest-session interpretation
+     * (NEW IMPLEMENTATION wiring, 2026-11-13). No error path commits. */
+    private fun interpretGuestResponseKotlin(isSuccessful: Boolean, responseBody: String): com.cyclecare.app.rust.CycleCareCoreBridge.GuestAuthDecision {
+        if (!isSuccessful) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GuestAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.ERROR,
+                AuthErrorMessages.forResponse(responseBody, AuthOperation.GUEST), null, null)
+        }
+        val json = try { JSONObject(responseBody) } catch (e: Exception) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GuestAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.ERROR,
+                "A secure guest session needs an internet connection. Please retry when online.", null, null)
+        }
+        val user = json.optJSONObject("user") ?: json
+        val userId = user.optString("id")
+        val accessToken = json.optString("access_token")
+        if (userId.isBlank() || accessToken.isBlank()) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GuestAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.ERROR,
+                AuthErrorMessages.fallback(AuthOperation.GUEST), null, null)
+        }
+        return com.cyclecare.app.rust.CycleCareCoreBridge.GuestAuthDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.GuestDecisionKind.SUCCESS,
+            "Your private guest session is ready.", userId,
+            extractSessionWritesKotlin(json, "ANONYMOUS"))
+    }
+
+    /** Verbatim Kotlin fallback of the native setPassword interpretation
+     * (NEW IMPLEMENTATION wiring, 2026-11-13): the source's runCatching
+     * parse yields the EMPTY object on any failure. */
+    private fun interpretSetPasswordResponseKotlin(isSuccessful: Boolean, body: String): com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordAuthDecision {
+        if (!isSuccessful) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordAuthDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordDecisionKind.ERROR,
+                AuthErrorMessages.forResponse(body, AuthOperation.SET_PASSWORD), null)
+        }
+        val user = runCatching { JSONObject(body) }.getOrElse { JSONObject() }
+        val read = readUser(user, authPreferences.userEmail.orEmpty())
+        return com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordAuthDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.SetPasswordDecisionKind.SUCCESS,
+            "Your password is set.",
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous))
+    }
+
+    /** Verbatim Kotlin fallback of the native status split for the
+     * pending-flow operations (NEW IMPLEMENTATION wiring, 2026-11-13). */
+    private fun interpretFlowStatusKotlin(operation: AuthOperation, isSuccessful: Boolean, responseBody: String): com.cyclecare.app.rust.CycleCareCoreBridge.FlowStatusDecision {
+        return if (isSuccessful) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.FlowStatusDecision(false, null)
+        } else {
+            com.cyclecare.app.rust.CycleCareCoreBridge.FlowStatusDecision(true,
+                AuthErrorMessages.forResponse(responseBody, operation))
+        }
     }
 
     /** Applies native-decided session writes with EXACTLY saveSession's

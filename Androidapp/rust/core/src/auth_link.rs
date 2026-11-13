@@ -236,19 +236,9 @@ fn parse_java_hex_float(hex: &str) -> Option<f64> {
     if i == start || i != b.len() {
         return None;
     }
-    let exp: Option<i32> = hex[start..i].parse().ok();
-    if mantissa == 0.0 {
-        return Some(0.0);
-    }
-    match exp {
-        // Java's parseDouble accumulates arbitrary exponent digits; beyond
-        // i32 the result is simply Infinity (or 0 for a negative exponent).
-        None => Some(if exp_neg { 0.0 } else { f64::INFINITY }),
-        Some(e) => {
-            let e = if exp_neg { -e } else { e };
-            Some(mantissa * 2f64.powi(e - 4 * frac_len as i32))
-        }
-    }
+    let exp: i32 = hex[start..i].parse().ok()?;
+    let exp = if exp_neg { -exp } else { exp };
+    Some(mantissa * 2f64.powi(exp - 4 * frac_len as i32))
 }
 
 /// AOSP optLong: Number -> longValue (Double truncated toward zero);
@@ -549,6 +539,176 @@ pub fn interpret_sign_in_response(
         user: read_user(user, Some(normalized_email)),
         message: "Successfully signed in to CycleCare.".to_string(),
         session: extract_session_fields(&json, "EMAIL"),
+    }
+}
+
+/// signUp response decision (NEW IMPLEMENTATION 2026-11-13, wiring seam).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignUpInterpretation {
+    /// Error body mapping: the caller commits clearPendingAuthFlow(true).
+    ErrorClearPending(String),
+    /// Parse catch-all: NO commit on this path in the source (the
+    /// JSONObject(body) throw skips the pending-flow cleanup).
+    ErrorPlain(String),
+    /// Unverified or token-less response: the caller commits pendingEmail +
+    /// pendingAuthAction and shows this.
+    VerificationRequired(String),
+    /// Verified with token: the caller commits clearPendingAuthFlow(true)
+    /// plus the session writes.
+    Success { user: AuthUser, message: String, session: SessionFields },
+}
+
+/// The NON-CLOCK interpretation of SupabaseAuthService.signUp's response:
+/// status/error mapping (corpus), JSONObject-equivalent parse, whole-body
+/// user fallback (UNLIKE signIn's empty object), confirmation check, the
+/// accessToken.isNotBlank() && confirmed split, readUser, and saveSession's
+/// RAW field extraction. All WRITES and the expiry clock read stay at the
+/// caller's original commit points. A 2xx NON-OBJECT body yields the
+/// source catch-all (JSONObject(body) throws on it) - an edge the f-rows
+/// corpus does NOT lock, mirrored Kotlin-true.
+pub fn interpret_sign_up_response(
+    successful: bool,
+    body: &str,
+    normalized_email: &str,
+) -> SignUpInterpretation {
+    if !successful {
+        return SignUpInterpretation::ErrorClearPending(crate::auth_errors::for_response(
+            body,
+            crate::auth_errors::AuthOperation::SignUp,
+        ));
+    }
+    let json = match JsonParser::new(body).parse() {
+        Ok(v @ JsonValue::Object(_)) => v,
+        _ => {
+            return SignUpInterpretation::ErrorPlain(
+                "We couldn't create your account right now. Check your connection and try again."
+                    .to_string(),
+            )
+        }
+    };
+    // Source: json.optJSONObject("user") ?: json  (WHOLE body, not empty).
+    let user = opt_object(&json, "user").unwrap_or(&json);
+    let confirmed = email_is_confirmed(user);
+    // Source: json.optString("access_token") then isNotBlank(); the
+    // corpus-locked port used isEmpty - the whitespace-only-token edge is
+    // NOT corpus-locked, and isBlank is what the Kotlin source does.
+    let access_token = aosp_opt_string(&json, "access_token", "");
+    if !kotlin_is_blank(&access_token) && confirmed {
+        SignUpInterpretation::Success {
+            user: read_user(user, Some(normalized_email)),
+            message: "Your verified CycleCare account is ready.".to_string(),
+            session: extract_session_fields(&json, "EMAIL"),
+        }
+    } else {
+        SignUpInterpretation::VerificationRequired(format!(
+            "Check {normalized_email} for your CycleCare verification link. The app will open automatically after you verify; you can enter only then."
+        ))
+    }
+}
+
+/// continueAsGuest response decision (NEW IMPLEMENTATION 2026-11-13, wiring
+/// seam). NO commit happens on ANY guest error path in the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuestInterpretation {
+    Error(String),
+    /// The caller commits the saveSession-equivalent writes and then
+    /// userEmail = null, and builds SupabaseUser(id = userId, isAnonymous =
+    /// true) itself.
+    Success { user_id: String, message: String, session: SessionFields },
+}
+
+/// The NON-CLOCK interpretation of continueAsGuest's signup response:
+/// status/error mapping (corpus), JSONObject-equivalent parse, whole-body
+/// user fallback, the userId.isBlank() || accessToken.isBlank() -> corpus
+/// fallback split (isBlank, not the port's isEmpty - whitespace-only is an
+/// unlocked edge, mirrored Kotlin-true), and saveSession's RAW extraction
+/// in ANONYMOUS mode.
+pub fn interpret_guest_response(successful: bool, body: &str) -> GuestInterpretation {
+    if !successful {
+        return GuestInterpretation::Error(crate::auth_errors::for_response(
+            body,
+            crate::auth_errors::AuthOperation::Guest,
+        ));
+    }
+    let json = match JsonParser::new(body).parse() {
+        Ok(v @ JsonValue::Object(_)) => v,
+        _ => {
+            return GuestInterpretation::Error(
+                "A secure guest session needs an internet connection. Please retry when online."
+                    .to_string(),
+            )
+        }
+    };
+    let user = opt_object(&json, "user").unwrap_or(&json);
+    let user_id = aosp_opt_string(user, "id", "");
+    let access_token = aosp_opt_string(&json, "access_token", "");
+    if kotlin_is_blank(&user_id) || kotlin_is_blank(&access_token) {
+        return GuestInterpretation::Error(
+            crate::auth_errors::fallback(crate::auth_errors::AuthOperation::Guest).to_string(),
+        );
+    }
+    GuestInterpretation::Success {
+        user_id,
+        message: "Your private guest session is ready.".to_string(),
+        session: extract_session_fields(&json, "ANONYMOUS"),
+    }
+}
+
+/// setPassword response decision (NEW IMPLEMENTATION 2026-11-13, wiring
+/// seam).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetPasswordInterpretation {
+    Error(String),
+    /// The caller commits needsPasswordSetup = false, then succeeds.
+    Success { user: AuthUser, message: String },
+}
+
+/// The NON-CLOCK interpretation of setPassword's response: status/error
+/// mapping (corpus) and readUser over runCatching { JSONObject(body) }
+/// .getOrElse { JSONObject() } - parse failure AND non-object text both
+/// yield the EMPTY object here (different from every other flow).
+pub fn interpret_set_password_response(
+    successful: bool,
+    body: &str,
+    fallback_email: &str,
+) -> SetPasswordInterpretation {
+    if !successful {
+        return SetPasswordInterpretation::Error(crate::auth_errors::for_response(
+            body,
+            crate::auth_errors::AuthOperation::SetPassword,
+        ));
+    }
+    let user = match JsonParser::new(body).parse() {
+        Ok(v @ JsonValue::Object(_)) => v,
+        _ => JsonValue::Object(vec![]),
+    };
+    SetPasswordInterpretation::Success {
+        user: read_user(&user, Some(fallback_email)),
+        message: "Your password is set.".to_string(),
+    }
+}
+
+/// sendMagicLink / sendPasswordReset / linkGuestAccount response decision
+/// (NEW IMPLEMENTATION 2026-11-13, wiring seam): the only NON-CLOCK content
+/// is the status split and the corpus error-body mapping; every commit and
+/// every success message stays with the caller (they differ per flow).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlowStatusInterpretation {
+    /// The caller commits its clearPendingAuthFlow variant, then shows this.
+    Error(String),
+    /// The caller commits its pending-flow writes and builds its message.
+    Proceed,
+}
+
+pub fn interpret_flow_status(
+    successful: bool,
+    body: &str,
+    operation: crate::auth_errors::AuthOperation,
+) -> FlowStatusInterpretation {
+    if successful {
+        FlowStatusInterpretation::Proceed
+    } else {
+        FlowStatusInterpretation::Error(crate::auth_errors::for_response(body, operation))
     }
 }
 
@@ -1041,5 +1201,137 @@ mod tests {
         assert_eq!(p2.user_email, None);
         assert_eq!(p2.access_token, None);
         assert_eq!(p2.session_expires_at_seconds, 1600);
+    }
+    #[test]
+    fn interpret_flow_seams_wiring_pins() {
+        // NEW IMPLEMENTATION (2026-11-13) wiring-seam pins for signUp,
+        // continueAsGuest, setPassword and the status-only flows. Written
+        // for execution on a build host; NOT executed in the wiring
+        // environment.
+
+        // ---- signUp ----
+        // Error body mapping carries the clear-pending commit marker.
+        assert_eq!(
+            interpret_sign_up_response(false, r#"{"error":"user_exists","error_description":"User already registered"}"#, "e@x.y"),
+            SignUpInterpretation::ErrorClearPending("An account with that email already exists. Sign in or reset your password.".to_string())
+        );
+        // Parse failure AND non-object top level -> the create catch-all,
+        // with NO commit (ErrorPlain).
+        assert_eq!(
+            interpret_sign_up_response(true, "{not json", "e@x.y"),
+            SignUpInterpretation::ErrorPlain("We couldn't create your account right now. Check your connection and try again.".to_string())
+        );
+        assert_eq!(
+            interpret_sign_up_response(true, "[1,2]", "e@x.y"),
+            SignUpInterpretation::ErrorPlain("We couldn't create your account right now. Check your connection and try again.".to_string())
+        );
+        // Unconfirmed -> VerificationRequired even with a token (never
+        // retain an unverified session).
+        match interpret_sign_up_response(true, r#"{"access_token":"T1","user":{"id":"u1","email":"e@x.y"}}"#, "e@x.y") {
+            SignUpInterpretation::VerificationRequired(m) =>
+                assert_eq!(m, "Check e@x.y for your CycleCare verification link. The app will open automatically after you verify; you can enter only then."),
+            other => panic!("expected VerificationRequired, got {other:?}"),
+        }
+        // Confirmed but NO token -> VerificationRequired.
+        match interpret_sign_up_response(true, r#"{"user":{"id":"u1","email":"e@x.y","email_confirmed_at":"x"}}"#, "e@x.y") {
+            SignUpInterpretation::VerificationRequired(_) => {}
+            other => panic!("expected VerificationRequired, got {other:?}"),
+        }
+        // Whitespace-only token (unlocked edge; Kotlin isBlank) -> VERIFY.
+        match interpret_sign_up_response(true, r#"{"access_token":" ","user":{"id":"u1","email":"e@x.y","email_confirmed_at":"x"}}"#, "e@x.y") {
+            SignUpInterpretation::VerificationRequired(_) => {}
+            other => panic!("expected VerificationRequired, got {other:?}"),
+        }
+        // signUp's user fallback is the WHOLE body (UNLIKE signIn): a body
+        // with no "user" key but top-level confirmation + token succeeds,
+        // and the session fields read the top level.
+        match interpret_sign_up_response(true, r#"{"id":"u9","email":"top@x.y","email_confirmed_at":"x","access_token":"T1","refresh_token":"R2","expires_in":600}"#, "e@x.y") {
+            SignUpInterpretation::Success { user, message, session } => {
+                assert_eq!(user.id, "u9");
+                assert_eq!(message, "Your verified CycleCare account is ready.");
+                assert_eq!(session.mode, "EMAIL");
+                assert_eq!(session.user_id.as_deref(), Some("u9"));
+                assert_eq!(session.access_token.as_deref(), Some("T1"));
+                assert_eq!(session.expires_in, 600);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        // ---- continueAsGuest ----
+        assert_eq!(
+            interpret_guest_response(false, r#"{"error":"anonymous sign-ins are disabled"}"#),
+            GuestInterpretation::Error("Guest access is temporarily unavailable. Try again later or sign in with email.".to_string())
+        );
+        assert_eq!(
+            interpret_guest_response(true, "{not json"),
+            GuestInterpretation::Error("A secure guest session needs an internet connection. Please retry when online.".to_string())
+        );
+        assert_eq!(
+            interpret_guest_response(true, "[1,2]"),
+            GuestInterpretation::Error("A secure guest session needs an internet connection. Please retry when online.".to_string())
+        );
+        // Blank id or blank token -> the corpus fallback (no commit).
+        assert_eq!(
+            interpret_guest_response(true, r#"{"user":{"id":" "},"access_token":"G1"}"#),
+            GuestInterpretation::Error("Guest access is temporarily unavailable. Please try again later.".to_string())
+        );
+        assert_eq!(
+            interpret_guest_response(true, r#"{"user":{"id":"anon1"},"access_token":""}"#),
+            GuestInterpretation::Error("Guest access is temporarily unavailable. Please try again later.".to_string())
+        );
+        // Success: whole-body user fallback + ANONYMOUS session extraction.
+        match interpret_guest_response(true, r#"{"id":"anon1","access_token":"G1","refresh_token":"G2"}"#) {
+            GuestInterpretation::Success { user_id, message, session } => {
+                assert_eq!(user_id, "anon1");
+                assert_eq!(message, "Your private guest session is ready.");
+                assert_eq!(session.mode, "ANONYMOUS");
+                assert_eq!(session.user_id.as_deref(), Some("anon1"));
+                assert_eq!(session.refresh_token.as_deref(), Some("G2"));
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        // ---- setPassword ----
+        assert_eq!(
+            interpret_set_password_response(false, "{}", "e@x.y"),
+            SetPasswordInterpretation::Error("Your password couldn't be updated right now. Please try again.".to_string())
+        );
+        // Malformed AND non-object bodies both yield the EMPTY user
+        // (runCatching {} getOrElse empty) with the caller's email fallback.
+        for body in ["{not json", "[1,2]"] {
+            match interpret_set_password_response(true, body, "e@x.y") {
+                SetPasswordInterpretation::Success { user, message } => {
+                    assert_eq!(user.id, "");
+                    assert_eq!(user.email.as_deref(), Some("e@x.y"));
+                    assert_eq!(message, "Your password is set.");
+                }
+                other => panic!("expected Success, got {other:?}"),
+            }
+        }
+        match interpret_set_password_response(true, r#"{"id":"u1","email":"n@x.y","email_confirmed_at":"x"}"#, "e@x.y") {
+            SetPasswordInterpretation::Success { user, .. } => {
+                assert_eq!(user.id, "u1");
+                assert_eq!(user.email.as_deref(), Some("n@x.y"));
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        // ---- status-only flows ----
+        assert_eq!(
+            interpret_flow_status(true, "", crate::auth_errors::AuthOperation::MagicLink),
+            FlowStatusInterpretation::Proceed
+        );
+        assert_eq!(
+            interpret_flow_status(false, "{}", crate::auth_errors::AuthOperation::MagicLink),
+            FlowStatusInterpretation::Error("We couldn't send a sign-in link right now. Please try again later.".to_string())
+        );
+        assert_eq!(
+            interpret_flow_status(false, "{}", crate::auth_errors::AuthOperation::PasswordReset),
+            FlowStatusInterpretation::Error("We couldn't send password reset instructions right now. Please try again later.".to_string())
+        );
+        assert_eq!(
+            interpret_flow_status(false, r#"{"error":"user_exists"}"#, crate::auth_errors::AuthOperation::AccountLink),
+            FlowStatusInterpretation::Error("That email is already linked to another account. Sign out, then sign in to that account.".to_string())
+        );
     }
 }

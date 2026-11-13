@@ -929,6 +929,81 @@ fn dispatch(contract: &str, payload: &str) -> String {
                             "expiresAt":session.expires_at,"expiresIn":session.expires_in}}}).to_string(),
             }
         })(),
+        "auth_sign_up_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the NON-CLOCK
+            // sign-up response interpretation (auth_link::
+            // interpret_sign_up_response, shared with the auth_flows port).
+            // The PASSWORD never crosses (the request stays Kotlin-built);
+            // all commits and the expiry clock read stay at the caller.
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let email = match v.get("normalizedEmail").and_then(|x| x.as_str()) { Some(s) => s, None => return err("normalizedEmail missing or not a string") };
+            match corelib::auth_link::interpret_sign_up_response(successful, body, email) {
+                corelib::auth_link::SignUpInterpretation::ErrorClearPending(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error_clear_pending","message":m}}).to_string(),
+                corelib::auth_link::SignUpInterpretation::ErrorPlain(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::SignUpInterpretation::VerificationRequired(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"verify","message":m}}).to_string(),
+                corelib::auth_link::SignUpInterpretation::Success { user, message, session } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","message":message,
+                        "user":{"id":user.id,"email":user.email,"emailConfirmedAt":user.email_confirmed_at,"anonymous":user.is_anonymous},
+                        "session":{"mode":session.mode,"userId":session.user_id,"userEmail":session.user_email,
+                            "accessToken":session.access_token,"refreshToken":session.refresh_token,
+                            "expiresAt":session.expires_at,"expiresIn":session.expires_in}}}).to_string(),
+            }
+        })(),
+        "auth_guest_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK continueAsGuest
+            // response interpretation (auth_link::interpret_guest_response).
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            match corelib::auth_link::interpret_guest_response(successful, body) {
+                corelib::auth_link::GuestInterpretation::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::GuestInterpretation::Success { user_id, message, session } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","message":message,"userId":user_id,
+                        "session":{"mode":session.mode,"userId":session.user_id,"userEmail":session.user_email,
+                            "accessToken":session.access_token,"refreshToken":session.refresh_token,
+                            "expiresAt":session.expires_at,"expiresIn":session.expires_in}}}).to_string(),
+            }
+        })(),
+        "auth_set_password_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK setPassword
+            // response interpretation (auth_link::
+            // interpret_set_password_response). The PASSWORD never crosses:
+            // it lives only in the Kotlin-built PUT body.
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let fallback_email = match v.get("fallbackEmail").and_then(|x| x.as_str()) { Some(s) => s, None => return err("fallbackEmail missing or not a string") };
+            match corelib::auth_link::interpret_set_password_response(successful, body, fallback_email) {
+                corelib::auth_link::SetPasswordInterpretation::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::SetPasswordInterpretation::Success { user, message } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","message":message,
+                        "user":{"id":user.id,"email":user.email,"emailConfirmedAt":user.email_confirmed_at,"anonymous":user.is_anonymous}}}).to_string(),
+            }
+        })(),
+        "auth_flow_status_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): the status split + corpus
+            // error mapping for sendMagicLink / sendPasswordReset /
+            // linkGuestAccount (auth_link::interpret_flow_status). Every
+            // commit and success message stays with the caller.
+            let operation = match v.get("operation").and_then(|x| x.as_str()) {
+                Some("MAGIC_LINK") => corelib::auth_errors::AuthOperation::MagicLink,
+                Some("PASSWORD_RESET") => corelib::auth_errors::AuthOperation::PasswordReset,
+                Some("ACCOUNT_LINK") => corelib::auth_errors::AuthOperation::AccountLink,
+                _ => return err("operation missing or not an allowed flow"),
+            };
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            match corelib::auth_link::interpret_flow_status(successful, body, operation) {
+                corelib::auth_link::FlowStatusInterpretation::Proceed =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"ok"}}).to_string(),
+                corelib::auth_link::FlowStatusInterpretation::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+            }
+        })(),
         "session_refresh_shape_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13, reviewer-corrected): JNI
             // wiring of the NON-CLOCK shape segment of resolveAccessToken's

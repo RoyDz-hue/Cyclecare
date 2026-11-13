@@ -1051,66 +1051,212 @@ object CycleCareCoreBridge {
         return decodeSessionAuthDecision(reply)
     }
 
-    /** Strict decode: "ok" a real object, "version" exactly 1, "verdict" an
-     * exact kind string, "message" a nonempty string on every verdict. A
-     * SUCCESS reply must carry a real user object (id a genuine string,
-     * email/emailConfirmedAt null-or-string, anonymous a genuine Boolean)
-     * and a real session object (mode exactly "EMAIL" - this op only
-     * decides sign-in, userId/userEmail/accessToken/refreshToken
-     * null-or-NONEMPTY strings (blank maps to a marker, never a string),
-     * expiresAt null-or-genuine-integer, expiresIn a genuine integer). */
-    internal fun decodeSessionAuthDecision(reply: JSONObject): SessionAuthDecision? {
+    /** Strict null-or-string wire field: an explicit JSON null or a missing
+     * key maps to the ABSENT sentinel (JSONObject.NULL), a genuine String
+     * passes (rejected when blank and [nonempty]), anything else is drift. */
+    private fun strictWireString(container: JSONObject, key: String, nonempty: Boolean): Any? {
+        val v = container.opt(key)
+        if (v === JSONObject.NULL || v == null) return JSONObject.NULL
+        if (v !is String) return null
+        if (nonempty && v.isEmpty()) return null
+        return v
+    }
+
+    /** Strict decode of the shared user payload: id a genuine string,
+     * email/emailConfirmedAt null-or-string, anonymous a genuine Boolean. */
+    private fun decodeAuthUserFields(user: JSONObject?): AuthUserFields? {
+        if (user == null) return null
+        val id = user.opt("id")
+        if (id !is String) return null
+        val email = strictWireString(user, "email", nonempty = false); if (email == null) return null
+        val confirmed = strictWireString(user, "emailConfirmedAt", nonempty = false); if (confirmed == null) return null
+        val anonymous = user.opt("anonymous")
+        if (anonymous !is Boolean) return null
+        return AuthUserFields(id as String,
+            if (email === JSONObject.NULL) null else email as String,
+            if (confirmed === JSONObject.NULL) null else confirmed as String,
+            anonymous as Boolean)
+    }
+
+    /** Strict decode of the shared session-writes payload. The mode is
+     * pinned per op so a reply can never reroute the caller's writes.
+     * userId/userEmail/accessToken/refreshToken are null-or-NONEMPTY (blank
+     * on the wire is drift, never coerced to a keep/set-null marker);
+     * expiresAt is null-or-genuine-integer; expiresIn a genuine integer. */
+    private fun decodeSessionFieldWrites(session: JSONObject?, expectedMode: String): SessionFieldWrites? {
+        if (session == null) return null
+        if (session.opt("mode") != expectedMode) return null
+        val userId = strictWireString(session, "userId", nonempty = true); if (userId == null) return null
+        val userEmail = strictWireString(session, "userEmail", nonempty = true); if (userEmail == null) return null
+        val access = strictWireString(session, "accessToken", nonempty = true); if (access == null) return null
+        val refresh = strictWireString(session, "refreshToken", nonempty = true); if (refresh == null) return null
+        val expiresAt = when (val e = session.opt("expiresAt")) {
+            null, JSONObject.NULL -> null
+            is Int -> e.toLong()
+            is Long -> e
+            else -> return null
+        }
+        val expiresIn = when (val e = session.opt("expiresIn")) {
+            is Int -> e.toLong()
+            is Long -> e
+            else -> return null
+        }
+        return SessionFieldWrites(expectedMode,
+            if (userId === JSONObject.NULL) null else userId as String,
+            if (userEmail === JSONObject.NULL) null else userEmail as String,
+            if (access === JSONObject.NULL) null else access as String,
+            if (refresh === JSONObject.NULL) null else refresh as String,
+            expiresAt, expiresIn)
+    }
+
+    /** Strict decode of the shared verdict envelope: "ok" a real object,
+     * "version" exactly 1, "message" a nonempty string. */
+    private fun strictEnvelope(reply: JSONObject): Pair<JSONObject, String>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         val message = ok.opt("message")
         if (message !is String || message.isEmpty()) return null
-        fun optStr(key: String, container: JSONObject, nonempty: Boolean): Any? {
-            val v = container.opt(key)
-            if (v === JSONObject.NULL || v == null) return JSONObject.NULL
-            if (v !is String) return null
-            if (nonempty && v.isEmpty()) return null
-            return v
-        }
+        return ok to (message as String)
+    }
+
+    /** Strict decode: exact verdict strings; a SUCCESS reply must carry a
+     * real user object and a real session object pinned to mode "EMAIL"
+     * (this op only decides sign-in). Any drift -> null -> the caller keeps
+     * its verbatim Kotlin interpretation. */
+    internal fun decodeSessionAuthDecision(reply: JSONObject): SessionAuthDecision? {
+        val (ok, message) = strictEnvelope(reply) ?: return null
         return when (ok.opt("verdict")) {
-            "error" -> SessionAuthDecision(AuthDecisionKind.ERROR, message as String, null, null)
-            "verify" -> SessionAuthDecision(AuthDecisionKind.VERIFY, message as String, null, null)
+            "error" -> SessionAuthDecision(AuthDecisionKind.ERROR, message, null, null)
+            "verify" -> SessionAuthDecision(AuthDecisionKind.VERIFY, message, null, null)
             "success" -> {
-                val user = ok.optJSONObject("user") ?: return null
-                val id = user.opt("id")
-                if (id !is String) return null
-                val email = optStr("email", user, nonempty = false); if (email == null) return null
-                val confirmed = optStr("emailConfirmedAt", user, nonempty = false); if (confirmed == null) return null
-                val anonymous = user.opt("anonymous")
-                if (anonymous !is Boolean) return null
-                val session = ok.optJSONObject("session") ?: return null
-                if (session.opt("mode") != "EMAIL") return null
-                val userId = optStr("userId", session, nonempty = true); if (userId == null) return null
-                val userEmail = optStr("userEmail", session, nonempty = true); if (userEmail == null) return null
-                val access = optStr("accessToken", session, nonempty = true); if (access == null) return null
-                val refresh = optStr("refreshToken", session, nonempty = true); if (refresh == null) return null
-                val expiresAt = when (val e = session.opt("expiresAt")) {
-                    null, JSONObject.NULL -> null
-                    is Int -> e.toLong()
-                    is Long -> e
-                    else -> return null
-                }
-                val expiresIn = when (val e = session.opt("expiresIn")) {
-                    is Int -> e.toLong()
-                    is Long -> e
-                    else -> return null
-                }
-                SessionAuthDecision(AuthDecisionKind.SUCCESS, message as String,
-                    AuthUserFields(id as String,
-                        if (email === JSONObject.NULL) null else email as String,
-                        if (confirmed === JSONObject.NULL) null else confirmed as String,
-                        anonymous as Boolean),
-                    SessionFieldWrites("EMAIL",
-                        if (userId === JSONObject.NULL) null else userId as String,
-                        if (userEmail === JSONObject.NULL) null else userEmail as String,
-                        if (access === JSONObject.NULL) null else access as String,
-                        if (refresh === JSONObject.NULL) null else refresh as String,
-                        expiresAt, expiresIn))
+                val user = decodeAuthUserFields(ok.optJSONObject("user")) ?: return null
+                val session = decodeSessionFieldWrites(ok.optJSONObject("session"), "EMAIL") ?: return null
+                SessionAuthDecision(AuthDecisionKind.SUCCESS, message, user, session)
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authSignUpResponse]. ERROR_CLEAR_PENDING carries the
+     * source's clearPendingAuthFlow(true) commit; ERROR_PLAIN has NO commit
+     * (the source's parse catch-all skips the cleanup). */
+    enum class SignUpDecisionKind { ERROR_CLEAR_PENDING, ERROR_PLAIN, VERIFY, SUCCESS }
+    data class SignUpAuthDecision(val kind: SignUpDecisionKind, val message: String, val user: AuthUserFields?, val session: SessionFieldWrites?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the NON-CLOCK
+     * sign-up response interpretation (auth_link::interpret_sign_up_response,
+     * shared with the auth_flows port). The password never crosses; every
+     * commit and the expiry clock read stay at the caller. null = native
+     * unavailable/malformed -> the verbatim Kotlin twin. */
+    fun authSignUpResponse(successful: Boolean, body: String, normalizedEmail: String): SignUpAuthDecision? {
+        val reply = call("auth_sign_up_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body)
+            .put("normalizedEmail", normalizedEmail)) ?: return null
+        return decodeSignUpAuthDecision(reply)
+    }
+
+    internal fun decodeSignUpAuthDecision(reply: JSONObject): SignUpAuthDecision? {
+        val (ok, message) = strictEnvelope(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error_clear_pending" -> SignUpAuthDecision(SignUpDecisionKind.ERROR_CLEAR_PENDING, message, null, null)
+            "error" -> SignUpAuthDecision(SignUpDecisionKind.ERROR_PLAIN, message, null, null)
+            "verify" -> SignUpAuthDecision(SignUpDecisionKind.VERIFY, message, null, null)
+            "success" -> {
+                val user = decodeAuthUserFields(ok.optJSONObject("user")) ?: return null
+                val session = decodeSessionFieldWrites(ok.optJSONObject("session"), "EMAIL") ?: return null
+                SignUpAuthDecision(SignUpDecisionKind.SUCCESS, message, user, session)
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authGuestResponse]. NO guest error path carries a
+     * commit in the source. */
+    enum class GuestDecisionKind { ERROR, SUCCESS }
+    data class GuestAuthDecision(val kind: GuestDecisionKind, val message: String, val userId: String?, val session: SessionFieldWrites?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the NON-CLOCK
+     * continueAsGuest response interpretation (auth_link::
+     * interpret_guest_response). */
+    fun authGuestResponse(successful: Boolean, body: String): GuestAuthDecision? {
+        val reply = call("auth_guest_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body)) ?: return null
+        return decodeGuestAuthDecision(reply)
+    }
+
+    internal fun decodeGuestAuthDecision(reply: JSONObject): GuestAuthDecision? {
+        val (ok, message) = strictEnvelope(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> GuestAuthDecision(GuestDecisionKind.ERROR, message, null, null)
+            "success" -> {
+                val userId = ok.opt("userId")
+                if (userId !is String || userId.isEmpty()) return null
+                val session = decodeSessionFieldWrites(ok.optJSONObject("session"), "ANONYMOUS") ?: return null
+                GuestAuthDecision(GuestDecisionKind.SUCCESS, message, userId as String, session)
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authSetPasswordResponse]. */
+    enum class SetPasswordDecisionKind { ERROR, SUCCESS }
+    data class SetPasswordAuthDecision(val kind: SetPasswordDecisionKind, val message: String, val user: AuthUserFields?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the NON-CLOCK
+     * setPassword response interpretation (auth_link::
+     * interpret_set_password_response). The password never crosses: it
+     * lives only in the Kotlin-built PUT body. */
+    fun authSetPasswordResponse(successful: Boolean, body: String, fallbackEmail: String): SetPasswordAuthDecision? {
+        val reply = call("auth_set_password_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body)
+            .put("fallbackEmail", fallbackEmail)) ?: return null
+        return decodeSetPasswordAuthDecision(reply)
+    }
+
+    internal fun decodeSetPasswordAuthDecision(reply: JSONObject): SetPasswordAuthDecision? {
+        val (ok, message) = strictEnvelope(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> SetPasswordAuthDecision(SetPasswordDecisionKind.ERROR, message, null)
+            "success" -> {
+                val user = decodeAuthUserFields(ok.optJSONObject("user")) ?: return null
+                SetPasswordAuthDecision(SetPasswordDecisionKind.SUCCESS, message, user)
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authFlowStatus]: only the status split and the corpus
+     * error mapping cross; every commit and success message stays with the
+     * caller (they differ per flow). */
+    data class FlowStatusDecision(val error: Boolean, val message: String?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the status split +
+     * corpus error mapping for sendMagicLink / sendPasswordReset /
+     * linkGuestAccount (auth_link::interpret_flow_status). */
+    fun authFlowStatus(operation: String, successful: Boolean, body: String): FlowStatusDecision? {
+        val reply = call("auth_flow_status_v1", JSONObject()
+            .put("operation", operation)
+            .put("successful", successful)
+            .put("body", body)) ?: return null
+        return decodeFlowStatusDecision(reply)
+    }
+
+    /** Strict decode: "ok" verdict needs NO message; "error" verdict
+     * requires a nonempty one; version pinned to 1. */
+    internal fun decodeFlowStatusDecision(reply: JSONObject): FlowStatusDecision? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("verdict")) {
+            "ok" -> FlowStatusDecision(false, null)
+            "error" -> {
+                val message = ok.opt("message")
+                if (message !is String || message.isEmpty()) return null
+                FlowStatusDecision(true, message as String)
             }
             else -> null
         }

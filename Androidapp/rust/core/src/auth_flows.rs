@@ -24,7 +24,7 @@
 
 use crate::auth_errors::{for_response, AuthOperation};
 use crate::auth_link::{
-    read_user, save_session, AuthOutcome, AuthPrefsState, AuthUser, Transport, AUTH_ACTION_GUEST_LINK, AUTH_ACTION_MAGIC_LINK,
+    AuthOutcome, AuthPrefsState, AuthUser, Transport, AUTH_ACTION_GUEST_LINK, AUTH_ACTION_MAGIC_LINK,
     AUTH_ACTION_PASSWORD_RESET, AUTH_ACTION_SIGN_UP,
 };
 use crate::kotlin_text::kotlin_trim;
@@ -61,7 +61,6 @@ const MSG_LINK_EXPIRED: &str = "Your guest session expired. Continue as guest ag
 const MSG_LINK_SENT: &str = "A verification link was sent to %EMAIL%. Open it on this device to attach this guest data to your account; you will not enter until verification completes.";
 const MSG_SETPW_SHORT: &str = "Use a password with at least 8 characters.";
 const MSG_SETPW_EXPIRED: &str = "Your verified session has expired. Sign in again to set a password.";
-const MSG_SETPW_DONE: &str = "Your password is set.";
 const MSG_SETPW_CONNECT: &str = "Unable to connect. Please try again.";
 
 /// Kotlin String.lowercase(): Unicode full case mapping (Rust matches;
@@ -201,31 +200,36 @@ pub fn sign_up(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(MSG_SIGNUP_CONNECT.to_string()),
     };
-    if !response.successful {
-        prefs.clear_pending_auth_flow(true);
-        return AuthOutcome::Error(for_response(&response.body, AuthOperation::SignUp));
+    // The interpretation is the SHARED wiring seam (auth_link::
+    // interpret_sign_up_response, NEW IMPLEMENTATION 2026-11-13): the JNI
+    // wiring and this port run ONE implementation. The commits stay here,
+    // in the source's order. DEVIATIONS from the previous port-internal
+    // code on edges the f-rows do NOT lock, both mirrored Kotlin-true: a
+    // 2xx NON-OBJECT body now yields the create-failure catch-all (what
+    // JSONObject(body) throwing produces), and the token check is isBlank
+    // (whitespace-only counts as absent), not isEmpty.
+    match crate::auth_link::interpret_sign_up_response(
+        response.successful,
+        &response.body,
+        &normalized_email,
+    ) {
+        crate::auth_link::SignUpInterpretation::ErrorClearPending(m) => {
+            prefs.clear_pending_auth_flow(true);
+            AuthOutcome::Error(m)
+        }
+        crate::auth_link::SignUpInterpretation::ErrorPlain(m) => AuthOutcome::Error(m),
+        crate::auth_link::SignUpInterpretation::VerificationRequired(m) => {
+            // Never retain an unverified session, even if the project issues one.
+            prefs.pending_email = Some(normalized_email.clone());
+            prefs.pending_auth_action = Some(AUTH_ACTION_SIGN_UP.to_string());
+            AuthOutcome::VerificationRequired(m)
+        }
+        crate::auth_link::SignUpInterpretation::Success { user, message, session } => {
+            prefs.clear_pending_auth_flow(true);
+            crate::auth_link::apply_session_fields(prefs, &session, seams.now_seconds);
+            AuthOutcome::Success { user, message }
+        }
     }
-    let json = match JsonParser::new(&response.body).parse() {
-        Ok(v) => v,
-        Err(_) => return AuthOutcome::Error(MSG_SIGNUP_CONNECT.to_string()),
-    };
-    let user = opt_object_of(&json, "user").cloned().unwrap_or_else(|| json.clone());
-    let confirmed = crate::auth_link::email_is_confirmed(&user);
-    let access_token = crate::sync_codec::aosp_opt_string(&json, "access_token", "");
-    if !access_token.is_empty() && confirmed {
-        prefs.clear_pending_auth_flow(true);
-        save_session(prefs, &json, "EMAIL", seams.now_seconds);
-        return AuthOutcome::Success {
-            user: read_user(&user, Some(normalized_email.as_str())),
-            message: "Your verified CycleCare account is ready.".to_string(),
-        };
-    }
-    // Never retain an unverified session, even if the project issues one.
-    prefs.pending_email = Some(normalized_email.clone());
-    prefs.pending_auth_action = Some(AUTH_ACTION_SIGN_UP.to_string());
-    AuthOutcome::VerificationRequired(format!(
-        "Check {normalized_email} for your CycleCare verification link. The app will open automatically after you verify; you can enter only then."
-    ))
 }
 
 /// Verbatim port of signIn.
@@ -407,24 +411,20 @@ pub fn continue_as_guest(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(MSG_GUEST_CONNECT.to_string()),
     };
-    if !response.successful {
-        return AuthOutcome::Error(for_response(&response.body, AuthOperation::Guest));
-    }
-    let json = match JsonParser::new(&response.body).parse() {
-        Ok(v) => v,
-        Err(_) => return AuthOutcome::Error(MSG_GUEST_CONNECT.to_string()),
-    };
-    let user = opt_object_of(&json, "user").cloned().unwrap_or_else(|| json.clone());
-    let user_id = crate::sync_codec::aosp_opt_string(&user, "id", "");
-    let access_token = crate::sync_codec::aosp_opt_string(&json, "access_token", "");
-    if user_id.is_empty() || access_token.is_empty() {
-        return AuthOutcome::Error(crate::auth_errors::fallback(AuthOperation::Guest).to_string());
-    }
-    save_session(prefs, &json, "ANONYMOUS", seams.now_seconds);
-    prefs.user_email = None;
-    AuthOutcome::Success {
-        user: AuthUser { id: user_id, email: None, email_confirmed_at: None, is_anonymous: true },
-        message: MSG_GUEST_READY.to_string(),
+    // The interpretation is the SHARED wiring seam (auth_link::
+    // interpret_guest_response, NEW IMPLEMENTATION 2026-11-13). Same two
+    // unlocked-edge deviations as sign_up: non-object body -> connect
+    // catch-all; blank (not just empty) id/token -> corpus fallback.
+    match crate::auth_link::interpret_guest_response(response.successful, &response.body) {
+        crate::auth_link::GuestInterpretation::Error(m) => AuthOutcome::Error(m),
+        crate::auth_link::GuestInterpretation::Success { user_id, message, session } => {
+            crate::auth_link::apply_session_fields(prefs, &session, seams.now_seconds);
+            prefs.user_email = None;
+            AuthOutcome::Success {
+                user: AuthUser { id: user_id, email: None, email_confirmed_at: None, is_anonymous: true },
+                message,
+            }
+        }
     }
 }
 
@@ -453,14 +453,21 @@ pub fn set_password(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(MSG_SETPW_CONNECT.to_string()),
     };
-    if !response.successful {
-        return AuthOutcome::Error(for_response(&response.body, AuthOperation::SetPassword));
-    }
-    prefs.needs_password_setup = false;
-    let user = JsonParser::new(&response.body).parse().unwrap_or(JsonValue::Object(vec![]));
-    AuthOutcome::Success {
-        user: read_user(&user, Some(prefs.user_email.clone().unwrap_or_default().as_str())),
-        message: MSG_SETPW_DONE.to_string(),
+    // The interpretation is the SHARED wiring seam (auth_link::
+    // interpret_set_password_response, NEW IMPLEMENTATION 2026-11-13). The
+    // needsPasswordSetup write stays at the source's point, before the
+    // success is built; the userEmail fallback value is unchanged by that
+    // write, so reading it for the seam first is equivalent.
+    match crate::auth_link::interpret_set_password_response(
+        response.successful,
+        &response.body,
+        &prefs.user_email.clone().unwrap_or_default(),
+    ) {
+        crate::auth_link::SetPasswordInterpretation::Error(m) => AuthOutcome::Error(m),
+        crate::auth_link::SetPasswordInterpretation::Success { user, message } => {
+            prefs.needs_password_setup = false;
+            AuthOutcome::Success { user, message }
+        }
     }
 }
 
@@ -513,16 +520,6 @@ fn add_pkce_fields(
     body
 }
 
-fn opt_object_of<'a>(json: &'a JsonValue, key: &str) -> Option<&'a JsonValue> {
-    match json {
-        JsonValue::Object(entries) => entries
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v)
-            .filter(|v| matches!(v, JsonValue::Object(_))),
-        _ => None,
-    }
-}
 
 #[cfg(test)]
 mod tests {
