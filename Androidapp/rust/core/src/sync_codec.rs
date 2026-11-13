@@ -679,7 +679,12 @@ impl<'a> JsonParser<'a> {
                     }
                 }
                 c if c == quote => return Ok(out),
-                '\n' | '\r' => return self.syntax_error("Unterminated string"),
+                // AOSP 14 JSONTokener.nextString accepts RAW control
+                // characters (TAB/LF/CR/formfeed/backspace) verbatim inside
+                // quoted strings - verified by executed oracle
+                // (2026-11-13 reviewer JVM probe). Only end-of-input is
+                // "Unterminated string". Raw chars are exactly
+                // representable in Rust strings, so no fallback marker.
                 c => out.push(c),
             }
         }

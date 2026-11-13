@@ -212,3 +212,21 @@ fn hash_null_matches_aosp() {
     let results = rows("results_codec_hashnull.tsv");
     assert_eq!(hash(None), results[0][1]);
 }
+
+#[test]
+fn raw_control_chars_in_strings_match_aosp_oracle() {
+    // Reviewer-executed AOSP 14 org.json oracle (2026-11-13): raw
+    // TAB/LF/CR/formfeed/backspace are accepted VERBATIM inside quoted
+    // strings; only end-of-input is "Unterminated string". Escaped forms
+    // (\t \n \r \f \b) decode to the same characters, so raw and escaped
+    // inputs are indistinguishable after parsing. Raw chars are exactly
+    // representable in Rust strings: no unsupported-semantics marker.
+    let expected = JsonValue::Str("a\tb\nc\rd\u{0C}e\u{08}f".to_string());
+    let raw = JsonParser::new("\"a\tb\nc\rd\u{0C}e\u{08}f\"").parse().unwrap();
+    assert_eq!(raw, expected, "raw control chars must be accepted verbatim");
+    assert!(!take_unsupported_semantics(), "raw control chars must NOT request fallback");
+    let escaped = JsonParser::new("\"a\\tb\\nc\\rd\\fe\\bf\"").parse().unwrap();
+    assert_eq!(escaped, expected, "escaped forms decode to the same chars");
+    let err = JsonParser::new("\"abc").parse().unwrap_err();
+    assert!(err.contains("Unterminated string"), "end-of-input still rejects: {err}");
+}
