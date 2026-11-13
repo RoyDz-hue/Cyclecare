@@ -154,5 +154,13 @@ class SessionAuthFallbackParityTest {
         assertEquals(0L, expiresAt("0x1.0p-2147483647"))
         assertEquals(9007199254740992L, expiresAt("0x1fffffffffffff.8p0"))
         assertEquals(Long.MAX_VALUE, expiresAt("0x1p1024"))
+        // Below-guard sticky (reviewer counterexample): strictly above the
+        // tie -> rounds up; the exact-tie twin rounds to even (down).
+        assertEquals(4503599627370497L, expiresAt("0x40000000000003p-2"))
+        assertEquals(4503599627370496L, expiresAt("0x40000000000002p-2"))
+        // Deep-subnormal band: the JDK yields MIN_VALUE where the native
+        // side yields 0.0 - the (long) cast maps both to 0 (documented,
+        // drift/attack-only band, |v| < 1).
+        assertEquals(0L, expiresAt("0x1.8p-1075"))
     }
 }

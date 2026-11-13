@@ -214,10 +214,14 @@ fn scale_pow2(mant: f64, e: i64) -> f64 {
 /// with round-half-to-even on exact guard/sticky bits, then scaled by an
 /// exact power of two. For a mantissa of <=53 significant bits the scaling
 /// multiply is the single, correctly-rounded rounding of the true value
-/// (normals AND subnormals). For longer mantissas the one theoretical
-/// double-rounding band is deep-subnormal, where every result has
-/// |v| < 1 and the JVM (long) cast maps it to 0 regardless - so no
-/// cast-visible divergence from Double.parseDouble remains.
+/// whenever the power-of-two factor is itself representable (scale exponent
+/// >= -1074: normals AND subnormals). Below that the factor underflows and
+/// the returned float can differ from Double.parseDouble by a subnormal
+/// ulp - e.g. "0x1.8p-1075" yields 0.0 where Java yields Double.MIN_VALUE.
+/// For longer mantissas the one theoretical double-rounding band is
+/// likewise deep-subnormal. Every value in both bands has |v| < 1 and the
+/// JVM (long) cast maps it to 0 regardless - so no cast-visible divergence
+/// from Double.parseDouble remains.
 fn parse_java_hex_float(hex: &str) -> Option<f64> {
     let b = hex.as_bytes();
     let hexd = |b: &[u8], mut i: usize| -> usize {
@@ -309,8 +313,10 @@ fn parse_java_hex_float(hex: &str) -> Option<f64> {
         let dropped = if bits > 64 { bits - 64 } else { 0 }; // bits outside the window
         let w = window >> (sh - dropped); // top 54 significant bits
         let guard = (w & 1) == 1;
-        let below = sh - dropped - 1; // window bits below the guard bit
-        let sticky = sticky || (below >= 0 && (window & ((1u64 << below) - 1)) != 0);
+        // Window bits below the guard: positions 0..sh-dropped-1 (>= 0 always:
+        // sh-dropped == bits-54 when bits <= 64, == 10 when bits > 64).
+        let below = sh - dropped;
+        let sticky = sticky || (window & ((1u64 << below) - 1)) != 0;
         let mut r = w >> 1; // 53 bits
         let mut e = k + sh + 1;
         if guard && (sticky || (r & 1) == 1) {
@@ -1293,6 +1299,21 @@ mod tests {
         assert_eq!(f.expires_at, Some(0)); // zero mantissa, huge exponent
         let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1p999999999999999999999"}"#).parse().unwrap(), "EMAIL");
         assert_eq!(f.expires_at, Some(i64::MAX)); // exponent beyond i64
+        // Below-guard sticky (reviewer counterexample): the bit immediately
+        // below the guard is set, all others clear - strictly ABOVE the tie,
+        // must round UP. An off-by-one mask that excludes that bit sees a
+        // clean tie and rounds to even (4503599627370496).
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x40000000000003p-2"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(4503599627370497));
+        // Same shape with the below-guard bit CLEAR: an exact tie, rounds
+        // to even (down). Pins the tie/above-tie distinction.
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x40000000000002p-2"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(4503599627370496));
+        // Deep-subnormal band: the scale factor itself underflows, so the
+        // returned float (0.0) differs from Java's (Double.MIN_VALUE) -
+        // documented, drift/attack-only; the (long) cast maps both to 0.
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1.8p-1075"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(0));
         // apply_session_fields: None user_id KEEPS current (no generation
         // bump), None tokens SET null, expiry default uses caller's now.
         let mut prefs = AuthPrefsState { is_secure_storage_available: true, ..Default::default() };
