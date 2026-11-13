@@ -20,6 +20,14 @@ pub mod owner_data_gate;
 pub mod sync_gate;
 pub mod sync_use_case;
 pub mod care_image_gen;
+// Re-declared 2026-11-13 after the first local build: the Nov 13 07:08
+// reconstruction (f0bb5cc) carried these module FILES but lost their
+// lib.rs declarations, so the core-ffi crate (whose spike-era arms
+// reference them) could not compile. Files unchanged.
+pub mod care_context_full;
+pub mod care_merge_full;
+pub mod onboarding_storage_executor;
+pub mod recovery_state;
 pub mod debug_bridge;
 pub mod data_export_json;
 pub mod db_key_manager;

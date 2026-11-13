@@ -368,8 +368,9 @@ impl<'a> JsonParser<'a> {
         self.fallback_requested = true;
         UNSUPPORTED_SEMANTICS.with(|c| c.set(true));
     }
+}
 
-    thread_local! {
+thread_local! {
     /// Central "unsupported parser semantics" marker for the JNI transport:
     /// set when ANY JsonParser on this thread meets a construct the port
     /// cannot represent exactly (a LONE surrogate \u escape or a Java
@@ -432,6 +433,7 @@ fn looks_like_hex_float(literal: &str) -> bool {
     (t.starts_with("0x") || t.starts_with("0X")) && (t.contains('p') || t.contains('P'))
 }
 
+impl<'a> JsonParser<'a> {
 /// AOSP JSONTokener.nextValue: the FIRST value only, no trailing-content
     /// check (the JSONObject(JSONTokener) ctor does not check one either).
     pub fn parse(&mut self) -> Result<JsonValue, String> {

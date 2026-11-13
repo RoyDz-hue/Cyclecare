@@ -1090,7 +1090,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
             }
             let settings_v = match v.get("settings") { Some(x) => x, None => return err("settings missing") };
             let settings = match (|| {
-                Ok(de::ExportSettings {
+                Ok::<_, String>(de::ExportSettings {
                     selected_goals_csv: s(settings_v, "selected_goals_csv")?,
                     last_period_start_date: s(settings_v, "last_period_start_date")?,
                     average_cycle_length: i(settings_v, "average_cycle_length")?,
@@ -1104,7 +1104,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let profile_v = match v.get("profile") { Some(x) => x, None => return err("profile missing") };
             let profile = if profile_v.is_null() { None } else {
                 match (|| {
-                    Ok(de::ExportProfile {
+                    Ok::<_, String>(de::ExportProfile {
                         selected_goals_csv: s(profile_v, "selected_goals_csv")?,
                         last_period_date_string: s(profile_v, "last_period_date_string")?,
                         last_period_end_date_string: s(profile_v, "last_period_end_date_string")?,
@@ -1125,7 +1125,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 let log = match (|| {
                     let date_string = s(lv, "date_string")?;
                     if !date_string.is_ascii() { return Err("date_string not ASCII".to_string()); }
-                    Ok(de::ExportLog {
+                    Ok::<_, String>(de::ExportLog {
                         date_string,
                         flow_level: s(lv, "flow_level")?,
                         energy_level: s(lv, "energy_level")?,
@@ -1192,7 +1192,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 let last_period_start_date = s(settings_v, "last_period_start_date")?;
                 check_wrap(&selected_goals_csv)?;
                 check_wrap(&last_period_start_date)?;
-                Ok(sc::CycleSettings {
+                Ok::<_, String>(sc::CycleSettings {
                     id: 1,
                     is_onboarding_completed: false,
                     selected_goals_csv,
@@ -1219,7 +1219,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
                         "typical_energy", "typical_sleep_quality",
                     ];
                     for k in fields { check_wrap(&s(profile_v, k)?)?; }
-                    Ok(sc::OnboardingProfile {
+                    Ok::<_, String>(sc::OnboardingProfile {
                         selected_goals_csv: s(profile_v, "selected_goals_csv")?,
                         last_period_date_string: s(profile_v, "last_period_date_string")?,
                         last_period_end_date_string: s(profile_v, "last_period_end_date_string")?,
@@ -1266,7 +1266,7 @@ fn dispatch(contract: &str, payload: &str) -> String {
                             return Err(format!("{k} outside verified display range"));
                         }
                     }
-                    Ok(sc::CycleDayLog {
+                    Ok::<_, String>(sc::CycleDayLog {
                         date: date_string,
                         flow: s(lv, "flow_level")?,
                         energy: s(lv, "energy_level")?,

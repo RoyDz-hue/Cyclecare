@@ -539,45 +539,6 @@ mod tests {
         let num_sub = format!("{}.{}.{}", b64url("{}"), b64url(&format!("{{\"sub\":123,\"exp\":{}}}", NOW + 500)), b64url("s"));
         assert!(!valid_token_for_owner(&num_sub, "123", NOW)); // t08
     }
-}
-
-#[cfg(test)]
-mod android_b64_lock {
-    use super::b64url_decode;
-
-    /// Locked to AndroidB64Probe executed against the compiled AOSP
-    /// android-14.0.0_r1 android.util.Base64 class (URL_SAFE|NO_PADDING|NO_WRAP).
-    #[test]
-    fn android_base64_decoder_corpus() {
-        let ok: &[(&str, &str)] = &[
-            ("eyJhIjp9", "7b2261223a7d"),
-            ("eyJhIjp9Cg==", "7b2261223a7d0a"),
-            ("QQ", "41"),
-            ("QQ==", "41"),
-            ("QUJD", "414243"),
-            ("QUI", "4142"),
-            ("QUJDRA==", "41424344"),
-            ("", ""),
-            ("QUJ!", "4142"),
-            ("QUJD\n", "414243"),
-            ("-_", "fb"),
-            ("QUJDRA", "41424344"),
-            ("QUJD ", "414243"),
-            ("++//", ""),
-            ("eyJzdWIiOiJ1MSIsImV4cCI6MTk5OTk5OTk5OX0", "7b22737562223a227531222c22657870223a313939393939393939397d"),
-            ("QUJÉD", "414243"),
-            ("QQ= =", "41"),
-            ("QU JD", "414243"),
-        ];
-        for (input, hex) in ok {
-            let got = b64url_decode(input).unwrap_or_else(|| panic!("{input:?} should decode"));
-            let got_hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
-            assert_eq!(&got_hex, hex, "input {input:?}");
-        }
-        for input in ["QQ=", "A", "QQ==QQ", "====", "Q=Q=", "QUJDRA="] {
-            assert!(b64url_decode(input).is_none(), "{input:?} should be rejected");
-        }
-    }
     // Focused pins for refresh_response_shape (NEW IMPLEMENTATION,
     // 2026-11-13). Written for execution on a build host; NOT executed in
     // the wiring environment. Clock-governed decisions are deliberately
@@ -667,6 +628,46 @@ mod android_b64_lock {
         match refresh_response_shape(200, Some(&neg), "owner1") {
             RefreshShape::Shape(f) => assert_eq!(f.expires_at, -5),
             other => panic!("expected Shape, got {other:?}"),
+        }
+    }
+
+}
+
+#[cfg(test)]
+mod android_b64_lock {
+    use super::b64url_decode;
+
+    /// Locked to AndroidB64Probe executed against the compiled AOSP
+    /// android-14.0.0_r1 android.util.Base64 class (URL_SAFE|NO_PADDING|NO_WRAP).
+    #[test]
+    fn android_base64_decoder_corpus() {
+        let ok: &[(&str, &str)] = &[
+            ("eyJhIjp9", "7b2261223a7d"),
+            ("eyJhIjp9Cg==", "7b2261223a7d0a"),
+            ("QQ", "41"),
+            ("QQ==", "41"),
+            ("QUJD", "414243"),
+            ("QUI", "4142"),
+            ("QUJDRA==", "41424344"),
+            ("", ""),
+            ("QUJ!", "4142"),
+            ("QUJD\n", "414243"),
+            ("-_", "fb"),
+            ("QUJDRA", "41424344"),
+            ("QUJD ", "414243"),
+            ("++//", ""),
+            ("eyJzdWIiOiJ1MSIsImV4cCI6MTk5OTk5OTk5OX0", "7b22737562223a227531222c22657870223a313939393939393939397d"),
+            ("QUJÉD", "414243"),
+            ("QQ= =", "41"),
+            ("QU JD", "414243"),
+        ];
+        for (input, hex) in ok {
+            let got = b64url_decode(input).unwrap_or_else(|| panic!("{input:?} should decode"));
+            let got_hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(&got_hex, hex, "input {input:?}");
+        }
+        for input in ["QQ=", "A", "QQ==QQ", "====", "Q=Q=", "QUJDRA="] {
+            assert!(b64url_decode(input).is_none(), "{input:?} should be rejected");
         }
     }
 }

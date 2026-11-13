@@ -249,6 +249,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "ryu",
+ "serde",
  "serde_json",
  "sha2",
  "subtle",

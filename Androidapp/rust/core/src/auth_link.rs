@@ -284,7 +284,7 @@ fn parse_java_hex_float(hex: &str) -> Option<f64> {
     }
     // Java accumulates arbitrary exponent digits; beyond i64 the result is
     // simply Infinity/0 (the mantissa is nonzero at this point iff seen).
-    let p_exp: i64 = match hex[start..i].parse() {
+    let p_exp: i64 = match hex[start..i].parse::<i64>() {
         Ok(v) => if exp_neg { -v } else { v },
         Err(_) => {
             return Some(if !seen || exp_neg { 0.0 } else { f64::INFINITY });
@@ -1539,7 +1539,6 @@ mod tests {
         assert_eq!(p2.session_expires_at_seconds, 1600);
     }
     #[test]
-    #[test]
     fn interpret_cb_seams_wiring_pins() {
         // kotlin_equals_ignore_case: Kotlin's ignoreCase folds per char
         // with Java's SIMPLE mappings (long s U+017F uppercases to S);
@@ -1743,6 +1742,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn interpret_flow_seams_wiring_pins() {
         // NEW IMPLEMENTATION (2026-11-13) wiring-seam pins for signUp,
         // continueAsGuest, setPassword and the status-only flows. Written

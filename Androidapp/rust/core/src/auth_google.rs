@@ -447,15 +447,19 @@ mod tests {
 
     #[test]
     fn google_seam_pins() {
-        // sign_in_pre: secure first, then the signed-in gate; blank checks
-        // are Kotlin isBlank (a whitespace-only userId blocks sign-in - the
-        // older tree's is_empty diverged).
+        // sign_in_pre: secure first, then the signed-in gate. The gate is
+        // Kotlin !userId.isNullOrBlank(): a PRESENT non-blank id blocks
+        // sign-in; a whitespace-only or empty id is blank, so it does NOT
+        // block (the source gate at SupabaseAuthService.kt isNullOrBlank).
+        // (Pin corrected 2026-11-13 on first local execution: the prior
+        // expectation claimed whitespace-only blocks, contradicting the
+        // verbatim Kotlin guard.)
         assert_eq!(interpret_google_sign_in_pre(false, None),
             GooglePreDecision::Error(MSG_SIGNIN_UNAVAILABLE.to_string()));
         assert_eq!(interpret_google_sign_in_pre(true, Some("u1")),
             GooglePreDecision::Error(MSG_GOOGLE_SIGNOUT_FIRST.to_string()));
         assert_eq!(interpret_google_sign_in_pre(true, Some(" ")),
-            GooglePreDecision::Error(MSG_GOOGLE_SIGNOUT_FIRST.to_string()));
+            GooglePreDecision::Proceed);
         assert_eq!(interpret_google_sign_in_pre(true, None), GooglePreDecision::Proceed);
         assert_eq!(interpret_google_sign_in_pre(true, Some("")), GooglePreDecision::Proceed);
 
