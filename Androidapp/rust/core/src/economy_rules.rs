@@ -193,3 +193,37 @@ pub const TRANSFER_OFFLINE_TOAST: &str =
 pub fn transfer_may_proceed(is_online: bool) -> bool {
     is_online
 }
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_rank_for_lifetime_coins as rank;
+    use crate::economy_status::IdentityRank as R;
+    use bigdecimal::BigDecimal;
+    use std::str::FromStr;
+
+    fn bd(s: &str) -> BigDecimal {
+        BigDecimal::from_str(s).unwrap()
+    }
+
+    /// Wired-surface pins (NEW IMPLEMENTATION, 2026-11-13); mirrored by the
+    /// Kotlin twin parity test. Written, NOT executed in this workspace.
+    #[test]
+    fn rank_threshold_pins() {
+        // Boundaries and interiors, highest-match-wins order.
+        assert_eq!(rank(&bd("0")), R::Lumen);
+        assert_eq!(rank(&bd("149.999")), R::Lumen);
+        assert_eq!(rank(&bd("150")), R::Aurelia);
+        assert_eq!(rank(&bd("150.00")), R::Aurelia); // scale-insensitive compare
+        assert_eq!(rank(&bd("499.9")), R::Aurelia);
+        assert_eq!(rank(&bd("500")), R::Celestia);
+        assert_eq!(rank(&bd("1199.99")), R::Celestia);
+        assert_eq!(rank(&bd("1200")), R::Solara);
+        assert_eq!(rank(&bd("2999")), R::Solara);
+        assert_eq!(rank(&bd("3000")), R::Nocturne);
+        assert_eq!(rank(&bd("7499.999")), R::Nocturne);
+        assert_eq!(rank(&bd("7500")), R::Founder);
+        assert_eq!(rank(&bd("1000000")), R::Founder);
+        // Negative balances are LUMEN (below every threshold).
+        assert_eq!(rank(&bd("-5")), R::Lumen);
+    }
+}

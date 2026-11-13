@@ -3,6 +3,7 @@ package com.cyclecare.app.data.economy
 import com.cyclecare.app.data.supabase.SupabaseConfig
 import com.cyclecare.app.data.supabase.SupabaseSessionManager
 import com.cyclecare.app.data.supabase.UserFacingServerMessage
+import com.cyclecare.app.rust.CycleCareCoreBridge
 import com.cyclecare.app.security.AuthPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -291,7 +292,8 @@ class SupabaseEconomyService(
                         val newLifetime = optCoinAmount(resObj, "lifetime_earned", currentProfile.lifetimeEarned)
                         val rankStr = resObj.optString("new_rank", currentProfile.rank.name)
                         val newRank = IdentityRank.entries.find { it.name.equals(rankStr, true) }
-                            ?: calculateRankForLifetimeCoins(newLifetime)
+                            ?: (CycleCareCoreBridge.economyRankForLifetimeCoins(newLifetime)
+                                ?: kotlinRankForLifetimeCoins(newLifetime))
 
                         val reconciled = currentProfile.copy(
                             coinBalance = newBalance,
@@ -369,7 +371,8 @@ class SupabaseEconomyService(
                         val newLifetime = optCoinAmount(resObj, "lifetime_earned", currentProfile.lifetimeEarned)
                         val rankStr = resObj.optString("new_rank", currentProfile.rank.name)
                         val newRank = IdentityRank.entries.find { it.name.equals(rankStr, true) }
-                            ?: calculateRankForLifetimeCoins(newLifetime)
+                            ?: (CycleCareCoreBridge.economyRankForLifetimeCoins(newLifetime)
+                                ?: kotlinRankForLifetimeCoins(newLifetime))
                         val minedDate = resObj.optString("mined_date", todayStr)
                         val awarded = optCoinAmount(resObj, "awarded_coins", baseReward.toBigDecimal() * currentProfile.tier.multiplier.toBigDecimal())
                         val msg = UserFacingServerMessage.sanitize(
@@ -408,7 +411,11 @@ class SupabaseEconomyService(
             val awardedCoins = baseReward.toBigDecimal() * multiplier.toBigDecimal()
             val updatedBalance = currentProfile.coinBalance + awardedCoins
             val updatedEarned = currentProfile.lifetimeEarned + awardedCoins
-            val newRank = calculateRankForLifetimeCoins(updatedEarned)
+            // NEW IMPLEMENTATION (2026-11-13): native-first via
+            // economy_rank_v1; null reply -> the verbatim Kotlin twin. All
+            // three rank-decision sites in this class route the same way.
+            val newRank = CycleCareCoreBridge.economyRankForLifetimeCoins(updatedEarned)
+                ?: kotlinRankForLifetimeCoins(updatedEarned)
 
             authPreferences.recordOfflineClaim(todayStr, baseReward)
 
@@ -610,7 +617,12 @@ class SupabaseEconomyService(
         return if (value is Number) BigDecimal(value.toString()) else fallback
     }
 
-    private fun calculateRankForLifetimeCoins(lifetimeCoins: BigDecimal): IdentityRank {
+    /**
+     * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the
+     * original rank decision, reached whenever the native economy_rank_v1
+     * reply is null.
+     */
+    private fun kotlinRankForLifetimeCoins(lifetimeCoins: BigDecimal): IdentityRank {
         return when {
             lifetimeCoins >= IdentityRank.FOUNDER.minLifetimeCoins.toBigDecimal() -> IdentityRank.FOUNDER
             lifetimeCoins >= IdentityRank.NOCTURNE.minLifetimeCoins.toBigDecimal() -> IdentityRank.NOCTURNE

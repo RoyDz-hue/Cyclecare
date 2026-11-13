@@ -1115,6 +1115,33 @@ object CycleCareCoreBridge {
         return ok.opt("sanitized") as? String
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first lifetime-coin rank
+     * decision (economy_rank_v1). Pure interpretation; the BigDecimal crosses
+     * as its exact toPlainString() form. A null reply means the caller runs
+     * its verbatim Kotlin twin.
+     */
+    fun economyRankForLifetimeCoins(lifetimeCoins: java.math.BigDecimal): com.cyclecare.app.data.economy.IdentityRank? {
+        val reply = call("economy_rank_v1", JSONObject()
+            .put("lifetimeCoins", lifetimeCoins.toPlainString())) ?: return null
+        return decodeEconomyRank(reply)
+    }
+
+    internal fun decodeEconomyRank(reply: JSONObject): com.cyclecare.app.data.economy.IdentityRank? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("rank")) {
+            "LUMEN" -> com.cyclecare.app.data.economy.IdentityRank.LUMEN
+            "AURELIA" -> com.cyclecare.app.data.economy.IdentityRank.AURELIA
+            "CELESTIA" -> com.cyclecare.app.data.economy.IdentityRank.CELESTIA
+            "SOLARA" -> com.cyclecare.app.data.economy.IdentityRank.SOLARA
+            "NOCTURNE" -> com.cyclecare.app.data.economy.IdentityRank.NOCTURNE
+            "FOUNDER" -> com.cyclecare.app.data.economy.IdentityRank.FOUNDER
+            else -> null
+        }
+    }
+
     internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")

@@ -1030,6 +1030,19 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown op"),
             }
         })(),
+        "economy_rank_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port economy_rules::calculate_rank_for_lifetime_coins
+            // (SupabaseEconomyService.calculateRankForLifetimeCoins,
+            // main@31b88f5 lineage; thresholds verified against
+            // EconomyModels.kt IdentityRank.minLifetimeCoins). Pure decision:
+            // no I/O, no clock. The BigDecimal crosses as the caller's
+            // toPlainString() form - exact decimal, never a double.
+            let coins = match v.get("lifetimeCoins").and_then(|x| x.as_str()) { Some(s) => s, None => return err("lifetimeCoins missing or not a string") };
+            let coins = match bigdecimal::BigDecimal::from_str(coins) { Ok(b) => b, Err(_) => return err("lifetimeCoins not a decimal string") };
+            let rank = corelib::economy_rules::calculate_rank_for_lifetime_coins(&coins);
+            serde_json::json!({"ok":{"version":1,"rank":corelib::economy_rules::rank_kotlin_name(rank)}}).to_string()
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry
