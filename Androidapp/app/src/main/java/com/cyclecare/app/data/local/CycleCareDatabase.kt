@@ -31,8 +31,18 @@ abstract class CycleCareDatabase : RoomDatabase() {
         /** Reserved prefix marking instrumentation-owned owner identities. */
         internal const val TEST_OWNER_IDENTITY_PREFIX = "instrumented-test-"
 
-        /** Names of instances created through the instrumentation seam. */
-        private val TEST_INSTANCE_NAMES = mutableSetOf<String>()
+        /**
+         * Exact allowlist of application ids the instrumentation seam serves: the
+         * isolated .debug and .lab variant namespaces ONLY. The production id and
+         * every unknown id are refused (allowlist, not denylist).
+         */
+        private val INSTRUMENTATION_APPLICATION_IDS = setOf("com.cyclecare.app.debug", "com.cyclecare.app.lab")
+
+        /** Instrumentation-seam instances, isolated from the production caches. */
+        private val TEST_INSTANCES = mutableMapOf<String, CycleCareDatabase>()
+
+        /** Exact key-store identity each instrumentation instance was built with. */
+        private val TEST_INSTANCE_STORES = mutableMapOf<String, Pair<String, String>>()
 
         fun createMigration4To5(context: Context, authPreferences: (Context) -> AuthPreferences = { AuthPreferences(it) }): Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -118,9 +128,6 @@ abstract class CycleCareDatabase : RoomDatabase() {
                     INSTANCE ?: buildDatabase(context, name).also { INSTANCE = it }
                 }
             }
-            require(!ownerIdentity.startsWith(TEST_OWNER_IDENTITY_PREFIX)) {
-                "Reserved instrumentation owner prefix reached the production path."
-            }
             return OWNER_INSTANCES[name] ?: synchronized(this) {
                 OWNER_INSTANCES[name] ?: buildDatabase(context, name).also { OWNER_INSTANCES[name] = it }
             }
@@ -130,41 +137,56 @@ abstract class CycleCareDatabase : RoomDatabase() {
             getDatabase(context, authPreferences.userId)
 
         /**
-         * Instrumentation-only seam: test-owned owner namespace AND test-owned key
-         * material (injected [keyManager]). Confinement is bidirectional: this seam
-         * REQUIRES the reserved test prefix (arbitrary real owner identities are
-         * refused) and the production path refuses the prefix, so neither path can
-         * hand back the other's handle. A cached instance not created here (a
-         * foreign/production handle) is never returned.
+         * Debug/lab-only instrumentation seam. The capability is the ISOLATED
+         * NAMESPACE itself: an exact allowlist admits only the .debug/.lab variant
+         * application ids, so the release app can never reach it; those variants
+         * install in their own data namespaces. Owner identity must carry the
+         * reserved test prefix (labeling) and the injected key manager must bind
+         * TEST-OWNED stores (a production-default manager is refused, so no call
+         * here can read production prefs or the production Keystore alias).
+         * Instances live in a dedicated cache, keyed by name and bound to the exact
+         * store identity; production caches (INSTANCE / OWNER_INSTANCES) are never
+         * consulted or mutated here, and production owner ids are unrestricted.
          */
-        internal fun getDatabase(context: Context, ownerIdentity: String, keyManager: DatabaseKeyManager): CycleCareDatabase {
-            require(ownerIdentity.startsWith(TEST_OWNER_IDENTITY_PREFIX)) {
-                "Test injection requires the reserved test-owned owner prefix."
+        internal fun getTestDatabase(context: Context, ownerIdentity: String, keyManager: DatabaseKeyManager): CycleCareDatabase {
+            check(context.applicationContext.packageName in INSTRUMENTATION_APPLICATION_IDS) {
+                "Instrumentation seam is restricted to the isolated debug/lab application ids."
             }
+            require(ownerIdentity.startsWith(TEST_OWNER_IDENTITY_PREFIX)) {
+                "Instrumentation owner identities must carry the reserved test prefix."
+            }
+            val store = keyManager.storeIdentity
+            require(
+                store.first.startsWith(TEST_OWNED_KEYSTORE_PREFIX) &&
+                    store.second.startsWith(TEST_OWNED_KEYSTORE_PREFIX)
+            ) { "Instrumentation requires test-owned key stores; production stores are refused." }
             val name = namespaceFor(ownerIdentity)
             return synchronized(this) {
-                val cached = OWNER_INSTANCES[name]
+                val cached = TEST_INSTANCES[name]
                 if (cached != null) {
-                    check(name in TEST_INSTANCE_NAMES) {
-                        "Refusing cached instance not created by the test seam."
+                    check(TEST_INSTANCE_STORES[name] == store) {
+                        "Cached instrumentation instance is bound to a different store identity."
                     }
                     cached
                 } else {
                     buildDatabase(context, name, keyManager).also {
-                        OWNER_INSTANCES[name] = it
-                        TEST_INSTANCE_NAMES += name
+                        TEST_INSTANCES[name] = it
+                        TEST_INSTANCE_STORES[name] = store
                     }
                 }
             }
         }
 
-        /** Instrumentation-only: drop a cached TEST instance so a close+reopen oracle is possible. */
-        internal fun evictCachedInstanceForTest(databaseName: String) {
+        /**
+         * Idempotent owned cleanup: removes the named instance IF AND ONLY IF it is
+         * a known instrumentation instance. Absent or never-created names are a
+         * no-op; production caches are structurally unreachable from this map.
+         */
+        internal fun evictTestInstance(databaseName: String) {
             synchronized(this) {
-                check(OWNER_INSTANCES.remove(databaseName) != null || databaseName in TEST_INSTANCE_NAMES) {
-                    "Only test-seam instances may be evicted."
+                if (TEST_INSTANCES.remove(databaseName) != null) {
+                    TEST_INSTANCE_STORES.remove(databaseName)
                 }
-                TEST_INSTANCE_NAMES -= databaseName
             }
         }
 

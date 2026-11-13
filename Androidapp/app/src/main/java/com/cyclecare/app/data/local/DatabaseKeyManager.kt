@@ -12,6 +12,11 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Stores only an AES-GCM wrapped SQLCipher passphrase; the wrapping key remains in Android Keystore. */
+/** Reserved prefix marking instrumentation-owned key stores. Package-level so the
+ * instrumentation seam and its fixtures reference it unqualified; same value as
+ * [DatabaseKeyManager.TEST_OWNED_PREFIX], which now aliases it. */
+internal const val TEST_OWNED_KEYSTORE_PREFIX = "instrumented_test_"
+
 internal class DatabaseKeyManager(
     context: Context,
     preferencesName: String = PREFERENCES_NAME,
@@ -94,6 +99,6 @@ internal class DatabaseKeyManager(
         const val GCM_IV_LENGTH = 12
         const val GCM_TAG_BITS = 128
         /** Reserved prefix marking instrumentation-owned key material. */
-        const val TEST_OWNED_PREFIX = "instrumented_test_"
+        const val TEST_OWNED_PREFIX = TEST_OWNED_KEYSTORE_PREFIX
     }
 }
