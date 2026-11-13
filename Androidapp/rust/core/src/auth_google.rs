@@ -501,11 +501,70 @@ mod tests {
                 "Value null of type org.json.JSONObject$1 cannot be converted to JSONObject".to_string()));
         // UTF-16 positions: AOSP's syntax-error pos counts UTF-16 UNITS,
         // not chars. Here the 💩 before the error point is 2 units, so the
-        // position is 7 (a char-counting port would report 6).
+        // position is 7 (a char-counting port would report 6). The message
+        // interpolates the actual key (SDK34 oracle-executed: "after 💩",
+        // "after k", "after ab").
         assert_eq!(
             interpret_google_link_response(true, "{\"💩\" 1}", None),
             GoogleLinkResponseDecision::ParseThrow(
-                "Expected ':' after object key at character 7 of {\"💩\" 1}".to_string()));
+                "Expected ':' after 💩 at character 7 of {\"💩\" 1}".to_string()));
+
+        // SDK34 parser reconciliation (2026-11-13, source-verified against
+        // libcore android-14.0.0_r50 JSONTokener/JSONObject/JSONArray):
+        // - EOF right after '{' is nextValue's "End of input", not an
+        //   object error.
+        assert_eq!(
+            interpret_google_link_response(true, "{", None),
+            GoogleLinkResponseDecision::ParseThrow("End of input at character 1 of {".to_string()));
+        // - A trailing comma is NOT special: the loop reads the next name
+        //   via nextValue, which hits '}' and fails as an empty literal.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"a\":1,}", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Expected literal value at character 7 of {\"a\":1,}".to_string()));
+        // - Non-String names: the value's own toString + getClass().getName().
+        assert_eq!(
+            interpret_google_link_response(true, "{5:1}", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Names must be strings, but 5 is of type java.lang.Integer at character 2 of {5:1}".to_string()));
+        assert_eq!(
+            interpret_google_link_response(true, "{null:1}", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Names must be strings, but null is of type org.json.JSONObject$1 at character 5 of {null:1}".to_string()));
+        // - readLiteral returns non-finite Doubles UNCHECKED; the OBJECT
+        //   put rejects them via JSON.checkDouble - a PLAIN JSONException
+        //   with NO position suffix. (The JVM-probe corpus row only locks
+        //   that the constructor throws; the message is SDK34-sourced.)
+        assert_eq!(
+            interpret_google_link_response(true, "{\"x\":NaN}", None),
+            GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: NaN".to_string()));
+        assert_eq!(
+            interpret_google_link_response(true, "{\"x\":-Infinity}", None),
+            GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: -Infinity".to_string()));
+        // - ARRAY puts are unchecked: [NaN] parses. Rendering it in the
+        //   typeMismatch message goes through JSONArray.toString, which
+        //   catches numberToString's checkDouble throw and returns null,
+        //   so the message renders "Value null ...".
+        assert_eq!(
+            interpret_google_link_response(true, "[NaN]", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Value null of type org.json.JSONArray cannot be converted to JSONObject".to_string()));
+        // - Array separator leniency surfaces through the same rendering:
+        //   [1,] is [1,null] (trailing separator adds a null element).
+        assert_eq!(
+            interpret_google_link_response(true, "[1,]", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Value [1,null] of type org.json.JSONArray cannot be converted to JSONObject".to_string()));
+        // - Invalid \u escape: the 4 chars are consumed before parsing;
+        //   the message carries the bad hex.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"\\uZZZZ\":\"x\"}", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Invalid escape sequence: ZZZZ at character 8 of {\"\\uZZZZ\":\"x\"}".to_string()));
+        // - A bogus '>' is skipped after ':' as well as '='.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":>\"x\"}", None),
+            GoogleLinkResponseDecision::Url("x".to_string()));
         // optString coercion: an explicit null url is the STRING "null" -
         // non-blank, so it IS the resolved url (weird, source-true).
         assert_eq!(

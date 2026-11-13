@@ -77,6 +77,14 @@ fn escape_json_string(value: &str, out: &mut String) {
 /// spec: plain notation for 10^-3 <= |v| < 10^7, otherwise one digit before
 /// the point, an optional fraction, and "E<exp>".
 pub fn java_double_to_string(v: f64) -> String {
+    // Java Double.toString: "NaN" / "Infinity" / "-Infinity" (ryu's
+    // format_finite would panic on these).
+    if v.is_nan() {
+        return "NaN".to_string();
+    }
+    if v.is_infinite() {
+        return if v > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
+    }
     if v == 0.0 {
         return if v.is_sign_negative() { "-0.0".to_string() } else { "0.0".to_string() };
     }
@@ -202,32 +210,77 @@ pub fn json_value_to_string(v: &JsonValue) -> String {
     out
 }
 
+/// AOSP getClass().getName() for a parsed JSON value, SDK34 names (the
+/// pinned oracle): NULL is the anonymous org.json.JSONObject$1 (libcore
+/// main renamed the same class to $Null - the skew is pinned to SDK34,
+/// matching the Robolectric sdk=34 twin).
+fn aosp_class_name(v: &JsonValue) -> &'static str {
+    match v {
+        JsonValue::Null => "org.json.JSONObject$1",
+        JsonValue::Bool(_) => "java.lang.Boolean",
+        JsonValue::Int(_) => "java.lang.Integer",
+        JsonValue::Long(_) => "java.lang.Long",
+        JsonValue::Double(_) => "java.lang.Double",
+        JsonValue::Str(_) => "java.lang.String",
+        JsonValue::Array(_) => "org.json.JSONArray",
+        JsonValue::Object(_) => "org.json.JSONObject",
+    }
+}
+
+/// JSONObject/JSONArray.toString: compact JSON, but the AOSP
+/// implementations CATCH JSONException and return null (string
+/// concatenation then renders "null"). Reachable via a non-finite Double
+/// inside the tree: numberToString runs JSON.checkDouble, and ARRAY puts
+/// let non-finite doubles in (object puts reject them at parse time).
+fn aosp_json_to_string_or_null(v: &JsonValue) -> String {
+    fn contains_nonfinite(v: &JsonValue) -> bool {
+        match v {
+            JsonValue::Double(d) => !d.is_finite(),
+            JsonValue::Array(items) => items.iter().any(contains_nonfinite),
+            JsonValue::Object(pairs) => pairs.iter().any(|(_, x)| contains_nonfinite(x)),
+            _ => false,
+        }
+    }
+    if contains_nonfinite(v) { "null".to_string() } else { json_value_to_string(v) }
+}
+
+/// AOSP JSONTokener.readObject's non-String-name rejection: "Names must be
+/// strings, but <name> is of type <name.getClass().getName()>". ("Names
+/// cannot be null" is unreachable here: nextValue never yields Java null.)
+fn aosp_names_must_be_strings(name: &JsonValue) -> String {
+    let rendered = match name {
+        JsonValue::Array(_) | JsonValue::Object(_) => aosp_json_to_string_or_null(name),
+        JsonValue::Null => "null".to_string(),
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Int(i) => i.to_string(),
+        JsonValue::Long(l) => l.to_string(),
+        JsonValue::Double(d) => java_double_to_string(*d),
+        JsonValue::Str(s) => s.clone(),
+    };
+    format!("Names must be strings, but {} is of type {}", rendered, aosp_class_name(name))
+}
+
 /// AOSP JSON.typeMismatch(actual, requiredType), the JSONObject(JSONTokener)
 /// ctor's non-object rejection: "Value <actual> of type <actual.getClass()
-/// .getName()> cannot be converted to <requiredType>". getName() is the
-/// FULLY QUALIFIED name (verified against libcore main, 2026-11-13:
-/// JSONObject.java ctor -> JSON.typeMismatch(object, "JSONObject");
-/// JSON.java uses getClass().getName()). Value rendering follows AOSP
-/// toString (Double via Java Double.toString semantics; the NULL object
-/// renders "null"). NULL'S CLASS NAME IS SDK-DEPENDENT: the pinned SDK34
-/// oracle (reviewer-executed probe, 2026-11-13) has NULL as an anonymous
-/// class -> "org.json.JSONObject$1"; libcore main refactored it to a named
-/// class -> "org.json.JSONObject$Null". This port pins the SDK34 oracle,
-/// matching the Robolectric sdk=34 twin. The `actual == null`
-/// AOSP branch is unreachable from the JSONObject(String) ctor (nextValue
-/// never returns null) and is not reproduced.
+/// .getName()> cannot be converted to <requiredType>" (verified against
+/// libcore main, 2026-11-13: JSONObject.java ctor ->
+/// JSON.typeMismatch(object, "JSONObject"); JSON.java uses
+/// getClass().getName()). Value rendering follows AOSP toString (Double via
+/// Java Double.toString semantics; NULL renders "null"; Array/Object via
+/// the toString catch-collapse above). The `actual == null` AOSP branch is
+/// unreachable from the JSONObject(String) ctor (nextValue never returns
+/// null) and is not reproduced.
 pub fn aosp_type_mismatch(actual: &JsonValue, required_type: &str) -> String {
-    let (value, class) = match actual {
-        JsonValue::Null => ("null".to_string(), "org.json.JSONObject$1"),
-        JsonValue::Bool(b) => (b.to_string(), "java.lang.Boolean"),
-        JsonValue::Int(i) => (i.to_string(), "java.lang.Integer"),
-        JsonValue::Long(l) => (l.to_string(), "java.lang.Long"),
-        JsonValue::Double(d) => (java_double_to_string(*d), "java.lang.Double"),
-        JsonValue::Str(s) => (s.clone(), "java.lang.String"),
-        JsonValue::Array(_) => (json_value_to_string(actual), "org.json.JSONArray"),
-        JsonValue::Object(_) => (json_value_to_string(actual), "org.json.JSONObject"),
+    let value = match actual {
+        JsonValue::Null => "null".to_string(),
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Int(i) => i.to_string(),
+        JsonValue::Long(l) => l.to_string(),
+        JsonValue::Double(d) => java_double_to_string(*d),
+        JsonValue::Str(s) => s.clone(),
+        JsonValue::Array(_) | JsonValue::Object(_) => aosp_json_to_string_or_null(actual),
     };
-    format!("Value {value} of type {class} cannot be converted to {required_type}")
+    format!("Value {} of type {} cannot be converted to {}", value, aosp_class_name(actual), required_type)
 }
 
 fn write_value(v: &JsonValue, out: &mut String) {
@@ -362,85 +415,83 @@ impl<'a> JsonParser<'a> {
         }
     }
 
+    /// AOSP JSONTokener.readObject: peek once for the empty object, then
+    /// loop { name = nextValue(); expect ':'/'=' (+ bogus '>' skip); value =
+    /// nextValue(); put(name, value); expect '}'/','/';' }. Non-String names
+    /// and a missing separator are syntaxErrors; a non-finite Double member
+    /// fails JSONObject.put's JSON.checkDouble - a PLAIN JSONException
+    /// ("Forbidden numeric value: <d>"), NOT a syntaxError (no position).
     fn read_object(&mut self) -> Result<JsonValue, String> {
         let mut pairs: Vec<(String, JsonValue)> = Vec::new();
-        let mut first = true;
+        match self.next_clean()? {
+            Some('}') => return Ok(JsonValue::Object(pairs)),
+            Some(_) => self.pos -= 1,
+            None => {} // EOF: no back-track; the loop's next_value reports "End of input".
+        }
         loop {
-            let c = self.next_clean()?;
-            match c {
-                None => return self.syntax_error("Unterminated object"),
-                Some('}') => {
-                    return if first {
-                        Ok(JsonValue::Object(pairs))
-                    } else {
-                        self.syntax_error("Trailing comma in object")
-                    }
-                }
-                Some(q @ ('\'' | '"')) => {
-                    let key = self.next_string(q)?;
-                    self.read_pair(&mut pairs, key)?;
-                    first = false;
-                }
-                Some(_) => {
-                    self.pos -= 1;
-                    // AOSP allows unquoted literal keys.
-                    let key = match self.read_literal()? {
-                        JsonValue::Str(s) => s,
-                        JsonValue::Int(i) => i.to_string(),
-                        JsonValue::Long(l) => l.to_string(),
-                        JsonValue::Double(dv) => java_double_to_string(dv),
-                        _ => return self.syntax_error("Expected string key"),
-                    };
-                    self.read_pair(&mut pairs, key)?;
-                    first = false;
+            let name = match self.next_value()? {
+                JsonValue::Str(name) => name,
+                other => return self.syntax_error(&aosp_names_must_be_strings(&other)),
+            };
+            match self.next_clean()? {
+                Some(':') | Some('=') => {}
+                _ => return self.syntax_error(&format!("Expected ':' after {}", name)),
+            }
+            // AOSP skips a bogus '>' after EITHER separator (the "=>" arrow).
+            if self.pos < self.chars.len() && self.chars[self.pos] == '>' {
+                self.pos += 1;
+            }
+            let value = self.next_value()?;
+            // JSONObject.put(String, Object): JSON.checkDouble on Numbers.
+            if let JsonValue::Double(d) = value {
+                if !d.is_finite() {
+                    return Err(format!(
+                        "Forbidden numeric value: {}",
+                        java_double_to_string(d)
+                    ));
                 }
             }
+            // LinkedHashMap.put: existing key keeps position, value replaced.
+            if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == name) {
+                slot.1 = value;
+            } else {
+                pairs.push((name, value));
+            }
             match self.next_clean()? {
-                Some(',') | Some(';') => continue,
                 Some('}') => return Ok(JsonValue::Object(pairs)),
+                Some(',') | Some(';') => continue,
                 _ => return self.syntax_error("Unterminated object"),
             }
         }
     }
 
-    fn read_pair(&mut self, pairs: &mut Vec<(String, JsonValue)>, key: String) -> Result<(), String> {
-        match self.next_clean()? {
-            Some(':') => {}
-            Some('=') => {
-                // AOSP tolerates "=>" after '='
-                if self.pos < self.chars.len() && self.chars[self.pos] == '>' {
-                    self.pos += 1;
-                }
-            }
-            _ => return self.syntax_error("Expected ':' after object key"),
-        }
-        let value = self.next_value()?;
-        // LinkedHashMap.put: existing key keeps position, value replaced.
-        if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == key) {
-            slot.1 = value;
-        } else {
-            pairs.push((key, value));
-        }
-        Ok(())
-    }
-
+    /// AOSP JSONTokener.readArray: a separator with no value yields a null
+    /// element ("[,]" is [null,null]); a trailing separator before ']' adds
+    /// one ("[1,]" is [1,null]). JSONArray.put(Object) is UNCHECKED: a
+    /// non-finite Double inside an array parses fine.
     fn read_array(&mut self) -> Result<JsonValue, String> {
         let mut items = Vec::new();
-        match self.next_clean()? {
-            Some(']') => return Ok(JsonValue::Array(items)),
-            Some(_) => self.pos -= 1,
-            None => return self.syntax_error("Unterminated array"),
-        }
+        let mut has_trailing_separator = false;
         loop {
+            match self.next_clean()? {
+                None => return self.syntax_error("Unterminated array"),
+                Some(']') => {
+                    if has_trailing_separator {
+                        items.push(JsonValue::Null);
+                    }
+                    return Ok(JsonValue::Array(items));
+                }
+                Some(',') | Some(';') => {
+                    items.push(JsonValue::Null);
+                    has_trailing_separator = true;
+                    continue;
+                }
+                Some(_) => self.pos -= 1,
+            }
             items.push(self.next_value()?);
             match self.next_clean()? {
-                Some(',') | Some(';') => {
-                    if let Some(']') = self.next_clean()? {
-                        return Ok(JsonValue::Array(items));
-                    }
-                    self.pos -= 1;
-                }
                 Some(']') => return Ok(JsonValue::Array(items)),
+                Some(',') | Some(';') => has_trailing_separator = true,
                 _ => return self.syntax_error("Unterminated array"),
             }
         }
@@ -473,9 +524,19 @@ impl<'a> JsonParser<'a> {
                             }
                             let hex: String =
                                 self.chars[self.pos..self.pos + 4].iter().collect();
-                            let cp = u32::from_str_radix(&hex, 16)
-                                .map_err(|_| "Invalid unicode escape".to_string())?;
+                            // AOSP consumes the 4 hex chars BEFORE parsing.
                             self.pos += 4;
+                            let cp = match u32::from_str_radix(&hex, 16) {
+                                Ok(cp) => cp,
+                                Err(_) => {
+                                    return self
+                                        .syntax_error(&format!("Invalid escape sequence: {}", hex))
+                                }
+                            };
+                            // AOSP emits the raw UTF-16 unit (an unpaired
+                            // surrogate is legal in a Java string); Rust
+                            // chars cannot hold one, so it degrades to
+                            // U+FFFD here (pre-existing, corpus-unlocked).
                             out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
                         }
                         // Covers \/, \\, \", \' and any other escaped char.
@@ -532,14 +593,19 @@ impl<'a> JsonParser<'a> {
             // Fall through: integral overflow, exponent form, or unquoted string.
         }
         if let Ok(d) = literal.parse::<f64>() {
-            // AOSP rejects non-finite numbers on the JSONObject path
-            // (probe-locked: {"x":NaN}/{"x":Infinity}/{"x":-Infinity} all
-            // throw out of the constructor; see
-            // tests/fixtures/settings_core/adv_jvm_expected.txt).
-            if !d.is_finite() {
-                return self.syntax_error("Forbidden numeric value: non-finite");
+            // AOSP readLiteral returns Double.valueOf(literal) UNCHECKED;
+            // non-finite rejection is the OBJECT put's checkDouble (arrays
+            // put unchecked). Java's grammar takes the exact "NaN" and
+            // signed "Infinity" literals, while Rust ALSO accepts
+            // "inf"/"infinity" - guard those back to unquoted strings.
+            // (Java hex-float ("0x1.8p1") and d/f-suffixed ("5d") literals
+            // still diverge: Java parses them, this port keeps them
+            // strings - corpus-unlocked exotic, disclosed.)
+            if d.is_finite()
+                || matches!(literal.as_str(), "NaN" | "Infinity" | "-Infinity" | "+Infinity")
+            {
+                return Ok(JsonValue::Double(d));
             }
-            return Ok(JsonValue::Double(d));
         }
         Ok(JsonValue::Str(literal))
     }
