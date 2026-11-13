@@ -957,8 +957,13 @@ fn dispatch(contract: &str, payload: &str) -> String {
             // parity port currency_locale::parse_pricing
             // (RemoteLocalPricing.parse, main@31b88f5 lineage; PricingParity
             // JVM probe corpus). Response interpretation only: no I/O, no
-            // prefs, no clock. Amounts are validated finite and > 0 by the
-            // port, so the JSON reply never carries NaN/Infinity.
+            // prefs, no clock. The port applies the source's own checks
+            // (NaN or <= 0 rejected); the source does NOT reject +Infinity
+            // (it passes the NaN check and is > 0, so it is accepted in
+            // place). Any Infinity would reach the envelope as JSON null
+            // (serde renders non-finite as null), which the strict decoder
+            // declines to the Kotlin twin, so the original behavior is
+            // preserved either way.
             let raw = match v.get("raw") {
                 None | Some(serde_json::Value::Null) => None,
                 Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("raw not a string or null") },

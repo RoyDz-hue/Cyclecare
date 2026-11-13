@@ -18,6 +18,19 @@ pub fn kotlin_trim(s: &str) -> &str {
     s.trim_matches(kotlin_is_whitespace)
 }
 
+/// Java String.trim(): strips leading and trailing characters whose code
+/// point is <= U+0020 (space). JDK 11 javadoc, verbatim: "Returns a string
+/// whose value is this string, with all leading and trailing space removed,
+/// where space is defined as any character whose codepoint is less than or
+/// equal to 'U+0020'". NBSP (U+00A0), NEL (U+0085) and every other Unicode
+/// whitespace are NOT trimmed. Double.parseDouble ignores surrounding
+/// whitespace "as if by the trim method of class String" (JDK 11
+/// Double.parseDouble javadoc), so numeric-string parsing uses this, not
+/// Kotlin trim and not Rust str::trim.
+pub fn java_trim(s: &str) -> &str {
+    s.trim_matches(|c: char| c <= '\u{20}')
+}
+
 pub fn kotlin_trim_start(s: &str) -> &str {
     s.trim_start_matches(kotlin_is_whitespace)
 }

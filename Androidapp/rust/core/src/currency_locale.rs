@@ -14,7 +14,7 @@
 //! exact f64 -> BigInt rational rounding, never float arithmetic.
 
 use crate::coin_format;
-use crate::kotlin_text::{kotlin_is_blank, kotlin_trim};
+use crate::kotlin_text::{self, kotlin_is_blank, kotlin_trim};
 use crate::sync_codec::{aosp_opt_string, JsonParser, JsonValue};
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
@@ -154,12 +154,19 @@ fn aosp_opt_array<'a>(v: &'a JsonValue, key: &str) -> Option<&'a Vec<JsonValue>>
 
 /// AOSP JSON.toDouble: numbers coerce; strings parse via Double.valueOf
 /// (which trims); everything else is null -> fallback.
+/// AOSP android-14.0.0_r50 JSON.java `toDouble(Object value)`: a string goes
+/// through `Double.valueOf((String) value)`. JDK 11 Double.parseDouble:
+/// "Leading and trailing whitespace characters in s are ignored. Whitespace is
+/// removed as if by the String.trim() method" - and String.trim() strips only
+/// chars <= U+0020, so "\u{00A0}12.5\u{00A0}" (NBSP-padded) throws
+/// NumberFormatException -> caller fallback. Rust str::trim strips Unicode
+/// White_Space (NBSP/NEL included) and would wrong-accept; java_trim matches.
 fn aosp_opt_double(v: &JsonValue, key: &str, fallback: f64) -> f64 {
     match obj_get(v, key) {
         Some(JsonValue::Int(i)) => *i as f64,
         Some(JsonValue::Long(l)) => *l as f64,
         Some(JsonValue::Double(d)) => *d,
-        Some(JsonValue::Str(s)) => s.trim().parse::<f64>().unwrap_or(fallback),
+        Some(JsonValue::Str(s)) => kotlin_text::java_trim(s).parse::<f64>().unwrap_or(fallback),
         _ => fallback,
     }
 }
@@ -433,6 +440,45 @@ pub fn build_shareable_coin_request_message(
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    /// Review finding (2026-11-13): a quoted amount string is parsed by Java
+    /// Double.parseDouble, whose whitespace handling is String.trim() (chars
+    /// <= U+0020) - not Unicode White_Space. NBSP/NEL padding must therefore
+    /// FAIL (NumberFormatException -> caller default NaN -> row validation
+    /// rejects the whole payload), while space and control whitespace trim.
+    fn pricing_json(amount_literal: &str) -> String {
+        format!(
+            "{{\"packages\":[{{\"id\":\"pkg_a\",\"display\":{{\"currency\":\"USD\",\"amount\":{amount_literal},\"charge_currency\":\"KES\",\"charge_amount\":389}}}}]}}"
+        )
+    }
+
+    #[test]
+    fn opt_double_string_java_trim_semantics() {
+        // NBSP (U+00A0) padding: Java rejects (parseDouble does not strip it);
+        // Rust str::trim would strip and wrong-accept.
+        assert!(parse_pricing(Some(&pricing_json("\"\u{00A0}12.5\u{00A0}\""))).is_none());
+        assert!(parse_pricing(Some(&pricing_json("\"\u{00A0}12.5\""))).is_none());
+        // NEL (U+0085) padding: likewise not Java-trimmable.
+        assert!(parse_pricing(Some(&pricing_json("\"\u{0085}12.5\u{0085}\""))).is_none());
+        // U+0020 space and control whitespace (<= U+0020) ARE trimmed by both.
+        let ok_space = parse_pricing(Some(&pricing_json("\" 12.5 \"")));
+        assert_eq!(ok_space.as_ref().and_then(|m| m.get("pkg_a")).map(|p| p.amount), Some(12.5));
+        let ok_ctrl = parse_pricing(Some(&pricing_json("\"\t12.5\n\"")));
+        assert_eq!(ok_ctrl.as_ref().and_then(|m| m.get("pkg_a")).map(|p| p.amount), Some(12.5));
+        // The row-level failure is the getJSONObject-throw equivalent: one bad
+        // row rejects the WHOLE payload (observed pin, whole -> None).
+        let mixed = "{\"packages\":[{\"id\":\"pkg_a\",\"display\":{\"currency\":\"USD\",\"amount\":12.5,\"charge_currency\":\"KES\",\"charge_amount\":389}},{\"id\":\"pkg_b\",\"display\":{\"currency\":\"USD\",\"amount\":\"\u{00A0}9.5\u{00A0}\",\"charge_currency\":\"KES\",\"charge_amount\":389}}]}";
+        assert!(parse_pricing(Some(mixed)).is_none());
+    }
+
+    #[test]
+    fn java_trim_unit() {
+        use crate::kotlin_text::java_trim;
+        assert_eq!(java_trim(" 12.5 "), "12.5");
+        assert_eq!(java_trim("\t\r\n 12.5 \u{001F}"), "12.5"); // control chars <= U+0020 strip
+        assert_eq!(java_trim("\u{00A0}12.5\u{00A0}"), "\u{00A0}12.5\u{00A0}"); // NBSP kept
+        assert_eq!(java_trim("\u{0085}12.5"), "\u{0085}12.5"); // NEL kept
+    }
 
     #[test]
     fn detect_corpus_locked_to_jvm() {
