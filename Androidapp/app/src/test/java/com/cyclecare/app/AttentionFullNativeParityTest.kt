@@ -50,9 +50,9 @@ class AttentionFullNativeParityTest {
             val (p,logs)=pair;val settings=CycleSettings(averageCycleLength=28)
             val ds=SomethingChangedEngine().detectDeviations(settings,logs)
             val e=B.prepareFullAttention(28,p.dayOfCycle,logs);assertNotNull(e)
-            val c=B.chooseFullAttention(false,ds.map {it.severity.name},true,p.dayOfCycle,p.isPeriod,p.isFertile,e!!.days,e.sleep,i==5,if(i==5)5 else null);assertNotNull(c)
+            val c=B.chooseFullAttention(false,ds,true,p.dayOfCycle,p.isPeriod,p.isFertile,e!!.days,e.sleep,i==5,if(i==5)5 else null);assertNotNull(c)
             val d=c!!.deviationIndex?.let {ds[it]}
-            val actual=B.renderFullAttention(c,d?.title ?: "",d?.message ?: "",e.days,p.dayOfCycle,e.sleep?.let {"%.1f".format(it)} ?: "")
+            val actual=B.renderFullAttention(c)
             assertNotNull("direct complete output JNI",actual);assertEquals(ids[i],actual!!.id)
             assertEquals(AttentionEngine.evaluateTodayPriority(p,safe,settings,logs),actual);parity(p,logs,settings)
         }
@@ -89,6 +89,6 @@ class AttentionFullNativeParityTest {
         }
         for(value in listOf<Any>("false",0,true,JSONObject.NULL)) {val copy=JSONObject(reply.toString());copy.getJSONObject("ok").getJSONObject("item").put("isUrgent",value);assertNull(B.decodeFullAttentionItem(copy,"fertile_window_notice"))}
         for(contract in listOf("attention_full_prepare_v1","attention_full_render_v1"))assertNull(B.call(contract,JSONObject()))
-        assertNull(B.prepareFullAttention(28,25,listOf(log(hours=Float.NaN))));assertNotNull(B.renderFullAttention(choice,day=12))
+        assertNull(B.prepareFullAttention(28,25,listOf(log(hours=Float.NaN))));assertNotNull(B.renderFullAttention(choice))
     }
 }

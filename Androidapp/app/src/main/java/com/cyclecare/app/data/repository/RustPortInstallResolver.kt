@@ -10,13 +10,18 @@ import com.cyclecare.app.security.AuthPreferences
  * letting any caller supply an arbitrary pair.
  *
  * - The owner identity is captured once from rustOperationSnapshot; the
- *   database is resolved through CycleCareDatabase.getDatabase namespacing,
- *   which returns exactly the preopened namespace owned by that identity.
- *   The resolver never opens, re-keys, migrates or infers a namespace itself:
- *   keys stay with the existing provider (DatabaseKeyManager), untouched.
- * - The slow Room open can finish after an identity move, so the captured
- *   snapshot is re-verified (runIfRustOperationUnchanged) AFTER resolution;
- *   a moved identity yields Stale and the caller re-resolves fresh.
+ *   database INSTANCE is resolved through CycleCareDatabase.getDatabase
+ *   namespacing, which maps exactly this identity to its owned namespace.
+ *   That instance is LAZY: the resolver itself forces the actual (slow) Room
+ *   open - create/upgrade included - via openHelper.writableDatabase, and
+ *   only then re-verifies. The resolver never re-keys, migrates or infers a
+ *   namespace itself: keys stay with the existing provider
+ *   (DatabaseKeyManager), untouched.
+ * - The forced open can finish after an identity move, so the captured
+ *   snapshot is re-verified (runIfRustOperationUnchanged) AFTER the actual
+ *   open; a moved identity yields Stale and the caller re-resolves fresh.
+ *   The installer's schema gate then reads the version off the ALREADY open
+ *   helper: no second slow open hides between resolution and install.
  * - The capability carries the FULL captured snapshot; the installer
  *   revalidates it at the admitted commit, so same-owner session/localOnly/
  *   accountMode moves between resolution and commit abort as StaleIdentity.
@@ -29,10 +34,18 @@ import com.cyclecare.app.security.AuthPreferences
 internal class RustPortInstallResolver(
     private val appContext: Context,
     private val preferences: AuthPreferences,
+    /** Production default is CycleCareDatabase.getDatabase namespacing. The
+     * seam exists so host witnesses can run the REAL resolve() path
+     * (snapshot capture, lazy instance, actual open, post-open
+     * re-verification) over plain Room fixtures - production SQLCipher is
+     * unloadable on the host. */
+    private val databaseProvider: (Context, String?) -> CycleCareDatabase =
+        { context, owner -> CycleCareDatabase.getDatabase(context, owner) },
 ) {
-    /** Resolution capability: constructible only through [bind]. Carries the
-     * exact preferences instance, the captured snapshot and the preopened
-     * database AS ONE binding. [owner] is derived, never supplied. */
+
+    /** Resolution capability: private constructor, minted through [bind].
+     * Carries the exact preferences instance, the captured snapshot and the
+     * OPENED database AS ONE binding. [owner] is derived, never supplied. */
     internal class Resolution private constructor(
         internal val preferences: AuthPreferences,
         internal val captured: AuthPreferences.RustOperationSnapshot,
@@ -44,9 +57,13 @@ internal class RustPortInstallResolver(
             preferences.runIfRustOperationUnchanged(captured) { true } == true
 
         internal companion object {
-            /** The production caller is RustPortInstallResolver.resolve(); the
-             * witness suite uses this to bind its own preopened fixtures. No
-             * other production construction may exist. */
+            /** RESTRICTED MINT (enforced by convention, not by the compiler):
+             * the ONLY production caller is RustPortInstallResolver.resolve().
+             * Kotlin has no package-private, so this internal factory remains
+             * callable module-wide; the Stage-C witness suite uses it to bind
+             * its own opened fixtures. Any new production call site is a
+             * contract violation - audit with:
+             *   rg -n 'Resolution.bind' Androidapp/app/src/main */
             fun bind(
                 preferences: AuthPreferences,
                 captured: AuthPreferences.RustOperationSnapshot,
@@ -71,7 +88,11 @@ internal class RustPortInstallResolver(
         val captured = preferences.rustOperationSnapshot()
         // Bound by construction: getDatabase namespacing maps exactly this
         // identity to its owned, preopened instance (OWNER_INSTANCES).
-        val database = CycleCareDatabase.getDatabase(appContext, captured.operation.owner)
+        val database = databaseProvider(appContext, captured.operation.owner)
+        // Force the ACTUAL open (create/upgrade included) before binding: the
+        // instance returned above is lazy, and a post-resolution check that
+        // precedes the slow open would not cover identity movement DURING it.
+        database.openHelper.writableDatabase
         // The open above may have outlived the identity it was started for.
         return preferences.runIfRustOperationUnchanged(captured) {
             Result.Resolved(Resolution.bind(preferences, captured, database))

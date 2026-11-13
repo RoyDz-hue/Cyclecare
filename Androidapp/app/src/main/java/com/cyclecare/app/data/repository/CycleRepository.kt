@@ -81,6 +81,8 @@ class OwnerTransitionException : IllegalStateException("owner_transition")
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CycleRepository(database: CycleCareDatabase) {
+    companion object {
+    }
     private val routingLock=Any()
     private val replacingPort=java.util.concurrent.atomic.AtomicBoolean(false)
     // A JVM monitor is reentrant. Explicit count rejects same-thread callbacks
@@ -105,6 +107,14 @@ class CycleRepository(database: CycleCareDatabase) {
     internal fun currentRustPortForOnboarding()=rustPort
     private val activeDatabase = MutableStateFlow(database)
     private val rustPortRevision=MutableStateFlow(0L)
+    /** Port install/replacement revision stream. The ViewModel tracks it to
+     * invalidate already-loaded legacy UI state when a composition-driven
+     * first install moves the read source without changing owner/session. */
+    internal val rustPortRevisions:kotlinx.coroutines.flow.Flow<Long> = rustPortRevision
+    /** Synchronous current revision: the ViewModel stamps this at
+     * construction so an install landing BEFORE its collector's first
+     * emission is still detected (no asynchronous-baseline race). */
+    internal fun currentRustPortRevision(): Long = rustPortRevision.value
     private val activeReadSource:kotlinx.coroutines.flow.Flow<CycleCareDatabase> = kotlinx.coroutines.flow.combine(activeDatabase,rustPortRevision){db,_->db}
     private var lifecyclePreferences: AuthPreferences? = null
     private var lifecycleContext: Context? = null
@@ -268,9 +278,11 @@ class CycleRepository(database: CycleCareDatabase) {
      * [servicePreferences], which must BE the host's preferences instance.
      * The coherent live snapshot must EQUAL the already-captured request
      * identity the wire operation was validated against - fresher values are
-     * never adopted. A null origin that a later install makes stale across a
-     * suspension remains a stated activation blocker (Stage C), not silently
-     * handled here. */
+     * never adopted. Null-origin legacy effects are admitted per effect through
+     * this repository's routing authority (a selection/seal before an effect
+     * types Stale). Residual Stage-C install-contract prerequisites: excluding a
+     * hypothetical installer that ignores legacyInflight, and detecting a
+     * transient install/uninstall between effects. */
     internal fun captureSyncApplyOrigin(
         servicePreferences: AuthPreferences,
         currentDatabase: CycleCareDatabase,
@@ -356,7 +368,7 @@ class CycleRepository(database: CycleCareDatabase) {
 
     /** Exactly-once release; the decrement is checked so a double-close or a
      * cancellation racing a close can never drive the count negative. */
-    private inner class LegacyDispatchGuard {
+    internal inner class LegacyDispatchGuard {
         private val released=java.util.concurrent.atomic.AtomicBoolean(false)
         val active:Boolean get()=!released.get()
         fun close(){ if(released.compareAndSet(false,true)) synchronized(routingLock){ check(legacyInflight>0){"legacy_dispatch_underflow"}; legacyInflight-- } }
@@ -368,6 +380,9 @@ class CycleRepository(database: CycleCareDatabase) {
      * invalidated by its own write-producing reads. Otherwise a selected port or
      * a sealed gate fails closed. Callers release in finally AFTER their
      * transaction completes, so the registration truly covers the SQL in flight. */
+    /** Parentless admission for external per-effect callers (sync-apply legacy
+     * effects). The nested-parent join stays internal-only below. */
+    internal fun admitLegacyDispatch():LegacyDispatchGuard = admitLegacyDispatch(null)
     private fun admitLegacyDispatch(parent:LegacyDispatchGuard?=null):LegacyDispatchGuard = synchronized(routingLock){
         if(parent!=null&&parent.active){legacyInflight++;return LegacyDispatchGuard()}
         if(rustPort!=null||legacySealed)throw OwnerTransitionException()
@@ -493,6 +508,20 @@ class CycleRepository(database: CycleCareDatabase) {
             rustPortRevision.value=next
         }finally{replacingPort.set(false)}
     }
+    /** Read-only view of the currently installed port for shared writers
+     * (SupabaseSyncService reads its ONLY port selection through here).
+     * Locked read: pairs the port with the routing state installed under the
+     * same routingLock critical section. Null while legacy-only. */
+    internal fun installedRustPort(): com.cyclecare.app.data.local.rust.RustRepositoryPort? = synchronized(routingLock){rustPort}
+
+    /** Test-only routing-lease hold: occupies the commit slot that
+     * replaceRustPort checks (rust_replacement_during_commit) so recovery
+     * witnesses can force a Busy pass and then release it. */
+    internal fun holdRoutingLeaseForTests(): AutoCloseable {
+        synchronized(routingLock){routingLeases++}
+        return AutoCloseable { synchronized(routingLock){routingLeases--} }
+    }
+
     fun activateCurrentOwner() {
         rustPort?.let{check(it.isCurrent()){"rust_owner_transition_requires_preopened_port"};return}
         val context = lifecycleContext ?: return
@@ -701,15 +730,7 @@ class CycleRepository(database: CycleCareDatabase) {
             requireTokenFresh(writeContext)
             val current = dao.getSettings() ?: CycleSettings()
             afterOnboardingSettingsReadForTests?.invoke()
-            val updated = current.copy(
-                isOnboardingCompleted = true,
-                selectedGoalsCsv = profile.selectedGoalsCsv,
-                lastPeriodStartDate = profile.lastPeriodDateString,
-                averageCycleLength = profile.cycleLengthDays,
-                periodDuration = profile.periodDurationDays,
-                remindFertile = profile.remindFertileWindow,
-                isAppLockEnabled = enableLock
-            )
+            val updated = com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.settings(current,profile,enableLock)
             val sync = selectedDatabase.healthSyncDao()
             val profilePayload = HealthSyncPayloadCodec.profilePayload(profile)
             val profilePrior = sync.revision(owner, "profile")

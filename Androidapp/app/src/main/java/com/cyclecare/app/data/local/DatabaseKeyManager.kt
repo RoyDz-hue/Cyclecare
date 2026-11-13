@@ -12,8 +12,25 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Stores only an AES-GCM wrapped SQLCipher passphrase; the wrapping key remains in Android Keystore. */
-internal class DatabaseKeyManager(context: Context) {
-    private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+internal class DatabaseKeyManager(
+    context: Context,
+    preferencesName: String = PREFERENCES_NAME,
+    keyAlias: String = KEY_ALIAS,
+) {
+    init {
+        // Test-owned injection must be visibly test-owned in BOTH names; the
+        // production pair stays the only other combination, so an injected
+        // manager can never read or write production key material.
+        require(
+            (preferencesName == PREFERENCES_NAME && keyAlias == KEY_ALIAS) ||
+                (preferencesName.startsWith(TEST_OWNED_PREFIX) && keyAlias.startsWith(TEST_OWNED_PREFIX))
+        ) { "Injected key stores must use the reserved test-owned prefix." }
+    }
+    private val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+    private val wrappingKeyAlias = keyAlias
+
+    /** Exact store pair this manager reads/writes; the instrumentation seam binds caches to it. */
+    internal val storeIdentity: Pair<String, String> = preferencesName to keyAlias
 
     @Synchronized
     fun getOrCreatePassphrase(): String {
@@ -33,12 +50,12 @@ internal class DatabaseKeyManager(context: Context) {
 
     private fun getOrCreateWrappingKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(wrappingKeyAlias, null) as? SecretKey)?.let { return it }
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                wrappingKeyAlias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
                 .setKeySize(256)
@@ -76,5 +93,7 @@ internal class DatabaseKeyManager(context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val GCM_IV_LENGTH = 12
         const val GCM_TAG_BITS = 128
+        /** Reserved prefix marking instrumentation-owned key material. */
+        const val TEST_OWNED_PREFIX = "instrumented_test_"
     }
 }

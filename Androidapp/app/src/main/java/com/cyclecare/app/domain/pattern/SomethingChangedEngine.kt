@@ -34,6 +34,12 @@ class SomethingChangedEngine {
         logs: List<CycleDayLog>
     ): List<BaselineDeviation> {
         val today = LocalDate.now()
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullDeviations(logs,today)
+            ?: detectDeviationsKotlin(settings,logs,today)
+    }
+
+    /** Original complete baseline-deviation computation with one captured clock. */
+    internal fun detectDeviationsKotlin(settings: CycleSettings, logs: List<CycleDayLog>, today: LocalDate): List<BaselineDeviation> {
         val datedLogs = logs.mapNotNull { log ->
             runCatching { LocalDate.parse(log.dateString) to log }.getOrNull()
         }.distinctBy { it.first }.sortedBy { it.first }

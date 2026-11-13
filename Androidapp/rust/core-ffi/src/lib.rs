@@ -87,6 +87,202 @@ fn dispatch(contract: &str, payload: &str) -> String {
         Err(e) => return err(&format!("bad payload json: {e}")),
     };
     match contract {
+        "onboarding_completion_profile_v1" => {
+            let i:corelib::onboarding_completion_full::Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("completion input schema")};
+            serde_json::json!({"ok":{"version":1,"profile":corelib::onboarding_completion_full::profile(i)}}).to_string()
+        }
+        "onboarding_completion_settings_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]struct Input {profile:corelib::onboarding_completion_full::Profile,lock:bool}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("completion patch schema")};
+            serde_json::json!({"ok":{"version":1,"patch":corelib::onboarding_completion_full::patch(i.profile,i.lock)}}).to_string()
+        }
+        "onboarding_derived_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==2&&o.contains_key("op")&&o.contains_key("evidence")){return err("derived fields")}
+            let op=match v["op"].as_str(){Some(v)=>v,None=>return err("derived op")};
+            match corelib::onboarding_derived_full::query(op,&v["evidence"]){Some(ok)=>serde_json::json!({"ok":ok}).to_string(),None=>err("derived schema")}
+        }
+        "onboarding_date_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==9&&["state","action","date","text","days","ongoing","effectiveStart","calculatedEnd","today"].iter().all(|k|o.contains_key(*k))){return err("onboarding date fields")}
+            if !v["state"].as_object().map_or(false,|o|o.len()==10&&["exact","end","chip","duration","option","ongoing","datePicker","endPicker","confirmed","dialog"].iter().all(|k|o.contains_key(*k))){return err("onboarding date state fields")}
+            let i:corelib::onboarding_date_full::Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("onboarding date schema")};
+            match corelib::onboarding_date_full::reduce(i){Some(state)=>serde_json::json!({"ok":{"version":1,"state":state}}).to_string(),None=>err("onboarding date rejected")}
+        }
+        "onboarding_bank_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Input {step:i32,goals:String,earlier:String}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("onboarding bank schema")};
+            serde_json::json!({"ok":{"version":1,"questions":corelib::onboarding_questions_full::bank(i.step,&i.goals,&i.earlier)}}).to_string()
+        }
+        "onboarding_questions_state_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==5&&["entries","step","incoming","action","loading"].iter().all(|k|o.contains_key(*k))){return err("question state fields")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Input {entries:Vec<corelib::onboarding_questions_full::Entry>,step:i32,incoming:Option<Vec<corelib::onboarding_questions_full::Question>>,action:String,loading:bool}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("question state schema")};
+            match corelib::onboarding_questions_full::publish(i.entries,i.step,i.incoming,&i.action){Some((entries,loading))=>serde_json::json!({"ok":{"version":1,"entries":entries,"loading":if i.action=="LOCAL" {i.loading}else{loading}}}).to_string(),None=>err("question state rejected")}
+        }
+        "onboarding_state_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==2&&o.contains_key("state")&&o.contains_key("event")){return err("onboarding fields mismatch")}
+            // Missing optional fields are not silently defaulted by serde.
+            if !v["state"].as_object().map_or(false,|o|o.len()==21 && ["step","total","goals","answers","symptoms","energy","sleep","cycleOption","cycleDays","notSure","datePicker","endPicker","remind","age","terms","cloud","termsDialog","privacyDialog","deep","endConfirmed","dateDialog"].iter().all(|k|o.contains_key(*k))){return err("onboarding state mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {state:corelib::onboarding_state_full::State,event:corelib::onboarding_state_full::Event}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("onboarding schema mismatch")};
+            match corelib::onboarding_state_full::reduce(i.state,i.event){Some(state)=>serde_json::json!({"ok":{"version":1,"state":state}}).to_string(),None=>err("onboarding reducer rejected")}
+        }
+        "period_episode_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==5 && ["start","end","today","ongoing","typical"].iter().all(|k|o.contains_key(*k))){return err("period episode fields mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {start:Option<i64>,end:Option<i64>,today:i64,ongoing:bool,typical:i32}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("period episode schema mismatch")};
+            // java.time.LocalDate supported full domain, not chrono's narrow years.
+            let valid_day=|v:i64|v>=-365243219162 && v<=365241780471;
+            if !valid_day(i.today)||!i.start.map_or(true,valid_day)||!i.end.map_or(true,valid_day){return err("period epoch day outside LocalDate")}
+            let d=corelib::period_episode_full::decide(i.start,i.end,i.today,i.ongoing,i.typical);
+            serde_json::json!({"ok":{"version":1,"valid":d.valid,"error":d.error,"warning":d.warning,"duration":d.duration,"typical":d.typical,"confirm":d.confirm,"keepEnd":d.keep_end}}).to_string()
+        }
+        "care_merge_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==9 && ["flow","energy","mood","pain","newFlow","newEnergy","newMood","newPain","tokens"].iter().all(|k|o.contains_key(*k))){return err("care merge fields mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] #[serde(rename_all="camelCase")]
+            struct Input {flow:String,energy:String,mood:String,pain:i32,new_flow:Option<String>,new_energy:Option<String>,new_mood:Option<String>,new_pain:i32,tokens:Vec<String>}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("care merge schema mismatch")};
+            let p=corelib::care_merge_full::merge(i.flow,i.energy,i.mood,i.pain,i.new_flow,i.new_energy,i.new_mood,i.new_pain,i.tokens);
+            serde_json::json!({"ok":{"version":1,"flow":p.flow,"energy":p.energy,"mood":p.mood,"pain":p.pain,"symptoms":p.symptoms}}).to_string()
+        }
+        "care_context_full_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==5 && ["question","anchor","length","logs","today"].iter().all(|k|o.contains_key(*k))){return err("care context fields mismatch")}
+            if !v["logs"].as_array().map_or(false,|logs|logs.iter().all(|l|l.as_object().map_or(false,|o|o.len()==9 && ["date","flow","energy","mood","symptoms","bits","sleep","quality","pain"].iter().all(|k|o.contains_key(*k))))){return err("care context log fields mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,flow:Option<String>,energy:Option<String>,mood:Option<String>,symptoms:Option<String>,bits:String,sleep:String,quality:Option<String>,pain:i32}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {question:String,anchor:Option<String>,length:i32,logs:Vec<Log>,today:String}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("care context schema mismatch")};
+            let mut logs=Vec::new();for l in i.logs {if l.bits.len()!=8 || !l.bits.bytes().all(|b|b.is_ascii_hexdigit()){return err("care sleep bits mismatch")};let bits=match u32::from_str_radix(&l.bits,16){Ok(b)=>b,Err(_)=>return err("care sleep bits mismatch")};logs.push(corelib::care_context_full::Log{date:l.date,flow:l.flow,energy:l.energy,mood:l.mood,symptoms:l.symptoms,sleep_bits:bits,sleep_text:l.sleep,quality:l.quality,pain:l.pain});}
+            match corelib::care_context_full::compile(&i.question,i.anchor.as_deref(),i.length,&logs,&i.today) {Some(text)=>serde_json::json!({"ok":{"version":1,"text":text}}).to_string(),None=>err("care context unsupported date")}
+        }
+        "account_start_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==3 && ["valid","state","remote"].iter().all(|k|o.contains_key(*k))){return err("account start fields mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {valid:bool,state:String,remote:Option<bool>}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("account start schema mismatch")};
+            let state=match i.state.as_str(){"CLEAN"=>corelib::account_start::LocalDataState::Clean,"CONFLICTED"=>corelib::account_start::LocalDataState::Conflicted,"UNKNOWN"=>corelib::account_start::LocalDataState::Unknown,_=>return err("unknown local state")};
+            let d=corelib::account_start::decide(i.valid,state,i.remote);
+            let route=match d {corelib::account_start::AccountStartDestination::Home=>"HOME",corelib::account_start::AccountStartDestination::Onboarding=>"ONBOARDING",corelib::account_start::AccountStartDestination::Retry=>"RETRY"};
+            serde_json::json!({"ok":{"version":1,"destination":route}}).to_string()
+        }
+        "reconnect_state_v1" => {
+            if !v.as_object().map_or(false,|o|o.len()==6 && ["state","trailing","connected","eligible","owner","now"].iter().all(|k|o.contains_key(*k))){return err("reconnect fields mismatch")}
+            if !v["state"].as_object().map_or(false,|o|o.len()==3 && ["connected","last","owner"].iter().all(|k|o.contains_key(*k))){return err("reconnect prestate fields mismatch")}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct State {connected:bool,last:i64,owner:Option<String>}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {state:State,trailing:bool,connected:bool,eligible:bool,owner:Option<String>,now:i64}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("reconnect state schema mismatch")};
+            let mut state=ReconnectState{was_connected:i.state.connected,last_run_at_ms:i.state.last,owner:i.state.owner};
+            let d=if i.trailing {reconnect_policy::decide_trailing(&mut state,i.connected,i.eligible,i.owner.as_deref(),i.now)} else {reconnect_policy::decide(&mut state,i.connected,i.eligible,i.owner.as_deref(),i.now)};
+            let (kind,wait)=match d {Decision::Run=>("RUN",None),Decision::Skip=>("SKIP",None),Decision::Throttled{retry_after_ms}=>("THROTTLED",Some(retry_after_ms))};
+            serde_json::json!({"ok":{"version":1,"kind":kind,"wait":wait,"state":{"connected":state.was_connected,"last":state.last_run_at_ms,"owner":state.owner}}}).to_string()
+        }
+        "recovery_after_pass_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {round:i32,absolute:i32,max:i32,budget:i32,pending:bool,recoverable:bool}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("recovery schema mismatch")};
+            let d=corelib::recovery_state::after_pass(i.round,i.absolute,i.max,i.budget,i.pending,i.recoverable);
+            let action=match d.action {corelib::recovery_state::Action::Stop=>"stop",corelib::recovery_state::Action::Prompt=>"prompt",corelib::recovery_state::Action::Delayed=>"delayed"};
+            serde_json::json!({"ok":{"version":1,"action":action,"round":d.round,"pending":d.pending,"inFlight":d.in_flight}}).to_string()
+        }
+        "attention_full_prepare_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,bits:String,quality:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {average:i32,day:i32,logs:Vec<Log>}
+            let input:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("attention prepare schema mismatch")};
+            let mut logs=Vec::new();for l in input.logs {if l.bits.len()!=8 || !l.bits.bytes().all(|b|b.is_ascii_hexdigit()){return err("bad sleep bits")};let bits=match u32::from_str_radix(&l.bits,16){Ok(b)=>b,Err(_)=>return err("bad sleep bits")};logs.push(corelib::attention_full::SleepLog{date:l.date,hours:f32::from_bits(bits),quality:l.quality});}
+            match corelib::attention_full::prepare(input.average,input.day,&logs){Some((until,avg))=>serde_json::json!({"ok":{"version":1,"daysUntilPeriod":until,"sleepBits":avg.map(|a|format!("{:016x}",a.to_bits()))}}).to_string(),None=>err("unsupported sleep value")}
+        }
+        "attention_full_render_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {branch:String,title:String,message:String,until:i32,day:i32,sleep:String}
+            let i:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("attention render schema mismatch")};
+            match corelib::attention_full::render(&i.branch,&i.title,&i.message,i.until,i.day,&i.sleep) {
+                Some(x)=>serde_json::json!({"ok":{"version":1,"item":{"id":x.id,"category":x.category,"headline":x.headline,"message":x.message,"whyThisAppeared":x.why_this_appeared,"careSuggestion":x.care_suggestion,"isUrgent":x.is_urgent}}}).to_string(),None=>err("unknown nonsafety output branch")
+            }
+        }
+        "deviation_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Symptom {key:String,label:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,pain:i32,symptoms:Vec<Symptom>}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {today:String,logs:Vec<Log>}
+            let input:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("deviation full schema mismatch")};
+            let logs:Vec<_>=input.logs.into_iter().map(|l|corelib::deviation_full::Log{date:l.date,pain:l.pain,symptoms:l.symptoms.into_iter().map(|s|corelib::deviation_full::Symptom{key:s.key,label:s.label}).collect()}).collect();
+            match corelib::deviation_full::detect(&logs,&input.today) {
+                Some(entries)=>{let values:Vec<_>=entries.into_iter().map(|d|serde_json::json!({"factorKey":d.key,"title":d.title,"baselineBits":format!("{:016x}",d.baseline.to_bits()),"recentBits":format!("{:016x}",d.recent.to_bits()),"deltaBits":format!("{:016x}",d.delta.to_bits()),"severity":d.severity,"message":d.message})).collect();serde_json::json!({"ok":{"version":1,"entries":values}}).to_string()},
+                None=>err("invalid deviation today"),
+            }
+        }
+        "report_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Tag {key:String,label:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,symptoms:Vec<Tag>,flow:String,flow_upper:Tag,pain:i32,note:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {today:String,average:i32,duration:i32,anchor:String,anchor_blank:bool,approximate:bool,logs:Vec<Log>}
+            let input:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("report full schema mismatch")};
+            let tag=|t:Tag|corelib::report_full::Tag{key:t.key,label:t.label};
+            let logs:Vec<_>=input.logs.into_iter().map(|l|corelib::report_full::Log{date:l.date,symptoms:l.symptoms.into_iter().map(tag).collect(),flow:l.flow,flow_upper:tag(l.flow_upper),pain:l.pain,note:l.note}).collect();
+            let settings=corelib::report_full::Settings{average_cycle_length:input.average,period_duration:input.duration,last_period_start_date:input.anchor,anchor_blank:input.anchor_blank,approximate:input.approximate};
+            serde_json::json!({"ok":{"version":1,"text":corelib::report_full::generate_clinician_report_text(&settings,&logs,&input.today)}}).to_string()
+        }
+        "explain_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Prediction {phase:String,day:i32}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {prediction:Option<Prediction>}
+            if v.as_object().map(|m|m.len()==1 && m.contains_key("prediction"))!=Some(true) {return err("explain full schema mismatch")}
+            let input:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("explain full schema mismatch")};
+            let prediction=match input.prediction {None=>None,Some(p)=>{
+                let phase=match p.phase.as_str() {"MENSTRUAL"=>corelib::cycle_math::CyclePhase::Menstrual,"FOLLICULAR"=>corelib::cycle_math::CyclePhase::Follicular,"OVULATION"=>corelib::cycle_math::CyclePhase::Ovulation,"LUTEAL"=>corelib::cycle_math::CyclePhase::Luteal,_=>return err("bad explain phase")};
+                Some(corelib::explain_full::Prediction{phase,day_of_cycle:p.day})
+            }};
+            let x=corelib::explain_full::synthesize_explain_my_body(prediction.as_ref());
+            serde_json::json!({"ok":{"version":1,"result":{"summary":x.summary,"whatMightBeHappening":x.what_might_be_happening,"whatSupportsThat":x.what_supports_that,"whatElseCouldExplain":x.what_else_could_explain,"whatYouCanDo":x.what_you_can_do,"whatToWatch":x.what_to_watch,"whenToGetChecked":x.when_to_get_checked,"safetyLevel":"LOW"}}}).to_string()
+        }
+        "timeline_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Tag {key:String,label:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,month_title:String,energy:Tag,bleeding:bool,symptoms:Vec<Tag>}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {logs:Vec<Log>}
+            let input:Input=match serde_json::from_value(v){Ok(i)=>i,Err(_)=>return err("timeline full schema mismatch")};
+            let tag=|t:Tag|corelib::timeline_full::Tag{key:t.key,label:t.label};
+            let logs:Vec<_>=input.logs.into_iter().map(|l|corelib::timeline_full::Log{date:l.date,month_title:l.month_title,energy:tag(l.energy),bleeding:l.bleeding,symptoms:l.symptoms.into_iter().map(tag).collect()}).collect();
+            let entries:Vec<_>=corelib::timeline_full::generate(&logs).into_iter().map(|e|serde_json::json!({"monthTitle":e.month_title,"cycleLengthDays":e.cycle_length_days,"periodBleedingDays":e.period_bleeding_days,"dominantEnergy":e.dominant_energy,"dominantSymptom":e.dominant_symptom,"patternNoticed":e.pattern_noticed})).collect();
+            serde_json::json!({"ok":{"version":1,"entries":entries}}).to_string()
+        }
+        "pattern_full_plan_v1" | "pattern_full_v1" => {
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Symptom {key:String,label:String,lower:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Log {date:String,symptoms:Vec<Symptom>}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Weight {day:i64,bits:String}
+            #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+            struct Input {today:String,anchor:String,average:i32,duration:i32,luteal:i32,logs:Vec<Log>,weights:Vec<Weight>}
+            let i:Input=match serde_json::from_value(v) {Ok(i)=>i,Err(_)=>return err("pattern full schema mismatch")};
+            let logs:Vec<_>=i.logs.into_iter().map(|l|corelib::pattern_full::PatternFullLog{date_string:l.date,symptoms:l.symptoms.into_iter().map(|s|corelib::pattern_full::PatternSymptom{key:s.key,label:s.label,lower:s.lower}).collect()}).collect();
+            if contract=="pattern_full_plan_v1" {
+                if !i.weights.is_empty(){return err("plan weights must be empty")}
+                return match corelib::pattern_full::weight_offsets(&logs,&i.today) {Some(days)=>serde_json::json!({"ok":{"version":1,"days":days}}).to_string(),None=>err("invalid pattern today")};
+            }
+            let mut weights=Vec::new();
+            for w in i.weights {if w.bits.len()!=16 || !w.bits.bytes().all(|b|b.is_ascii_hexdigit()) {return err("bad pattern weight bits")}
+                let bits=match u64::from_str_radix(&w.bits,16){Ok(b)=>b,Err(_)=>return err("bad pattern weight bits")};weights.push((w.day,f64::from_bits(bits)));}
+            let settings=corelib::pattern_engine::PatternSettings{average_cycle_length:i.average,period_duration:i.duration,luteal_phase_days:i.luteal,last_period_start_date:i.anchor};
+            match corelib::pattern_full::detect_patterns(&settings,&logs,&i.today,&weights) {
+                Some(patterns)=> {let values:Vec<_>=patterns.into_iter().map(|p|serde_json::json!({"id":p.id,"title":p.title,"supportingObservations":p.supporting_observations,"confidence":p.confidence,"cyclePhase":p.cycle_phase,"explanation":p.explanation,"actionableCare":p.actionable_care})).collect();serde_json::json!({"ok":{"version":1,"patterns":values}}).to_string()},
+                None=>err("pattern weight coverage mismatch"),
+            }
+        }
         "learned_full_v1" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

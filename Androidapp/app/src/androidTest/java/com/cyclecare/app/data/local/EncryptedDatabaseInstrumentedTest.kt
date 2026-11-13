@@ -13,34 +13,28 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * On-device proof of the production encrypted-local-store path, hermetically
- * confined by construction:
- *  - Owner identity carries the RESERVED test prefix
- *    [CycleCareDatabase.TEST_OWNER_IDENTITY_PREFIX]; the production
- *    getDatabase path refuses that prefix and this seam requires it, so
- *    neither path can hand back the other's handle. The legacy guest database
- *    is unreachable here.
- *  - Key material lives in a TEST-PREFIXED SharedPreferences file and
- *    Keystore alias; DatabaseKeyManager refuses any other injected names.
- *  - Per-run unique names (UUID suffix) so re-runs can never collide; the
- *    two-phase process-restart suite is the only deliberate stable-name
- *    exception and lives in its own class.
- *  - All data synthetic. No network; the consent gate is never opened.
- *    Instrumented-process startup is hermetic by inspection: no custom
- *    Application class, no startup providers in the source manifest, no
- *    enqueued WorkManager work on a fresh install.
+ * On-device proof of the production encrypted-local-store path. Confinement is
+ * structural, not naming convention: the instrumentation seam lives behind the
+ * isolated .debug/.lab application id (the production id refuses it), uses its
+ * own instance cache (production caches are unreachable), and requires an
+ * injected manager bound to TEST-OWNED key stores, so no call can read
+ * production prefs or the production Keystore alias and no production handle
+ * can be returned or evicted. The legacy guest database is never opened.
+ *
+ * Per-run unique owner/prefs/alias (UUID) so re-runs cannot collide; the
+ * two-phase suite's stable names are the only deliberate exception.
+ * All data synthetic. No network; the consent gate is never opened.
  *
  * Oracles: correct-key roundtrip through the REAL production factory;
- * wrong-key REFUSAL with cipher-specific cause AND correct-key reopen of the
- * known row afterwards; durable reopen-from-disk after close+cache-eviction
+ * wrong-key REFUSAL with the cipher-specific cause
+ * (net.zetetic.database.sqlcipher.SQLiteNotADatabaseException - class verified
+ * against the actual sqlcipher-android 4.19.1 AAR) AND correct-key reopen of
+ * the known row afterwards; durable reopen-from-disk after close+cache-eviction
  * with the stored wrapped passphrase; non-plaintext header (secondary only).
- * Remaining oracles are tracked in V9FixtureProcessRestartInstrumentedTest
- * (cross-process reopen + encrypted v9->v10 upgrade) - not claimed here.
  */
 @RunWith(AndroidJUnit4::class)
 class EncryptedDatabaseInstrumentedTest {
@@ -51,8 +45,8 @@ class EncryptedDatabaseInstrumentedTest {
     private val runSuffix = UUID.randomUUID().toString()
     private val ownerIdentity = CycleCareDatabase.TEST_OWNER_IDENTITY_PREFIX + "db-" + runSuffix
     private val dbName = CycleCareDatabase.namespaceFor(ownerIdentity)
-    private val testPrefsName = DatabaseKeyManager.TEST_OWNED_PREFIX + "db_prefs_" + runSuffix
-    private val testKeyAlias = DatabaseKeyManager.TEST_OWNED_PREFIX + "db_key_" + runSuffix
+    private val testPrefsName = TEST_OWNED_KEYSTORE_PREFIX + "db_prefs_" + runSuffix
+    private val testKeyAlias = TEST_OWNED_KEYSTORE_PREFIX + "db_key_" + runSuffix
 
     private val openHandles = mutableListOf<CycleCareDatabase>()
 
@@ -60,27 +54,51 @@ class EncryptedDatabaseInstrumentedTest {
         DatabaseKeyManager(context, preferencesName = testPrefsName, keyAlias = testKeyAlias)
 
     private fun openDb(): CycleCareDatabase =
-        CycleCareDatabase.getDatabase(context, ownerIdentity, keyManager()).also { openHandles += it }
+        CycleCareDatabase.getTestDatabase(context, ownerIdentity, keyManager()).also { openHandles += it }
 
     @After
     fun tearDown() {
-        // Independent, verified cleanup steps - each failure surfaces, no broad
-        // runCatching. Only test-owned artifacts are touched.
-        openHandles.forEach { it.close() }
+        // Attempt EVERY owned cleanup step, collect failures, assert once at the
+        // end: a failing step never skips later steps. Absent / never-created
+        // artifacts are valid states, not errors. Only test-owned artifacts are
+        // touched; evictTestInstance is idempotent and structurally cannot
+        // reach production caches.
+        val failures = mutableListOf<String>()
+        openHandles.forEach { handle ->
+            runCatching { handle.close() }.onFailure { failures += "db close: $it" }
+        }
         openHandles.clear()
-        CycleCareDatabase.evictCachedInstanceForTest(dbName)
+        CycleCareDatabase.evictTestInstance(dbName)
 
-        val prefsCleared = context
-            .getSharedPreferences(testPrefsName, android.content.Context.MODE_PRIVATE)
-            .edit().clear().commit()
-        assertTrue("test prefs clear must commit", prefsCleared)
+        runCatching {
+            val committed = context
+                .getSharedPreferences(testPrefsName, android.content.Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            if (!committed) failures += "test prefs clear did not commit"
+        }.onFailure { failures += "test prefs clear: $it" }
 
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (keyStore.containsAlias(testKeyAlias)) keyStore.deleteEntry(testKeyAlias)
-        assertFalse("test keystore alias must be gone", keyStore.containsAlias(testKeyAlias))
+        runCatching {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (keyStore.containsAlias(testKeyAlias)) keyStore.deleteEntry(testKeyAlias)
+            if (keyStore.containsAlias(testKeyAlias)) failures += "test keystore alias still present"
+        }.onFailure { failures += "keystore cleanup: $it" }
 
-        assertTrue("test database file must be deleted", context.deleteDatabase(dbName))
-        assertFalse("test database path must not exist", context.getDatabasePath(dbName).exists())
+        runCatching {
+            val file = context.getDatabasePath(dbName)
+            if (file.exists()) {
+                if (!context.deleteDatabase(dbName)) failures += "deleteDatabase returned false"
+                if (file.exists()) failures += "database file still exists after delete"
+            }
+            // Owned ensureEncrypted conversion artifacts (custom names not
+            // covered by deleteDatabase): only files derived from THIS dbName.
+            val dir = context.getDatabasePath(dbName).parentFile
+            listOf("$dbName.encrypted.tmp", "$dbName.plaintext.backup").forEach { sidecar ->
+                val f = dir?.resolve(sidecar)
+                if (f != null && f.exists() && !f.delete()) failures += "sidecar $sidecar delete returned false"
+            }
+        }.onFailure { failures += "db delete: $it" }
+
+        assertTrue("test-owned cleanup failures: $failures", failures.isEmpty())
     }
 
     @Test
@@ -98,9 +116,8 @@ class EncryptedDatabaseInstrumentedTest {
             painIntensity = 3
         )
         db.cycleDao().insertOrUpdateLog(log)
-        val readBack = db.cycleDao().getLogByDate("2026-11-06")
-        assertNotNull(readBack)
-        assertEquals(log, readBack)
+        // Complete-object equality: every column, not a subset.
+        assertEquals(log, db.cycleDao().getLogByDate("2026-11-06"))
     }
 
     @Test
@@ -111,16 +128,15 @@ class EncryptedDatabaseInstrumentedTest {
         )
         db.close()
         openHandles.remove(db)
-        CycleCareDatabase.evictCachedInstanceForTest(dbName)
+        CycleCareDatabase.evictTestInstance(dbName)
 
         val file = context.getDatabasePath(dbName)
         assertTrue(file.exists())
 
-        val wrongFactory = SupportOpenHelperFactory(
-            "definitely-the-wrong-passphrase-0123456789abcdef".toByteArray(Charsets.UTF_8)
-        )
         val wrongDb = Room.databaseBuilder(context, CycleCareDatabase::class.java, file.absolutePath)
-            .openHelperFactory(wrongFactory)
+            .openHelperFactory(
+                SupportOpenHelperFactory("definitely-the-wrong-passphrase-0123456789abcdef".toByteArray(Charsets.UTF_8))
+            )
             .build()
         val failure = try {
             wrongDb.openHelper.writableDatabase
@@ -131,44 +147,40 @@ class EncryptedDatabaseInstrumentedTest {
             wrongDb.close()
         }
         assertNotNull("wrong passphrase must throw", failure)
-        // Cipher-specific cause: SQLCipher raises SQLiteDatabaseCorruptException
-        // (or an SQLiteException whose message reports the unreadable header)
-        // BEFORE any identity or migration logic can run. A generic catch-all
-        // pass would not prove the cipher refused the key.
+        // Cipher-specific cause: SQLCipher 4.19.1 raises
+        // SQLiteNotADatabaseException (verified against the actual AAR); the
+        // framework wrapper may surface SQLiteDatabaseCorruptException, and the
+        // message reports the unreadable header. A generic catch would not
+        // prove the cipher refused the key.
         val cipherRefusal = generateSequence(failure as Throwable?) { it.cause }.any {
-            it is android.database.sqlite.SQLiteDatabaseCorruptException ||
-                it is net.zetetic.database.sqlcipher.SQLiteDatabaseCorruptException ||
+            it is net.zetetic.database.sqlcipher.SQLiteNotADatabaseException ||
+                it is android.database.sqlite.SQLiteDatabaseCorruptException ||
                 (it.message?.contains("file is not a database") == true) ||
                 (it.message?.contains("file is encrypted") == true)
         }
         assertTrue("failure must be the cipher-level refusal, was: $failure", cipherRefusal)
 
-        // The failed attempt must not have damaged the file: correct key still
-        // opens it and the known row is intact.
+        // The failed attempt must not have damaged the file.
         val reopened = openDb()
-        val row = reopened.cycleDao().getLogByDate("2026-11-06")
-        assertNotNull(row)
-        assertEquals("known-row", row!!.notes)
-        assertEquals(5, row.waterGlasses)
+        assertEquals(
+            CycleDayLog(dateString = "2026-11-06", notes = "known-row", waterGlasses = 5),
+            reopened.cycleDao().getLogByDate("2026-11-06")
+        )
     }
 
     @Test
     fun durableReopenAfterCloseWithStoredWrappedPassphrase() = runBlocking {
+        val expected = CycleDayLog(dateString = "2026-11-06", notes = "reopen-oracle", waterGlasses = 4)
         val first = openDb()
-        first.cycleDao().insertOrUpdateLog(
-            CycleDayLog(dateString = "2026-11-06", notes = "reopen-oracle", waterGlasses = 4)
-        )
+        first.cycleDao().insertOrUpdateLog(expected)
         first.close()
         openHandles.remove(first)
-        CycleCareDatabase.evictCachedInstanceForTest(dbName)
+        CycleCareDatabase.evictTestInstance(dbName)
 
         // Full production path again: unwrap the stored passphrase from the
         // test-owned Keystore alias and open the existing encrypted file.
         val second = openDb()
-        val readBack = second.cycleDao().getLogByDate("2026-11-06")
-        assertNotNull(readBack)
-        assertEquals("reopen-oracle", readBack!!.notes)
-        assertEquals(4, readBack.waterGlasses)
+        assertEquals(expected, second.cycleDao().getLogByDate("2026-11-06"))
     }
 
     @Test
@@ -177,7 +189,7 @@ class EncryptedDatabaseInstrumentedTest {
         db.openHelper.writableDatabase
         db.close()
         openHandles.remove(db)
-        CycleCareDatabase.evictCachedInstanceForTest(dbName)
+        CycleCareDatabase.evictTestInstance(dbName)
 
         val header = ByteArray(16)
         context.getDatabasePath(dbName).inputStream().use { it.read(header) }
@@ -188,10 +200,9 @@ class EncryptedDatabaseInstrumentedTest {
     @Test
     fun testKeyMaterialIsSyntheticAndStableWithinRun() {
         // Routing demonstration only: the injected manager mints into the
-        // test-owned prefs file, and stays stable across calls. No production
-        // prefs file or alias is read here; confinement is enforced by the
-        // manager's prefix rule and the seam's prefix rule, not inspected
-        // against production state.
+        // test-owned prefs file and stays stable across calls. No production
+        // store is read; confinement is enforced by the manager's store rule
+        // and the seam's store binding.
         val first = keyManager().getOrCreatePassphrase()
         val second = keyManager().getOrCreatePassphrase()
         assertFalse(first.isBlank())

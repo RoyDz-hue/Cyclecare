@@ -53,7 +53,11 @@ object PeriodDateConsistency {
      * errors. Every real duration is accepted; unusual durations carry a
      * confirmation warning. [isOngoing] marks the period as still in progress.
      */
-    fun validatePair(
+    fun validatePair(start:LocalDate?,end:LocalDate?,today:LocalDate=LocalDate.now(),isOngoing:Boolean=false):PeriodPairCheck =
+        com.cyclecare.app.rust.CycleCareCoreBridge.fullPeriodEpisode(start,end,today,isOngoing,0)?.check
+            ?: validatePairKotlin(start,end,today,isOngoing)
+
+    internal fun validatePairKotlin(
         start: LocalDate?,
         end: LocalDate?,
         today: LocalDate = LocalDate.now(),

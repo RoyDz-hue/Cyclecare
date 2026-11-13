@@ -29,14 +29,18 @@ object PeriodEpisodeEntry {
         val errorMessage: String? = null
     )
 
-    fun decide(
+    fun decide(start:LocalDate?,end:LocalDate?,isOngoing:Boolean,currentTypicalDurationDays:Int,today:LocalDate=LocalDate.now()):StorageDecision =
+        com.cyclecare.app.rust.CycleCareCoreBridge.fullPeriodEpisode(start,end,today,isOngoing,currentTypicalDurationDays)?.storage
+            ?: decideKotlin(start,end,isOngoing,currentTypicalDurationDays,today)
+
+    internal fun decideKotlin(
         start: LocalDate?,
         end: LocalDate?,
         isOngoing: Boolean,
         currentTypicalDurationDays: Int,
         today: LocalDate = LocalDate.now()
     ): StorageDecision {
-        val check = PeriodDateConsistency.validatePair(start, end, today, isOngoing)
+        val check = PeriodDateConsistency.validatePairKotlin(start, end, today, isOngoing)
         if (!check.isValid) {
             return StorageDecision(
                 rawEndDate = null,

@@ -133,11 +133,11 @@ object AttentionEngine {
     }
 
     /**
-     * Native-first variant: only the NON-SAFETY priority CHOICE is delegated to the Rust
+     * Native-first variant: NON-SAFETY priority choice and output are delegated to the Rust
      * select_nonsafety_priority port. The safety branch keeps its original immediate Kotlin
-     * return; deviation detection still uses the existing SomethingChangedEngine Kotlin call;
-     * all copy is rendered below from the same fixed templates as the oracle (intentionally
-     * duplicated strings - the oracle stays untouched as the fallback); the wellbeing
+     * return; deviation detection uses the qualified shared SomethingChangedEngine caller;
+     * nonsafety sleep evidence and complete item assembly are Rust-owned with exact JVM
+     * uppercase and locale-format primitives; the original oracle stays intact as fallback; the wellbeing
      * check-in's current-date evidence is resolved at the original late stage, only after no
      * earlier branch won, via [daySupplier] (default: a fresh LocalDate.now() at that moment,
      * matching production). Native unavailability or any malformed reply falls back to the
@@ -164,24 +164,21 @@ object AttentionEngine {
         }
 
         val deviations = somethingChangedEngine.detectDeviations(settings, recentLogs)
-        val severities = deviations.map { it.severity.name }
         var daysUntilPeriod = 0
         var sleepAverage: Double? = null
         if (prediction != null) {
-            daysUntilPeriod = (settings.averageCycleLength - prediction.dayOfCycle).coerceAtLeast(0)
-            val recentSleepLogs = recentLogs
-                .sortedByDescending { it.dateString }
-                .take(3)
-                .filter { it.sleepHours > 0 && (kotlin.math.abs(it.sleepHours - 7.5f) > 0.01f || it.sleepQuality.uppercase() !in setOf("", "GOOD")) }
-            sleepAverage = recentSleepLogs.takeIf { it.isNotEmpty() }?.map { it.sleepHours }?.average()
+            val evidence=CycleCareCoreBridge.prepareFullAttention(settings.averageCycleLength,prediction.dayOfCycle,recentLogs)
+                ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs)
+            daysUntilPeriod=evidence.days
+            sleepAverage=evidence.sleep
         }
         val dayOfCycle = prediction?.dayOfCycle ?: 0
         val isPeriod = prediction?.isPeriod == true
         val isFertile = prediction?.isFertile == true
 
-        val first = CycleCareCoreBridge.attentionNonsafetyPriority(
+        val first = CycleCareCoreBridge.chooseFullAttention(
             safetyUrgentOrSeek = false,
-            deviationSeverities = severities,
+            deviations = deviations,
             hasPrediction = prediction != null,
             dayOfCycle = dayOfCycle,
             isPeriod = isPeriod,
@@ -194,61 +191,20 @@ object AttentionEngine {
 
         when (first.branch) {
             CycleCareCoreBridge.NonsafetyBranch.BASELINE_SHIFT_STRONG -> {
-                val deviation = deviations[first.deviationIndex
-                    ?: return evaluateTodayPriority(prediction, safety, settings, recentLogs)]
-                return TodayAttentionItem(
-                    id = "baseline_shift_strong",
-                    category = "Body Rhythm Shift",
-                    headline = "Noticeable change: ${deviation.title}",
-                    message = deviation.message,
-                    whyThisAppeared = "Calculated from comparing your recent 90-day records with your previous historical baseline.",
-                    careSuggestion = "Consider noting any changes in sleep, stress, or nutrition, or discussing with a healthcare professional."
-                )
+                return (CycleCareCoreBridge.renderFullAttention(first) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
             }
             CycleCareCoreBridge.NonsafetyBranch.BASELINE_SHIFT_NOTABLE -> {
-                val deviation = deviations[first.deviationIndex
-                    ?: return evaluateTodayPriority(prediction, safety, settings, recentLogs)]
-                return TodayAttentionItem(
-                    id = "baseline_shift_notable",
-                    category = "Body Rhythm Shift",
-                    headline = "A subtle shift in your rhythm",
-                    message = deviation.message,
-                    whyThisAppeared = "Observed across your recent cycle patterns.",
-                    careSuggestion = "Cycle rhythms naturally ebb and flow with lifestyle and seasonal changes."
-                )
+                return (CycleCareCoreBridge.renderFullAttention(first) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
             }
             CycleCareCoreBridge.NonsafetyBranch.NONE -> return null
             CycleCareCoreBridge.NonsafetyBranch.PERIOD_SLEEP_TAPER -> {
-                val average = sleepAverage
-                    ?: return evaluateTodayPriority(prediction, safety, settings, recentLogs)
-                return TodayAttentionItem(
-                    id = "period_sleep_taper",
-                    category = "Today's Picture",
-                    headline = "Calendar estimate: period in about $daysUntilPeriod days",
-                    message = "You also saved sleep entries averaging ${"%.1f".format(average)} hours across recent dates.",
-                    whyThisAppeared = "Calendar date estimate plus non-default sleep values saved in your logs.",
-                    careSuggestion = "Prioritize a calming evening routine and gentle wind-down tonight."
-                )
+                return (CycleCareCoreBridge.renderFullAttention(first) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
             }
             CycleCareCoreBridge.NonsafetyBranch.FERTILE_WINDOW_NOTICE -> {
-                return TodayAttentionItem(
-                    id = "fertile_window_notice",
-                    category = "Cycle Milestone",
-                    headline = "You may be entering your fertile window",
-                    message = "This calendar estimate places the date within a possible fertile window. It cannot confirm ovulation or prevent pregnancy.",
-                    whyThisAppeared = "Estimated cycle day $dayOfCycle from your saved date and settings.",
-                    careSuggestion = "If fertility matters to you, use appropriate clinical guidance rather than relying on a calendar estimate."
-                )
+                return (CycleCareCoreBridge.renderFullAttention(first) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
             }
             CycleCareCoreBridge.NonsafetyBranch.PHASE_MENSTRUAL_START -> {
-                return TodayAttentionItem(
-                    id = "phase_menstrual_start",
-                    category = "Cycle Reset",
-                    headline = "Welcome to Day 1 of your cycle",
-                    message = "Hormones are at their baseline. Your body is taking time to rest and reset.",
-                    whyThisAppeared = "Recorded first day of period bleeding.",
-                    careSuggestion = "Focus on warmth, nourishing hydration, and gentle pacing."
-                )
+                return (CycleCareCoreBridge.renderFullAttention(first) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
             }
             CycleCareCoreBridge.NonsafetyBranch.NEEDS_CHECKIN -> {
                 // Original late stage, preserved exactly: parse every date with runCatching,
@@ -258,9 +214,9 @@ object AttentionEngine {
                     .mapNotNull { runCatching { LocalDate.parse(it.dateString) }.getOrNull() }
                     .maxOrNull()
                 val daysSinceLastLog = if (lastLogDate != null) ChronoUnit.DAYS.between(lastLogDate, daySupplier()) else null
-                val second = CycleCareCoreBridge.attentionNonsafetyPriority(
+                val second = CycleCareCoreBridge.chooseFullAttention(
                     safetyUrgentOrSeek = false,
-                    deviationSeverities = severities,
+                    deviations = deviations,
                     hasPrediction = prediction != null,
                     dayOfCycle = dayOfCycle,
                     isPeriod = isPeriod,
@@ -271,14 +227,7 @@ object AttentionEngine {
                     daysSinceLastLog = daysSinceLastLog
                 ) ?: return evaluateTodayPriority(prediction, safety, settings, recentLogs)
                 return when (second.branch) {
-                    CycleCareCoreBridge.NonsafetyBranch.WELLBEING_CHECKIN -> TodayAttentionItem(
-                        id = "wellbeing_checkin",
-                        category = "Gentle Check-in",
-                        headline = "How is your body feeling lately?",
-                        message = "Checking in when you have a quiet moment helps keep your body patterns clear.",
-                        whyThisAppeared = "No journal entries in the last few days.",
-                        careSuggestion = "Add a quick note or log in Tell CycleCare whenever you feel ready."
-                    )
+                    CycleCareCoreBridge.NonsafetyBranch.WELLBEING_CHECKIN -> (CycleCareCoreBridge.renderFullAttention(second) ?: return evaluateTodayPriority(prediction,safety,settings,recentLogs))
                     CycleCareCoreBridge.NonsafetyBranch.NONE -> null
                     // Defensive: any other tag on pass 2 falls back to the verbatim oracle.
                     else -> evaluateTodayPriority(prediction, safety, settings, recentLogs)

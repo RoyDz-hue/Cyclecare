@@ -57,7 +57,10 @@ object CareConversationPolicy {
         return ProposedCareLog(ownerId = ownerId, date = date, interpretation = parsed)
     }
 
-    fun merge(existing: CycleDayLog, parsed: ParsedLogInterpretation): CycleDayLog = existing.copy(
+    fun merge(existing: CycleDayLog, parsed: ParsedLogInterpretation): CycleDayLog =
+        mergeKotlin(existing,parsed)
+
+    internal fun mergeKotlin(existing: CycleDayLog, parsed: ParsedLogInterpretation): CycleDayLog = existing.copy(
         flowLevel = parsed.flowLevelResult ?: existing.flowLevel,
         energyLevel = parsed.energyResult ?: existing.energyLevel,
         moodLevel = parsed.moodResult ?: existing.moodLevel,
@@ -68,7 +71,11 @@ object CareConversationPolicy {
     )
 
     /** Only relevant, structured observations; never notes, identity or intimate-health fields. */
-    fun compileContext(question: String, logs: List<CycleDayLog>, settings: CycleSettings, today: LocalDate): String {
+    fun compileContext(question: String, logs: List<CycleDayLog>, settings: CycleSettings, today: LocalDate): String =
+        com.cyclecare.app.rust.CycleCareCoreBridge.fullCareContext(question,logs,settings,today)
+            ?: compileContextKotlin(question,logs,settings,today)
+
+    internal fun compileContextKotlin(question: String, logs: List<CycleDayLog>, settings: CycleSettings, today: LocalDate): String {
         val q = question.lowercase()
         val cycle = Regex("cycle|period|flow|bleed|timing").containsMatchIn(q)
         val energy = Regex("energy|tired|fatigue|exhaust|sleep|rest").containsMatchIn(q)

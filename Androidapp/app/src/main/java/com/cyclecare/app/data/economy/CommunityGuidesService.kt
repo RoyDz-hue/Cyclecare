@@ -252,8 +252,15 @@ class CommunityGuidesService(
  * All failures are swallowed: the pulse must never break the daily sync.
  */
 object CommunityPulsePinger {
+    /** Test-only destination override: keeps the production caller/client
+     * path intact but makes a REAL destination impossible to construct
+     * (loopback only), so a negative control can prove the process network
+     * deny wall engages this production route with zero real-egress risk. */
+    @Volatile internal var endpointBaseOverrideForTests: String? = null
+
     suspend fun ping(accessToken: String?): Boolean = withContext(Dispatchers.IO) {
-        if (!SupabaseConfig.isConfigured) return@withContext false
+        val baseOverride = endpointBaseOverrideForTests
+        if (baseOverride == null && !SupabaseConfig.isConfigured) return@withContext false
         try {
             val client = OkHttpClient.Builder()
                 .connectTimeout(6, TimeUnit.SECONDS)
@@ -264,7 +271,7 @@ object CommunityPulsePinger {
                 .build()
             val bearer = accessToken?.trim().takeUnless { it.isNullOrEmpty() } ?: SupabaseConfig.anonKey
             val request = Request.Builder()
-                .url("${SupabaseConfig.url}/functions/v1/community-pulse")
+                .url("${baseOverride ?: SupabaseConfig.url}/functions/v1/community-pulse")
                 .header("apikey", SupabaseConfig.anonKey)
                 .header("Authorization", "Bearer $bearer")
                 .header("Content-Type", "application/json")

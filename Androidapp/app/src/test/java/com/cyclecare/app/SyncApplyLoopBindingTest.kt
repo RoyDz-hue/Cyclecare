@@ -102,13 +102,27 @@ class SyncApplyLoopBindingTest {
         return b.service.captureSyncApplyBinding(b.db, id.owner!!, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)!!
     }
 
-    private fun seedPending(b: Bound, record: String): HealthSyncOutboxEntry {
-        val entry = HealthSyncOutboxEntry(owner, UUID.randomUUID().toString(), record, "UPSERT", 0L, 1L, "{}", HealthSyncPayloadCodec.hash("{}"), identity(b.prefs).localConsentGeneration)
+    private fun seedPending(b: Bound, record: String): HealthSyncOutboxEntry = seedPending(b.db, b.prefs, record)
+
+    private fun seedPending(db: CycleCareDatabase, p: AuthPreferences, record: String): HealthSyncOutboxEntry {
+        val entry = HealthSyncOutboxEntry(owner, UUID.randomUUID().toString(), record, "UPSERT", 0L, 1L, "{}", HealthSyncPayloadCodec.hash("{}"), identity(p).localConsentGeneration)
         runBlocking {
-            b.db.healthSyncDao().putRevision(HealthSyncRevision(owner, record, 1L, entry.payloadHash, false, 1L, 0L))
-            b.db.healthSyncDao().enqueue(entry)
+            db.healthSyncDao().putRevision(HealthSyncRevision(owner, record, 1L, entry.payloadHash, false, 1L, 0L))
+            db.healthSyncDao().enqueue(entry)
         }
         return entry
+    }
+
+    /** Bound service + repository with NO port selected: capture yields the null
+     * origin, so the attempt takes legacy effects admitted per effect through the
+     * repository's routing authority. */
+    private data class Unselected(val repo: CycleRepository, val db: CycleCareDatabase, val prefs: AuthPreferences, val service: SupabaseSyncService)
+
+    private fun unselected(p: AuthPreferences = syncPrefs()): Unselected {
+        val db = open()
+        val repo = CycleRepository(db)
+        val service = SupabaseSyncService(db, p).apply { bindSyncApplyRepository(repo) }
+        return Unselected(repo, db, p, service)
     }
 
     private fun wireId(logical: String) = UUID.nameUUIDFromBytes("cyclecare-v3:$owner:$logical".toByteArray(Charsets.UTF_8)).toString()
@@ -160,36 +174,42 @@ class SyncApplyLoopBindingTest {
         assertTrue(db.healthSyncDao().pending(owner).isEmpty())
     }
 
-    @Test fun selectedServicePortWithoutBindingFailsClosed() {
+    @Test fun unboundServiceHasNoPortRouteAndFailsClosed() {
+        // The single port authority is the bound repository's installed port:
+        // an unbound service CANNOT select one at all (no per-instance attach
+        // exists), its apply binding stays legacy (null), and port-requiring
+        // routes fail closed.
         val db = open()
         val prefs = syncPrefs()
-        val host = RustBoundRoomHost(prefs)
-        val token = (host.publish(null, db, prefs.rustOperationSnapshot()) as RustBoundRoomHost.Result.Value).value
         val service = SupabaseSyncService(db, prefs)
-        service.attachRustPort(RustRepositoryPort(host, token))
         val id = identity(prefs)
+        assertNull(service.captureSyncApplyBinding(db, id.owner!!, id.session, id.localConsentGeneration, id.serverConsentGeneration!!))
         try {
-            service.captureSyncApplyBinding(db, id.owner!!, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+            service.beginStagedRustHistory(7L, "op-x")
         } catch (e: IllegalStateException) {
-            assertEquals("sync_apply_requires_repo_binding", e.message)
+            assertEquals("rust_port_required", e.message)
             return
         }
-        throw AssertionError("expected repo-binding requirement")
+        throw AssertionError("expected rust_port_required")
     }
 
-    @Test fun boundRepoWithoutPortPlusServiceVarRejects() {
-        val b = bound()
-        val id = identity(b.prefs)
+    @Test fun boundRepoWithoutPortIsConsistentLegacy() {
+        // Bound repository, no installed port: consistent legacy - the apply
+        // binding resolves null WITHOUT error, and port-requiring routes fail
+        // closed. No divergent second selection can exist to reject.
+        val db = open()
+        val prefs = syncPrefs()
+        val service = SupabaseSyncService(db, prefs)
+        service.bindSyncApplyRepository(CycleRepository(db)) // bound repo WITHOUT a rust port
+        val id = identity(prefs)
+        assertNull(service.captureSyncApplyBinding(db, id.owner!!, id.session, id.localConsentGeneration, id.serverConsentGeneration!!))
         try {
-            SupabaseSyncService(b.db, b.prefs).apply {
-                attachRustPort(b.port)
-                bindSyncApplyRepository(CycleRepository(b.db)) // bound repo WITHOUT a rust port
-            }.captureSyncApplyBinding(b.db, id.owner!!, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+            service.beginStagedRustHistory(7L, "op-x")
         } catch (e: IllegalStateException) {
-            assertEquals("sync_apply_selection_inconsistent", e.message)
+            assertEquals("rust_port_required", e.message)
             return
         }
-        throw AssertionError("expected selection-inconsistency rejection")
+        throw AssertionError("expected rust_port_required")
     }
 
     @Test fun separateHostDuringAwaitEscapesStaleWithZeroRows() = runBlocking(Dispatchers.IO) {
@@ -380,5 +400,120 @@ class SyncApplyLoopBindingTest {
         val row = b.db.healthSyncDao().pending(owner).single { it.operationId == entry.operationId }
         assertEquals(1, row.attempts)
         assertTrue(row.nextAttemptAt > 0)
+    }
+
+    // --- Null-origin per-effect legacy admission (bound repo, no port at capture) ---
+    // These drive the Stage-B SEAL as the selection-change witness: they prove
+    // admission rejects once the gate is sealed, NOT first-install behavior
+    // (no install API exists; install-contract exclusion is residual Stage-C).
+
+
+
+    @Test fun sealDuringAwaitStaleBeforeAckEffectZeroRows() {
+        val u = unselected()
+        val entry = seedPending(u.db, u.prefs, "2026-10-07")
+        val id = identity(u.prefs)
+        val origin = u.service.captureSyncApplyBinding(u.db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        val fake = FakeTransport(onApply = { op ->
+            assertTrue(u.repo.trySealLegacyDispatch())
+            validAck(op)
+        })
+        try {
+            expectThrows<CycleRepository.SyncApplyStaleException> {
+                runBlocking(Dispatchers.IO) { u.service.executeV3OutboxAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, u.db, origin) }
+            }
+            // Row-scoped zero: the sealed ACK effect admitted nothing, scheduled no retry.
+            val dao = u.db.healthSyncDao()
+            runBlocking {
+                assertEquals(0L, dao.revision(owner, "2026-10-07")!!.serverRevision)
+                assertTrue(dao.pending(owner).any { it.operationId == entry.operationId && it.attempts == 0 && it.nextAttemptAt == 0L })
+            }
+        } finally { u.repo.releaseLegacyDispatchSeal() }
+    }
+
+    @Test fun sealDuringAwaitStaleBeforeConflictEffectZeroRows() {
+        val u = unselected()
+        seedPending(u.db, u.prefs, "2026-10-07")
+        val id = identity(u.prefs)
+        val origin = u.service.captureSyncApplyBinding(u.db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        val fake = FakeTransport(onApply = { op ->
+            assertTrue(u.repo.trySealLegacyDispatch())
+            V3WireReceipt("conflict", 5L, null, null, null, op.recordId, op.operationId, op.logicalRecordId, null, true)
+        })
+        try {
+            expectThrows<CycleRepository.SyncApplyStaleException> {
+                runBlocking(Dispatchers.IO) { u.service.executeV3OutboxAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, u.db, origin) }
+            }
+            // Row-scoped zero: no conflict row, no revision effect.
+            val dao = u.db.healthSyncDao()
+            runBlocking {
+                assertTrue(dao.conflicts(owner).isEmpty())
+                assertEquals(0L, dao.revision(owner, "2026-10-07")!!.serverRevision)
+            }
+        } finally { u.repo.releaseLegacyDispatchSeal() }
+    }
+
+    @Test fun sealDuringAwaitStaleBeforeRetryEffectZeroRows() {
+        val u = unselected()
+        val entry = seedPending(u.db, u.prefs, "2026-10-07")
+        val id = identity(u.prefs)
+        val origin = u.service.captureSyncApplyBinding(u.db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        val fake = FakeTransport(onApply = {
+            assertTrue(u.repo.trySealLegacyDispatch())
+            throw java.io.IOException("boom")
+        })
+        try {
+            // The admission conversion escapes the broad per-entry catch: no retry row.
+            expectThrows<CycleRepository.SyncApplyStaleException> {
+                runBlocking(Dispatchers.IO) { u.service.executeV3OutboxAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, u.db, origin) }
+            }
+            val row = runBlocking { u.db.healthSyncDao().pending(owner).single { it.operationId == entry.operationId } }
+            assertEquals(0, row.attempts)
+            assertEquals(0L, row.nextAttemptAt)
+        } finally { u.repo.releaseLegacyDispatchSeal() }
+    }
+
+    @Test fun sealDuringAwaitStaleBeforePullPageEffectZeroRows() {
+        val u = unselected()
+        val id = identity(u.prefs)
+        val origin = u.service.captureSyncApplyBinding(u.db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        val payload = JSONObject().put("kind", "UPSERT").put("logicalRecordId", "2026-10-07").put("value", JSONObject(HealthSyncPayloadCodec.logPayload(CycleDayLog(dateString = "2026-10-07", moodLevel = "calm"))))
+        val change = V3WireChange(wireId("2026-10-07"), 3L, 1L, payload, false, null, "2026-10-07")
+        val fake = FakeTransport(onReadChanges = {
+            assertTrue(u.repo.trySealLegacyDispatch())
+            listOf(change)
+        })
+        try {
+            expectThrows<CycleRepository.SyncApplyStaleException> {
+                runBlocking(Dispatchers.IO) { u.service.pullAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, u.db, origin) }
+            }
+            // Row-scoped zero: no cursor write, no applied row.
+            val dao = u.db.healthSyncDao()
+            runBlocking {
+                assertNull(dao.cursor(owner))
+                assertNull(u.db.cycleDao().getLogByDate("2026-10-07"))
+            }
+        } finally { u.repo.releaseLegacyDispatchSeal() }
+    }
+
+    @Test fun failedLegacyEffectReleasesAdmissionForSeal() {
+        val u = unselected()
+        val id = identity(u.prefs)
+        val origin = u.service.captureSyncApplyBinding(u.db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        // Payload passes the pre-transaction checks but fails the in-transaction
+        // value check: admission was held when the effect threw.
+        val payload = JSONObject().put("kind", "UPSERT").put("logicalRecordId", "2026-10-09")
+        val change = V3WireChange(wireId("2026-10-09"), 1L, 1L, payload, false, null, "2026-10-09")
+        expectThrows<IllegalStateException> {
+            runBlocking(Dispatchers.IO) { u.service.pullAttempt(FakeTransport(onReadChanges = { listOf(change) }), "tok", owner, id.session, id.localConsentGeneration, server, u.db, origin) }
+        }
+        // Exactly-once release in finally: a leaked registration would wedge the gate.
+        assertTrue(u.repo.trySealLegacyDispatch())
+        u.repo.releaseLegacyDispatchSeal()
     }
 }

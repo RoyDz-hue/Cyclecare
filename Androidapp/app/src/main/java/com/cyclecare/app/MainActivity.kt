@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -127,14 +128,79 @@ class MainActivity : FragmentActivity() {
         pendingAuthLink.value = intent?.data
 
         val authPreferences = AuthPreferences(applicationContext)
+        // Identity exclusion for every identity-mutating setter, attached
+        // before any repository/port work: without it, seal+install would
+        // run without exclusion, so the resolver below fails closed instead.
+        authPreferences.attachPublicationAdmission(com.cyclecare.app.security.IdentityPublicationAdmission.forAndroid())
         val database = CycleCareDatabase.getDatabase(applicationContext, authPreferences)
         val repository = CycleRepository(applicationContext, authPreferences)
         val syncService = SupabaseSyncService(database, authPreferences)
+        // Shared-writer binding for the four sync-apply routes (set once):
+        // repository-native port selection becomes authoritative for this
+        // service instance. Legacy routing continues until a port installs.
+        syncService.bindSyncApplyRepository(repository)
+        // Process-wide handle for shared writers constructed outside this
+        // composition (SupabaseSyncWorker binds it fresh each run).
+        CycleRepository.processRepository.set(repository)
         val authService = SupabaseAuthService(authPreferences)
         val viewModelFactory = CycleCareViewModel.Factory(repository, authPreferences, syncService, authService)
 
         // Schedule periodic 24-hour daily background sync with Supabase
         SupabaseSyncWorker.scheduleDailySync(applicationContext)
+
+        // Stage-C first-publish composition: warm the native library OFF main,
+        // resolve the owner-bound preopened database, and install the first
+        // Rust port. Bounded: contended/stale attempts retry briefly, then
+        // stay legacy until the next start; failure never routes partially.
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                com.cyclecare.app.data.local.rust.RustTrackNative.warmUp()
+            } catch (t: UnsatisfiedLinkError) {
+                // ABI .so absent: stay legacy, install nothing.
+                android.util.Log.w("CycleCare", "rust native library absent; staying legacy", t)
+                return@launch
+            } catch (t: NoClassDefFoundError) {
+                android.util.Log.w("CycleCare", "rust native library unloadable; staying legacy", t)
+                return@launch
+            }
+            // CancellationException and fatal Errors propagate: never brand a
+            // cancelled or crashed install attempt as a clean legacy state.
+            repeat(3) { attempt ->
+                when (val resolution = com.cyclecare.app.data.repository.RustPortInstallResolver(applicationContext, authPreferences).resolve()) {
+                    is com.cyclecare.app.data.repository.RustPortInstallResolver.Result.NoAdmission -> return@launch
+                    is com.cyclecare.app.data.repository.RustPortInstallResolver.Result.Stale -> return@repeat
+                    is com.cyclecare.app.data.repository.RustPortInstallResolver.Result.Resolved -> {
+                        val host = com.cyclecare.app.data.local.rust.RustBoundRoomHost(authPreferences)
+                        when (val outcome = com.cyclecare.app.data.repository.RustPortInstaller(
+                            repository, host, resolution
+                        ).install().also{receipt->
+                            com.cyclecare.app.security.StartupRouteDiagnostics.record(com.cyclecare.app.security.StartupRouteDiagnostics.Event.INSTALL_OUTCOME,repository,
+                                attempt.toLong(),when(receipt){
+                                    is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Installed->1L
+                                    is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Busy->2L
+                                    is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.StaleIdentity->3L
+                                    is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Failed->4L
+                                })
+                        }) {
+                            is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Installed -> {
+                                // The sync service reads the authoritative
+                                // port from the bound repository: nothing to
+                                // attach, no window.
+                                return@launch
+                            }
+                            is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Busy -> {
+                                if (attempt < 2) kotlinx.coroutines.delay(2000)
+                            }
+                            is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.StaleIdentity -> Unit
+                            is com.cyclecare.app.data.repository.RustPortInstaller.Outcome.Failed -> {
+                                android.util.Log.w("CycleCare", "rust port install failed; staying legacy", outcome.cause)
+                                return@launch
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         setContent {
             val viewModel: CycleCareViewModel by viewModels { viewModelFactory }

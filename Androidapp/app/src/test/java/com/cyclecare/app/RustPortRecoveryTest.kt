@@ -61,7 +61,7 @@ class RustPortRecoveryTest {
     @Test fun requestsCoalesceToOneFollowUpPass() {
         val runs = AtomicInteger(0)
         val gate = CountDownLatch(1)
-        val recovery = RustPortRecovery(scope, {
+        val recovery = RustPortRecovery(scope, runTransition = {
             runs.incrementAndGet()
             gate.await(15, TimeUnit.SECONDS)
             RustPortTransitioner.Outcome.Replaced
@@ -78,7 +78,7 @@ class RustPortRecoveryTest {
 
     @Test fun terminalOutcomeStopsWithoutRetry() {
         val runs = AtomicInteger(0)
-        val recovery = RustPortRecovery(scope, {
+        val recovery = RustPortRecovery(scope, runTransition = {
             runs.incrementAndGet(); RustPortTransitioner.Outcome.Current
         }, retryDelayMs = 0)
         recovery.request()
@@ -89,7 +89,7 @@ class RustPortRecoveryTest {
 
     @Test fun recoverableOutcomeRetriesUpToTheBoundThenStaysFailClosed() {
         val runs = AtomicInteger(0)
-        val recovery = RustPortRecovery(scope, {
+        val recovery = RustPortRecovery(scope, runTransition = {
             runs.incrementAndGet(); RustPortTransitioner.Outcome.Busy
         }, maxRounds = 3, retryDelayMs = 0)
         recovery.request()
@@ -126,7 +126,7 @@ class RustPortRecoveryTest {
         val transitioner = RustPortTransitioner(context, p, repo) { c, prefs ->
             RustPortInstallResolver(c, prefs) { _, owner -> byOwner.getOrPut(owner) { newDb() } }
         }
-        val recovery = RustPortRecovery(scope, { transitioner.ensureCurrentRouting() }, maxRounds = 10, retryDelayMs = 100)
+        val recovery = RustPortRecovery(scope, runTransition = { transitioner.ensureCurrentRouting() }, maxRounds = 10, retryDelayMs = 100)
         val lease = repo.holdRoutingLeaseForTests()
         recovery.request()
         // The Busy outcome is OBSERVED, not dropped: recorded while the lease holds.
@@ -141,5 +141,129 @@ class RustPortRecoveryTest {
         assertTrue(port.isCurrent())
         assertEquals("owner-b", port.token.preference.operation.owner)
         assertTrue("recovery took at least the Busy pass plus the Replaced pass", recovery.roundsRun >= 2)
+    }
+
+    @Test fun cancellationBeforeTheBodyStartsDoesNotStrandOwnership() {
+        // Generation-safe finalization: a job cancelled BEFORE its body
+        // starts never enters run()s decision lock, so only the
+        // invokeOnCompletion handler can release inFlight/pending. Without
+        // it every later request would set pending forever (round-4 race).
+        val single = Executors.newSingleThreadExecutor { r -> Thread(r, "stage-d-recovery-single").apply { isDaemon = true } }
+        val blocker = CountDownLatch(1)
+        val occupy = CountDownLatch(1)
+        single.execute { occupy.countDown(); blocker.await(15, TimeUnit.SECONDS) }
+        assertTrue(occupy.await(15, TimeUnit.SECONDS))
+        val singleScope = CoroutineScope(SupervisorJob() + single.asCoroutineDispatcher())
+        val runs = AtomicInteger(0)
+        val recovery = RustPortRecovery(singleScope, runTransition = {
+            runs.incrementAndGet(); RustPortTransitioner.Outcome.Current
+        }, retryDelayMs = 0)
+        recovery.request()
+        recovery.close() // cancelled while still queued behind the blocker
+        blocker.countDown()
+        awaitCondition { !recovery.recoveryInFlight }
+        assertEquals("cancelled-before-start body never ran", 0, runs.get())
+        single.shutdownNow()
+    }
+
+    @Test fun closeAndJoinActuallyWaitsForAnInFlightPass() {
+        // JOIN witness (stage-G publication repair): with a pass BLOCKED
+        // mid-transition, closeAndJoinForTests must not return - the old
+        // launch-outside-lock protocol could report quiesced on a null job
+        // read while the pass was running.
+        val runs = AtomicInteger(0)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val recovery = RustPortRecovery(scope, runTransition = {
+            runs.incrementAndGet()
+            entered.countDown()
+            release.await(15, TimeUnit.SECONDS)
+            RustPortTransitioner.Outcome.Replaced
+        }, retryDelayMs = 0)
+        recovery.request()
+        assertTrue("pass must enter its transition", entered.await(10, TimeUnit.SECONDS))
+        val joinResult = java.util.concurrent.atomic.AtomicReference<Boolean?>()
+        val joiner = Thread {
+            joinResult.set(runBlocking { recovery.closeAndJoinForTests(10_000) })
+        }
+        joiner.start()
+        Thread.sleep(500)
+        assertNull(
+            "closeAndJoinForTests returned while the in-flight pass was still blocked (early-true race)",
+            joinResult.get()
+        )
+        release.countDown()
+        joiner.join(15_000)
+        assertEquals(Boolean.TRUE, joinResult.get())
+        assertEquals(1, runs.get())
+        awaitCondition { !recovery.recoveryInFlight }
+    }
+
+    @Test fun closeAndJoinTimeoutRetainsOwnershipAndRefusesNewRequests() {
+        // TIMEOUT witness (stage-G retained-ownership repair): a bounded
+        // miss must report NOT quiesced, must refuse new requests (closed
+        // sticks), and a later retry must join the SAME owned pass - never
+        // a fresh true on dropped ownership.
+        val runs = AtomicInteger(0)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val recovery = RustPortRecovery(scope, runTransition = {
+            runs.incrementAndGet()
+            entered.countDown()
+            release.await(15, TimeUnit.SECONDS)
+            RustPortTransitioner.Outcome.Replaced
+        }, retryDelayMs = 0)
+        recovery.request()
+        assertTrue("pass must enter its transition", entered.await(10, TimeUnit.SECONDS))
+        assertFalse(
+            "a blocked pass must NOT report quiesced within a small bound",
+            runBlocking { recovery.closeAndJoinForTests(200) }
+        )
+        recovery.request()
+        Thread.sleep(300)
+        assertEquals("no new pass may launch after close", 1, runs.get())
+        release.countDown()
+        assertTrue(
+            "the retry must join the same owned pass once it unwinds",
+            runBlocking { recovery.closeAndJoinForTests(10_000) }
+        )
+        assertEquals(1, runs.get())
+        awaitCondition { !recovery.recoveryInFlight }
+    }
+
+    @Test fun requestPublishesItsJobBeforeTheCoroutineCanStart() {
+        // PUBLICATION witness (stage-G LAZY launch repair): request() stores
+        // the job under the state lock BEFORE the coroutine can start, so an
+        // immediate close() cancels the SAME handle (never a null or
+        // superseded read) and the coordinator reaches a terminal state.
+        val runs = AtomicInteger(0)
+        val recovery = RustPortRecovery(scope, runTransition = {
+            runs.incrementAndGet(); RustPortTransitioner.Outcome.Current
+        }, retryDelayMs = 0)
+        recovery.request()
+        recovery.close()
+        assertTrue(
+            "the stored job must be the launched one: cancel+join reaches terminal",
+            runBlocking { recovery.closeAndJoinForTests(10_000) }
+        )
+        awaitCondition { !recovery.recoveryInFlight }
+        // The pass may legitimately run zero times (cancel before start) or
+        // once (started before cancel) - but never more.
+        assertTrue("at most the one requested pass may run, got ${runs.get()}", runs.get() <= 1)
+        recovery.request()
+        Thread.sleep(300)
+        assertTrue("a closed coordinator must refuse new requests", runs.get() <= 1)
+    }
+
+    @Test fun closedRecoveryRefusesFurtherRequests() {
+        val runs = AtomicInteger(0)
+        val recovery = RustPortRecovery(scope, runTransition = {
+            runs.incrementAndGet(); RustPortTransitioner.Outcome.Current
+        }, retryDelayMs = 0)
+        recovery.close()
+        recovery.request()
+        Thread.sleep(300)
+        assertEquals("closed coordinator runs nothing", 0, runs.get())
+        assertFalse(recovery.recoveryInFlight)
     }
 }

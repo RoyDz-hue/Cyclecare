@@ -13,6 +13,7 @@ import androidx.work.impl.utils.taskexecutor.TaskExecutor
 import androidx.work.testing.TestForegroundUpdater
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.TestProgressUpdater
+import com.cyclecare.app.data.economy.CommunityPulsePinger
 import com.cyclecare.app.data.repository.CycleCareComposition
 import com.cyclecare.app.data.supabase.HealthSyncV3Transport
 import com.cyclecare.app.data.supabase.SupabaseSyncService
@@ -43,9 +44,14 @@ import org.junit.runner.RunWith
  * is NOT claimed here or anywhere (conflictSafeProtocolReleased() stays false).
  *
  * Isolation: a process-wide fail-closed ProxySelector denies ALL network
- * (token-bearing or anonymous) and counts attempts; the WorkManager barrier
- * confirms NO pending production sync work exists before any synthetic
- * consent/token is seeded, so the REAL pinger can never see a synthetic JWT.
+ * (token-bearing or anonymous) and counts attempts; its installation is
+ * ASSERTED before any synthetic token exists (init-timing, not prose); the
+ * WorkManager barrier confirms NO pending production sync work exists
+ * before any synthetic consent/token is seeded, so the REAL pinger can
+ * never see a synthetic JWT. The negative controls pin the REAL pinger's
+ * destination to loopback-only (no real destination can be constructed
+ * even under a selector bypass) and CONSUME their counted attempts, so the
+ * class drain still asserts zero UNEXPLAINED attempts.
  * The scripted transport factory records construction instead of building
  * OkHttpHealthSyncV3Transport; the scripted pinger records instead of opening
  * its private client. All owners are synthetic; cleanup resets every owned
@@ -97,17 +103,46 @@ class ProductionWorkerSyntheticConsentInstrumentedTest {
 
     @Test
     fun consentFalse_realWorker_returnsSuccessWithoutOpeningDatabaseOrPinging() {
+        val prefs = CycleCareComposition.current(context).authPreferences
         val owner = syntheticOwner("off")
         ownedOwners += owner
+        // A real owned identity with consent OFF: the worker must return
+        // before even resolving the repository (deferral proof), not merely
+        // before creating a file.
+        prefs.userId = owner
         // WorkManager's own construction path: the primary 2-arg constructor,
         // production defaults for service and pinger. Consent off: the real
         // pinger is never reached; the deny wall is the tripwire.
         val worker = TestListenableWorkerBuilder<SupabaseSyncWorker>(context).build()
         val result = runBlocking { worker.doWork() }
         assertTrue("consent-false doWork must succeed, got $result", result is ListenableWorker.Result.Success)
+        assertNull(
+            "consent-false doWork must not initialize the repository (deferred health stack)",
+            CycleCareComposition.current(context).peekRepository()
+        )
         assertFalse(
             "consent-false doWork must not create the owned database",
             context.getDatabasePath(com.cyclecare.app.data.local.CycleCareDatabase.namespaceFor(owner)).exists()
+        )
+    }
+
+    @Test
+    fun networkDenyWall_blocksRealProductionAnonymousPing() {
+        // NEGATIVE CONTROL: the wall is only meaningful if it actually engages
+        // a REAL production network path. CommunityPulsePinger.ping builds
+        // its own OkHttpClient (default proxy selector - constructed AFTER
+        // the wall was installed in @Before) and POSTs anonymously. The wall
+        // must block it: no success, and at least one counted attempt.
+        val before = ProductionTestControls.networkAttempts()
+        val outcome = runCatching { runBlocking { CommunityPulsePinger.ping(null) } }
+        val attempts = ProductionTestControls.networkAttempts() - before
+        assertTrue(
+            "the deny wall must count the real ping attempt (got $attempts, outcome=$outcome)",
+            attempts >= 1
+        )
+        assertTrue(
+            "the real anonymous ping must not succeed behind the wall (outcome=$outcome)",
+            outcome.getOrNull() != true
         )
     }
 

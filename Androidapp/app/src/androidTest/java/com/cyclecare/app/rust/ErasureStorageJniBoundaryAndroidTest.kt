@@ -1,0 +1,10 @@
+package com.cyclecare.app.rust
+import com.cyclecare.app.data.local.rust.RustTrackNative
+import org.junit.Assert.*
+import org.junit.Test
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+class ErasureStorageJniBoundaryAndroidTest{
+ open class Probe(val mask:Int=7,val cut:Int=0,val error:Throwable=IllegalStateException("sentinel")){val trace=mutableListOf<String>();private val thread=Thread.currentThread();private fun hit(s:String){assertSame(thread,Thread.currentThread());trace+=s;if(trace.size==cut)throw error};open fun ready(){hit("ready")};fun global(i:Int){hit("global$i")};fun owned(i:Int){hit("owned$i")};fun receipts(){hit("receipts")};fun exists(i:Int):Boolean{hit("exists$i");return mask and(1 shl i)!=0};fun stageDelete(i:Int){hit("stage$i")};fun defaults(){hit("defaults")}}
+ @Test fun eightOptionalShapesExactOrderEveryThrowableIdentityAndCutoff(){RustTrackNative.warmUp();for(mask in 0..7){val expected=mutableListOf("ready");for(i in 0..3)expected+="global$i";for(i in 0..3)expected+="owned$i";expected+="receipts";for(i in 0..2){expected+="exists$i";if(mask and(1 shl i)!=0)expected+="stage$i"};expected+="defaults";val p=Probe(mask);assertEquals(1,RustTrackNative.erasureDriver(p));assertEquals(expected,p.trace);for(error in listOf(IllegalArgumentException("sentinel"),ArithmeticException("sentinel"),kotlinx.coroutines.CancellationException("sentinel"),AssertionError("sentinel")))for(cut in 1..expected.size){val q=Probe(mask,cut,error);assertSame(error,runCatching{RustTrackNative.erasureDriver(q)}.exceptionOrNull());assertEquals(expected.take(cut),q.trace)}}}
+ @Test fun missingCallbackAndNoGlobalMonitor(){RustTrackNative.warmUp();assertTrue(runCatching{RustTrackNative.erasureDriver(Any())}.exceptionOrNull()is NoSuchMethodError);val p=object:Probe(){override fun ready(){val latch=java.util.concurrent.CountDownLatch(1);val t=Thread{synchronized(RustTrackNative){latch.countDown()}};t.start();assertTrue(latch.await(2,java.util.concurrent.TimeUnit.SECONDS));t.join();super.ready()}};assertEquals(1,RustTrackNative.erasureDriver(p))}
+}

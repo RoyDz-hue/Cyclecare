@@ -9,8 +9,8 @@
 - Android APK containing the post-post pulse ping (from 9aac311). Server works without it; the APK only shortens reply latency.
 
 ## Build routes and observed status
-- Local sandbox builds (2GB RAM): minified slim build cannot run (R8 heap OOM; KSP needs >320m metaspace; combined exceeds 2GB).
-  Non-minified route builds cleanly but the sandbox environment reset mid-build 4 times (2026-10-23), so no artifact survived.
+- Local builds on a 2GB RAM machine: minified slim build cannot run (R8 heap OOM; KSP needs >320m metaspace; combined exceeds 2GB).
+  Non-minified route builds cleanly but the build environment reset mid-build 4 times (2026-10-23), so no artifact survived.
 - GitHub Actions: `.github/workflows/build-slim-apk.yml` (workflow_dispatch) builds `assembleSlim -PslimApk` UNSIGNED.
   Observed blocked: runs fail instantly with `startup_failure`, zero jobs - even a one-line probe workflow
   (`.github/workflows/ci-probe.yml`) failed identically. Account-level Actions block, not a workflow problem.
@@ -29,7 +29,7 @@
    `23:65:F8:88:A3:37:38:A1:B6:A1:EC:E0:3E:E7:D3:2E:8D:57:54:7C:FA:4F:1C:61:79:0B:35:14:97:F7:C0:CF`
    (matches the currently installed app; updates install in place).
 
-Keystore and passwords are in the Instinct vault ("CycleCare fixed Android debug signing bundle"). Never commit them.
+Keystore and passwords are held by the owner outside the repo. Never commit them.
 
 ## Build guide
 

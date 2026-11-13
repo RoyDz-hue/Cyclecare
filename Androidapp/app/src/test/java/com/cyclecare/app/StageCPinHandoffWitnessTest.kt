@@ -148,7 +148,7 @@ class StageCPinHandoffWitnessTest {
         // Simulate a prior attempt whose durable prefs commit landed before
         // the SQL rolled back: the store already holds the migrated PIN,
         // enabled. The handoff must skip the copy, verify, and proceed.
-        assertTrue(prefs.installMigratedPinDurable("4471"))
+        assertTrue(prefs.ensureMigratedPinDurable("4471"))
         migrateInTransaction(scratch.db, prefs)
         assertFalse(settingColumns(scratch.db).contains("appLockPin"))
         assertTrue(prefs.verifyPin("4471"))
@@ -167,7 +167,7 @@ class StageCPinHandoffWitnessTest {
         // The secure store already holds a DIFFERENT enabled PIN: the handoff
         // cannot verify, so the migration must refuse rather than destroy the
         // v4 copy.
-        assertTrue(prefs.installMigratedPinDurable("9999"))
+        assertTrue(prefs.ensureMigratedPinDurable("9999"))
         val thrown = try { migrateInTransaction(scratch.db, prefs); null } catch (t: Throwable) { t }
         assertTrue("expected pin_handoff_unverified, got $thrown", thrown is IllegalStateException && (thrown.message ?: "").contains("pin_handoff_unverified"))
         scratch.reopen()
@@ -185,25 +185,87 @@ class StageCPinHandoffWitnessTest {
         assertTrue(prefs.isPinEnabled)
     }
 
-    @Test fun matchingPinButDisabledStoreFailsClosedUntilEnabled() {
+    @Test fun matchingPinButDisabledStoreKeepsLockOffAndIsDurablyReEncoded() {
         val scratch = scratchDb()
         createV4Settings(scratch.db, "4471")
-        val (_, prefs) = testPrefs()
-        // Partial-window case: store holds the matching PIN but the enabled
-        // flag is false (pin setter alone never sets it). Dropping the
-        // plaintext here would leave a silently disabled lock; fail closed.
+        val (prefsName, prefs) = testPrefs()
+        // PIN and enablement are SEPARATE policy state in this app
+        // (setPinProtectionEnabled flips isPinEnabled without touching the
+        // stored PIN; cycle_settings carries its own isAppLockEnabled), and
+        // the original migration never touched a non-empty store. So a
+        // matching-but-disabled store must be durably re-encoded WITHOUT
+        // flipping enablement: the handoff repairs persistence, not policy.
         prefs.pin = "4471"
         assertFalse(prefs.isPinEnabled)
-        val thrown = try { migrateInTransaction(scratch.db, prefs); null } catch (t: Throwable) { t }
-        assertTrue("expected pin_handoff_unverified, got $thrown", thrown is IllegalStateException && (thrown.message ?: "").contains("pin_handoff_unverified"))
-        scratch.reopen()
-        assertTrue(settingColumns(scratch.db).contains("appLockPin"))
-        // Recovery: enable the existing PIN; the retry verifies and proceeds
-        // WITHOUT recopying.
-        prefs.isPinEnabled = true
         migrateInTransaction(scratch.db, prefs)
+        scratch.reopen()
         assertFalse(settingColumns(scratch.db).contains("appLockPin"))
         assertTrue(prefs.verifyPin("4471"))
+        assertFalse("enablement preserved, never inferred from PIN presence", prefs.isPinEnabled)
+        // Durable across a fresh wrapper: same encoding verification, same
+        // preserved disabled flag.
+        val reopened = freshPrefsOn(prefsName)
+        assertTrue(reopened.verifyPin("4471"))
+        assertFalse(reopened.isPinEnabled)
+    }
+
+    /** commit() reports false while memory updates: the failure signal the
+     * durable handoff must honor. Models the contract, not true disk loss.
+     * Every fluent mutator is overridden to return THIS wrapper: the Editor
+     * contract returns the Editor from each call, so delegating them would
+     * hand back the inner Editor and let a production chain like
+     * edit().putString(..).putBoolean(..).commit() reach the inner commit()
+     * past the fault. Counters prove the fault actually intercepted. */
+    private class FaultPreferences(private val delegate: android.content.SharedPreferences, var commitSucceeds: Boolean) :
+        android.content.SharedPreferences by delegate {
+        var commitCalls = 0
+        var refusedCommits = 0
+        override fun edit(): android.content.SharedPreferences.Editor {
+            val inner = delegate.edit()
+            val outer = this
+            return object : android.content.SharedPreferences.Editor by inner {
+                override fun putString(key: String?, value: String?): android.content.SharedPreferences.Editor { inner.putString(key, value); return this }
+                override fun putStringSet(key: String?, values: MutableSet<String>?): android.content.SharedPreferences.Editor { inner.putStringSet(key, values); return this }
+                override fun putInt(key: String?, value: Int): android.content.SharedPreferences.Editor { inner.putInt(key, value); return this }
+                override fun putLong(key: String?, value: Long): android.content.SharedPreferences.Editor { inner.putLong(key, value); return this }
+                override fun putFloat(key: String?, value: Float): android.content.SharedPreferences.Editor { inner.putFloat(key, value); return this }
+                override fun putBoolean(key: String?, value: Boolean): android.content.SharedPreferences.Editor { inner.putBoolean(key, value); return this }
+                override fun remove(key: String?): android.content.SharedPreferences.Editor { inner.remove(key); return this }
+                override fun clear(): android.content.SharedPreferences.Editor { inner.clear(); return this }
+                override fun commit(): Boolean {
+                    outer.commitCalls++
+                    return if (outer.commitSucceeds) inner.commit() else { outer.refusedCommits++; inner.apply(); false }
+                }
+            }
+        }
+    }
+
+    @Test fun commitFaultAfterMemoryUpdateFailsClosedOnEveryCallUntilDurable() {
+        val scratch = scratchDb()
+        createV4Settings(scratch.db, "4471")
+        val fault = FaultPreferences(context.getSharedPreferences("stage-c-pin-${UUID.randomUUID()}".also { prefsNames += it }, Context.MODE_PRIVATE), false)
+        val prefs = AuthPreferences(context, fault, true)
+        // First call: empty store, encode, commit reports false -> closed.
+        val thrown1 = try { migrateInTransaction(scratch.db, prefs); null } catch (t: Throwable) { t }
+        assertTrue("expected pin_handoff_unverified, got $thrown1", thrown1 is IllegalStateException && (thrown1.message ?: "").contains("pin_handoff_unverified"))
+        assertTrue("fault commit intercepted at least once", fault.refusedCommits >= 1)
+        assertNotNull("fault left memory ahead of disk", prefs.pin)
+        // Second call: store now APPEARS populated from memory; the handoff
+        // must re-commit durably (still false) instead of trusting the
+        // in-memory state and dropping the plaintext.
+        val thrown2 = try { migrateInTransaction(scratch.db, prefs); null } catch (t: Throwable) { t }
+        assertTrue("expected pin_handoff_unverified on retry, got $thrown2", thrown2 is IllegalStateException && (thrown2.message ?: "").contains("pin_handoff_unverified"))
+        assertTrue("fault commit intercepted on every refused call", fault.refusedCommits >= 2 && fault.refusedCommits == fault.commitCalls)
+        scratch.reopen()
+        assertTrue("plaintext survives both refused attempts", settingColumns(scratch.db).contains("appLockPin"))
+        // Persistence restored: the retry commits durably and converges.
+        fault.commitSucceeds = true
+        migrateInTransaction(scratch.db, prefs)
+        assertTrue("recovery commit observed after refusals", fault.commitCalls > fault.refusedCommits)
+        scratch.reopen()
+        assertFalse(settingColumns(scratch.db).contains("appLockPin"))
+        assertTrue(prefs.verifyPin("4471"))
+        assertTrue(prefs.isPinEnabled)
     }
 
     @Test fun unavailableSecureStoreFailsClosedAndNeverDropsPlaintext() {

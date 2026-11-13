@@ -149,11 +149,17 @@ pub mod phase_full;
 
 pub mod learned_full;
 
+pub mod pattern_full;
+
 pub mod timeline_full;
 
 pub mod explain_full;
 
+pub mod report_full;
+
 pub mod deviation_full;
+
+pub mod attention_full;
 
 pub mod period_episode_full;
 

@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.cyclecare.app.data.local.*
 import com.cyclecare.app.data.repository.CycleRepository
 import com.cyclecare.app.data.repository.CycleRepository.SyncApplyStaleException
+import com.cyclecare.app.data.repository.OwnerTransitionException
 import com.cyclecare.app.security.AuthPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -20,19 +21,30 @@ class SupabaseSyncService(
     private val legacyDatabase: CycleCareDatabase,
     private val authPreferences: AuthPreferences,
     private val client: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build(),
-    private val databaseProvider: OwnerScopedDatabaseProvider = OwnerScopedDatabaseProvider(authPreferences.context, authPreferences)
+    private val databaseProvider: OwnerScopedDatabaseProvider = OwnerScopedDatabaseProvider(authPreferences.context, authPreferences),
+    internal val transportFactory: (baseUrl: String, anonKey: String, client: okhttp3.OkHttpClient) -> HealthSyncV3Transport =
+        { baseUrl, anonKey, c -> OkHttpHealthSyncV3Transport(baseUrl, anonKey, c) }
 ) {
     /** Explicit inactive integration seam. All other legacy sync mutations stay
      * fail closed while port selected until ACK/retry/consent routes connected.
      */
-    private var rustPort:com.cyclecare.app.data.local.rust.RustRepositoryPort?=null
-    internal fun attachRustPort(port:com.cyclecare.app.data.local.rust.RustRepositoryPort){port.verifyPreferences(authPreferences);rustPort=port}
+    /** ONE authoritative route: the port selection lives ONLY in the bound
+     * repository (process-wide binding below); every service instance in this
+     * process - including SupabaseSyncWorker's independently constructed one -
+     * reads the same selection at call time. No per-instance attach, no
+     * retained var, no install->attach ordering window: a read either sees
+     * the repository's current port or none, never a divergent copy. */
+    private val rustPort:com.cyclecare.app.data.local.rust.RustRepositoryPort? get()=syncApplyRepository?.installedRustPort()
 
-    /** Optional internal binding, set ONCE: repository-native selection is
-     * authoritative for the four apply routes. Production constructors and the
-     * ViewModel never bind it (Stage-C wiring is separate); the rustPort var
-     * above is RETAINED only for the journal/staged-history routes (separate
-     * blocker). A selected service port WITHOUT this binding fails closed. */
+    /** Binding, set ONCE per instance: the bound repository is the single
+     * authority for BOTH the four apply routes AND the journal/staged-history
+     * routes (they read its installed port directly, never a retained copy).
+     * Production instances bind the process repository (MainActivity
+     * composition; SupabaseSyncWorker binds it per doWork run). An unbound
+     * instance resolves no port and keeps original unprotected legacy
+     * behavior; a bound repository without an installed port is consistent
+     * legacy. No install->attach ordering window can exist: there is no
+     * second selection to disagree with the repository's. */
     private var syncApplyRepository: CycleRepository? = null
     internal fun bindSyncApplyRepository(repository: CycleRepository) {
         check(syncApplyRepository == null) { "sync_apply_repository_bound" }
@@ -44,15 +56,22 @@ class SupabaseSyncService(
      * a selected service port has no authoritative binding, or when the bound
      * repository has no port while the stale var disagrees. */
     internal fun captureSyncApplyBinding(db: CycleCareDatabase, owner: String, session: Long, local: Long, server: Long): CycleRepository.SyncApplyOrigin? {
-        val repo = syncApplyRepository
-        if (repo == null) {
-            check(rustPort == null) { "sync_apply_requires_repo_binding" }
-            return null
-        }
+        val repo = syncApplyRepository ?: return null // unbound: no port can exist for this service
         val origin = repo.captureSyncApplyOrigin(authPreferences, db, owner, session, local, server)
         check(!(origin == null && rustPort != null)) { "sync_apply_selection_inconsistent" }
         return origin
     }
+    /** Per-effect legacy admission on the attempt-captured repository (null when
+     * the service is unbound: original unprotected legacy behavior). Admission
+     * rejection converts to the non-retry stale outcome, so a selected or sealed
+     * route can never schedule a legacy retry. The guard is a routingLock counter
+     * registration: no monitor is held across the suspending effect, and callers
+     * release exactly once in finally. Residual Stage-C prerequisite: exclusion
+     * of a hypothetical installer ignoring legacyInflight, and detection of a
+     * transient install/uninstall between effects, belong to the install contract. */
+    private fun admitLegacyEffect(repository: CycleRepository?): CycleRepository.LegacyDispatchGuard? =
+        try { repository?.admitLegacyDispatch() } catch (transition: OwnerTransitionException) { throw SyncApplyStaleException() }
+
     private fun conflictSafeProtocolReleased() = false
 
     /** False while the conflict-safe wire protocol is unreleased: the guarded
@@ -114,7 +133,11 @@ class SupabaseSyncService(
      * (never a retry, never a legacy fallback); CancellationException always
      * rethrows; every other failure keeps the existing bounded behavior. */
     internal suspend fun executeV3OutboxAttempt(transport: HealthSyncV3Transport, accessToken: String, owner: String, session: Long, local: Long, server: Long, db: CycleCareDatabase, origin: CycleRepository.SyncApplyOrigin?): Int {
-        val repository: CycleRepository? = if (origin == null) null else requireNotNull(syncApplyRepository) { "sync_apply_binding_lost" }
+        // Repository binding captured ONCE per attempt: on the null-origin path it
+        // supplies per-effect legacy admission authority; an unbound service keeps
+        // the original unprotected legacy behavior. Never re-read per effect.
+        val repository: CycleRepository? = syncApplyRepository
+        if (origin != null) requireNotNull(repository) { "sync_apply_binding_lost" }
         val dao = db.healthSyncDao(); var applied = 0
         val blockedRecords = mutableSetOf<String>()
         val operations = dao.pending(owner).sortedBy { it.revision }.take(100).map { it.operationId }
@@ -138,12 +161,17 @@ class SupabaseSyncService(
                             is CycleRepository.SyncApplyOutcome.Applied -> outcome.value
                             CycleRepository.SyncApplyOutcome.NoChange -> false
                             CycleRepository.SyncApplyOutcome.Stale -> throw SyncApplyStaleException()
-                        } else db.withTransaction {
-                            if (!current(owner, session, local, server)) return@withTransaction false
-                            dao.revision(owner, e.recordId)?.let { dao.putRevision(it.copy(serverRevision = maxOf(it.serverRevision, revision))) }
-                            dao.acknowledgeMatched(owner, e.operationId, e.recordId, e.revision)
-                            dao.rebasePending(owner, e.recordId, e.baseRevision, revision)
-                            true
+                        } else {
+                            val guard = admitLegacyEffect(repository)
+                            try {
+                                db.withTransaction {
+                                    if (!current(owner, session, local, server)) return@withTransaction false
+                                    dao.revision(owner, e.recordId)?.let { dao.putRevision(it.copy(serverRevision = maxOf(it.serverRevision, revision))) }
+                                    dao.acknowledgeMatched(owner, e.operationId, e.recordId, e.revision)
+                                    dao.rebasePending(owner, e.recordId, e.baseRevision, revision)
+                                    true
+                                }
+                            } finally { guard?.close() }
                         }
                         if (committed) applied++
                     }
@@ -156,12 +184,17 @@ class SupabaseSyncService(
                                 is CycleRepository.SyncApplyOutcome.Applied, CycleRepository.SyncApplyOutcome.NoChange -> Unit
                                 CycleRepository.SyncApplyOutcome.Stale -> throw SyncApplyStaleException()
                             }
-                        } else db.withTransaction {
-                            if (!current(owner, session, local, server)) return@withTransaction
-                            val latest = dao.pending(owner).filter { it.recordId == e.recordId }.maxByOrNull { it.revision } ?: e
-                            val remoteValue = r.remotePayload?.optJSONObject("value")
-                            check(r.remoteTombstone || r.revision == 0L || remoteValue != null) { "invalid_conflict_payload" }
-                            dao.putConflict(HealthSyncConflictEntity(owner, e.recordId, latest.operationId, latest.revision, latest.payloadJson, latest.kind, r.revision ?: error("missing_remote_revision"), remoteValue?.toString(), r.remoteTombstone, System.currentTimeMillis()))
+                        } else {
+                            val guard = admitLegacyEffect(repository)
+                            try {
+                                db.withTransaction {
+                                    if (!current(owner, session, local, server)) return@withTransaction
+                                    val latest = dao.pending(owner).filter { it.recordId == e.recordId }.maxByOrNull { it.revision } ?: e
+                                    val remoteValue = r.remotePayload?.optJSONObject("value")
+                                    check(r.remoteTombstone || r.revision == 0L || remoteValue != null) { "invalid_conflict_payload" }
+                                    dao.putConflict(HealthSyncConflictEntity(owner, e.recordId, latest.operationId, latest.revision, latest.payloadJson, latest.kind, r.revision ?: error("missing_remote_revision"), remoteValue?.toString(), r.remoteTombstone, System.currentTimeMillis()))
+                                }
+                            } finally { guard?.close() }
                         }
                     }
                     else -> error("v3_operation_rejected")
@@ -180,7 +213,10 @@ class SupabaseSyncService(
                 if (origin != null && repository != null) when (repository.dispatchRetrySync(origin, db, e, nextAttempt, "Backup needs another try")) {
                     is CycleRepository.SyncApplyOutcome.Applied, CycleRepository.SyncApplyOutcome.NoChange -> Unit
                     CycleRepository.SyncApplyOutcome.Stale -> throw SyncApplyStaleException()
-                } else dao.retry(owner,e.operationId,nextAttempt,"Backup needs another try")
+                } else {
+                    val guard = admitLegacyEffect(repository)
+                    try { dao.retry(owner,e.operationId,nextAttempt,"Backup needs another try") } finally { guard?.close() }
+                }
             }
         }
         return applied
@@ -220,7 +256,7 @@ class SupabaseSyncService(
             is AccessTokenResolution.Missing, is AccessTokenResolution.ReauthenticationRequired -> return@withContext SyncResult(false, "Please sign in again to finish.", requiresAuthentication = true)
             AccessTokenResolution.TemporarilyUnavailable -> return@withContext SyncResult(false, "Your secure session isn't available right now. Your records stay private on this device.", shouldRetry = true)
         }
-        val transport = OkHttpHealthSyncV3Transport(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client)
+        val transport = transportFactory(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client)
         try {
             if (authPreferences.hasPendingHealthSyncRevoke) {
                 requestV3Consent(false, transport, token)
@@ -250,7 +286,7 @@ publishBackupOutcome(syncDatabase, owner, session, local, server, uploaded, pull
         if (!conflictSafeProtocolReleased() || !authPreferences.isCloudSyncAllowed) return@withContext 0
         val token = SupabaseSessionManager.validAccessToken(authPreferences) ?: return@withContext 0
         val server = authPreferences.serverHealthConsentGeneration ?: return@withContext 0
-        pull(userId, authPreferences.healthConsentGeneration, server, authPreferences.sessionGeneration, OkHttpHealthSyncV3Transport(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client), token)
+        pull(userId, authPreferences.healthConsentGeneration, server, authPreferences.sessionGeneration, transportFactory(SupabaseConfig.restUrl, SupabaseConfig.anonKey, client), token)
     }
     private suspend fun pull(owner: String, local: Long, server: Long, session: Long, transport: HealthSyncV3Transport, token: String): Int {
         val db = databaseProvider.current()
@@ -261,7 +297,11 @@ publishBackupOutcome(syncDatabase, owner, session, local, server, uploaded, pull
      * on Applied (Applied(0) is valid); Stale stops with no cursor, no count.
      * Tests drive THIS body with a scripted local transport. */
     internal suspend fun pullAttempt(transport: HealthSyncV3Transport, accessToken: String, owner: String, session: Long, local: Long, server: Long, db: CycleCareDatabase, origin: CycleRepository.SyncApplyOrigin?): Int {
-        val repository: CycleRepository? = if (origin == null) null else requireNotNull(syncApplyRepository) { "sync_apply_binding_lost" }
+        // Repository binding captured ONCE per attempt: on the null-origin path it
+        // supplies per-effect legacy admission authority; an unbound service keeps
+        // the original unprotected legacy behavior. Never re-read per effect.
+        val repository: CycleRepository? = syncApplyRepository
+        if (origin != null) requireNotNull(repository) { "sync_apply_binding_lost" }
         val dao = db.healthSyncDao(); var cursor = dao.cursor(owner)?.changeSeq ?: 0L; var count = 0
         while (current(owner, session, local, server)) {
             val page = transport.readChanges(cursor, 100, server, accessToken)
@@ -280,7 +320,10 @@ publishBackupOutcome(syncDatabase, owner, session, local, server, uploaded, pull
                     CycleRepository.SyncApplyOutcome.NoChange -> error("unreachable:page_apply_returns_count")
                     CycleRepository.SyncApplyOutcome.Stale -> throw SyncApplyStaleException()
                 }
-            } else db.withTransaction {
+            } else {
+                val guard = admitLegacyEffect(repository)
+                try {
+                db.withTransaction {
                 check(current(owner, session, local, server)) { "consent_changed" }
                 for (change in page) {
                     check(current(owner, session, local, server)) { "consent_changed" }
@@ -300,6 +343,8 @@ publishBackupOutcome(syncDatabase, owner, session, local, server, uploaded, pull
                     }
                     cursor = change.changeSeq; dao.putCursor(HealthSyncCursor(owner, cursor))
                 }
+                }
+                } finally { guard?.close() }
             }
             if (page.size < 100) break
         }

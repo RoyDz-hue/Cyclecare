@@ -70,16 +70,16 @@ this route is available, the correct outcome is "no deliverable APK", not a non-
 
 ## Signing (never commit secrets)
 
-- Keystore lives in the Instinct vault item "CycleCare fixed Android debug signing bundle"
-  (keystore bytes + store password + alias `cyclecare-debug`). Never commit it. `.gitignore`
+- Keystore (keystore bytes + store password + alias `cyclecare-debug`) is held by the owner
+  outside the repo. Never commit it. `.gitignore`
   enforces this: `.private/` and `*.jks` are excluded, so signing material cannot be committed or
   bundled into any APK (debug, release, or slim).
 - Local: place the keystore at `Androidapp/.private/cyclecare-debug.jks` (or set
   `CYCLECARE_DEBUG_KEYSTORE`, `CYCLECARE_DEBUG_STORE_PASSWORD`, `CYCLECARE_DEBUG_KEY_PASSWORD`).
   The slim variant signs automatically when the keystore file exists.
-- Other builders never need the keystore or vault access. Every builder produces an UNSIGNED
+- Other builders never need the keystore. Every builder produces an UNSIGNED
   APK (`-PslimApk` with no keystore present leaves it unsigned automatically) and hands it to the
-  owner; only the owner (or the owner's Instinct, via the vault) signs. Sign an unsigned build
+  owner; only the owner signs. Sign an unsigned build
   with build-tools 34.0.0:
   ```bash
   apksigner sign --ks cyclecare-debug.jks --ks-key-alias cyclecare-debug \
@@ -114,7 +114,7 @@ An APK updates in place over an existing install only when ALL of these hold: sa
 same signing certificate, and a higher `versionCode`. The signing key alone does not guarantee an
 update path - keep the slim variant and the fixed key for user installs, and confirm the built
 APK's applicationId matches the installed app (`aapt dump badging app.apk | grep package`).
-The private key never leaves the vault; the public certificate fingerprint below is safe to share.
+The private key never leaves the owner's custody; the public certificate fingerprint below is safe to share.
 
 ## This guide is never shipped
 

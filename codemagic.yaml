@@ -312,15 +312,24 @@ workflows:
           ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" \
             minifyReleaseWithR8 optimizeReleaseResources \
             2>&1 | tee ../build-logs/release-r8-run.log
-      - name: Bridge class and JNI methods kept (validated parser v3.1)
+      - name: Bridge class and JNI methods kept (validated parser v3.3)
         script: |
           set -e
           MAP=Androidapp/app/build/outputs/mapping/release/mapping.txt
+          SEEDS=Androidapp/app/build/outputs/mapping/release/seeds.txt
           test -s "$MAP"
+          test -s "$SEEDS"
           grep -Fx 'com.cyclecare.app.rust.CycleCareCoreBridge -> com.cyclecare.app.rust.CycleCareCoreBridge:' "$MAP"
           awk '/^com\.cyclecare\.app\.rust\.CycleCareCoreBridge -> com\.cyclecare\.app\.rust\.CycleCareCoreBridge:$/{b=1;next} /^#/{next} /^[^[:blank:]].* -> [^[:blank:]]+$/{if(b) exit} b&&/^[[:blank:]]/' "$MAP" > build-logs/bridge-mapping-block.txt
-          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?int nativeCoreHandshake\(\)(:[0-9]+(:[0-9]+)?)? -> nativeCoreHandshake$' build-logs/bridge-mapping-block.txt
-          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?java\.lang\.String nativeCall\(java\.lang\.String,java\.lang\.String\)(:[0-9]+(:[0-9]+)?)? -> nativeCall$' build-logs/bridge-mapping-block.txt
+          grep -Fx 'com.cyclecare.app.rust.CycleCareCoreBridge: int nativeCoreHandshake()' "$SEEDS"
+          grep -Fx 'com.cyclecare.app.rust.CycleCareCoreBridge: java.lang.String nativeCall(java.lang.String,java.lang.String)' "$SEEDS"
+          if awk '/nativeCoreHandshake\(\)(:[0-9]+(:[0-9]+)?)? -> /{if($NF!="nativeCoreHandshake")found=1} END{exit found?0:1}' "$MAP"; then
+            echo "FAIL: nativeCoreHandshake renamed by R8 (mapping.txt)"; exit 1
+          fi
+          if awk '/nativeCall\(java\.lang\.String,java\.lang\.String\)(:[0-9]+(:[0-9]+)?)? -> /{if($NF!="nativeCall")found=1} END{exit found?0:1}' "$MAP"; then
+            echo "FAIL: nativeCall renamed by R8 (mapping.txt)"; exit 1
+          fi
+          echo "bridge-kept check OK: class identity + JNI seeds + no renames"
       - name: Obfuscation positive control (file-gated, no pipe mask)
         script: |
           set -e
@@ -340,7 +349,9 @@ workflows:
       - name: 'Guard: no package/sign task substitution'
         script: |
           set -e
-          ! grep -E '> Task :app:(packageRelease|signRelease|assembleRelease|bundleRelease)' build-logs/release-r8-run.log
+          if grep -E '> Task :app:(packageRelease|signRelease|assembleRelease|bundleRelease)' build-logs/release-r8-run.log; then
+            echo "FAIL: package/sign task ran (release-r8-run.log)"; exit 1
+          fi
     artifacts:
       - Androidapp/app/build/outputs/mapping/release/mapping.txt
       - Androidapp/app/build/outputs/mapping/release/seeds.txt
@@ -348,6 +359,130 @@ workflows:
       - Androidapp/app/build/intermediates/optimized_processed_res/**/optimize.ap_
       - build-logs/*.log
       - build-logs/*.txt
+
+  cyclecare-stage-e-android-artifact:
+    name: Stage-E Android ARM artifact + debug APK composition (PROPOSED; evidence run, not for merge)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact throwaway-branch tip commit, supplied after push at manual build start
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        NDK_PIN: "28.2.13676358"
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.cargo/registry
+    scripts:
+      - name: Pin evidence context (fail closed; assertions before any repo writes)
+        script: |
+          set -euo pipefail
+          {
+          test -n "${EXPECTED_SOURCE_SHA:-}" || { echo "EXPECTED_SOURCE_SHA input empty - supply the exact branch tip SHA at build start"; exit 1; }
+          HEADSHA=$(git rev-parse HEAD)
+          echo "expected: ${EXPECTED_SOURCE_SHA}"
+          echo "actual:   $HEADSHA"
+          test "$HEADSHA" = "$EXPECTED_SOURCE_SHA" || { echo "SHA MISMATCH"; exit 1; }
+          BASE="b6dfd24aad02a7a6a5a16f9c82a3364726bab27c"
+          git cat-file -e "${BASE}^{commit}" || { echo "base commit ${BASE} missing from clone"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "DIRTY TREE:"; git status --porcelain; exit 1; }
+          git diff --name-status "$BASE" "$HEADSHA" | LC_ALL=C sort > /tmp/replay3/tmp/stage-e-actual-name-status.txt
+          diff stage-e-evidence/expected-name-status.txt /tmp/replay3/tmp/stage-e-actual-name-status.txt || { echo "DIFF SCOPE MISMATCH (allowed: stage-d reviewed 32 + stage-e 4 only)"; exit 1; }
+          echo "--- stage-e source hash manifest (build/package gate scripts, core-ffi pins, build.gradle.kts) ---"
+          shasum -a 256 -c stage-e-evidence/expected-sha256.txt
+          echo "PIN OK"
+          } 2>&1 | tee build-logs/pin.log
+      - name: JDK 17 pin (fail closed with inventory)
+        script: |
+          set -euo pipefail
+          {
+          /usr/libexec/java_home -V 2>&1 || true
+          JH=$(/usr/libexec/java_home -v 17) || { echo "NO JDK 17 ON RUNNER"; exit 1; }
+          export JAVA_HOME="$JH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version 2>&1
+          } 2>&1 | tee build-logs/jdk-precheck.log
+      - name: NDK pin inventory (documented image default, no installs)
+        script: |
+          set -euo pipefail
+          {
+          ls /usr/local/share/android-sdk/ndk/ || { echo "NO NDK DIR ON RUNNER"; exit 1; }
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          test -d "$ANDROID_NDK_HOME" || { echo "PINNED NDK ${NDK_PIN} ABSENT - image drifted from documented spec"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" || { echo "NDK darwin prebuilt tools missing"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" --version | head -2
+          } 2>&1 | tee build-logs/ndk-precheck.log
+      - name: Pinned Rust toolchain install + Android target (checksum-verified, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          RUST_PIN="1.99.1"
+          RUSTUP_INIT_SHA256="63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f"
+          INSTALLER="/tmp/replay3/tmp/rustup-init-aarch64-apple-darwin"
+          curl -sSf --max-time 120 -o "$INSTALLER" "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init"
+          echo "$RUSTUP_INIT_SHA256  $INSTALLER" | shasum -a 256 -c - || { echo "RUSTUP-INIT CHECKSUM MISMATCH"; exit 1; }
+          FOUT="$(file "$INSTALLER")"
+          echo "$FOUT" | grep -q "Mach-O 64-bit" || { echo "RUSTUP-INIT NOT MACH-O"; exit 1; }
+          echo "$FOUT" | grep -q "arm64" || { echo "RUSTUP-INIT NOT ARM64"; exit 1; }
+          chmod +x "$INSTALLER"
+          "$INSTALLER" -y --no-modify-path --profile minimal --default-toolchain "$RUST_PIN"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-linux-android --toolchain "$RUST_PIN"
+          rustup show active-toolchain
+          rustup target list --installed
+          } 2>&1 | tee build-logs/rust-toolchain-install.log
+      - name: Build Android ARM artifact from clean source (fail closed)
+        script: |
+          set -euo pipefail
+          {
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          mkdir -p build-logs
+          date +%s > build-logs/.gate-start
+          rm -f Androidapp/rust/core-ffi/target/aarch64-linux-android/release/libcyclecare_core.so Androidapp/rust/core-ffi/target/aarch64-linux-android/release/libcyclecare_core_ffi.so
+          bash Androidapp/rust/build-android.sh aarch64-linux-android
+          } 2>&1 | tee build-logs/rust-android-build.log
+      - name: Artifact gate (alignment, exports, freshness, hash)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          bash Androidapp/rust/verify-android-artifact.sh aarch64-linux-android "$ANDROID_NDK_HOME" build-logs/android-so-sha256.txt
+          cat build-logs/android-so-sha256.txt
+          } 2>&1 | tee build-logs/artifact-gate.log
+      - name: Runner-local Gradle heap (repo file untouched)
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gradle"
+          printf 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\n' > "$HOME/.gradle/gradle.properties"
+          cat "$HOME/.gradle/gradle.properties"
+      - name: assembleDebug (unsigned-by-us; runner auto debug keystore)
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          ls -la app/build/outputs/apk/debug/
+          } 2>&1 | tee build-logs/apk-build.log
+      - name: APK composition gate (exact artifact bytes + bridge classes)
+        script: |
+          set -euo pipefail
+          {
+          APK=$(ls Androidapp/app/build/outputs/apk/debug/*.apk | head -1)
+          echo "APK=$APK"
+          bash Androidapp/rust/verify-apk-rust-content.sh "$APK" build-logs/android-so-sha256.txt
+          } 2>&1 | tee build-logs/apk-gate.log
+    artifacts:
+      - build-logs/*.log
+      - build-logs/android-so-sha256.txt
+      - Androidapp/app/build/outputs/apk/debug/*.apk
   cyclecare-stage-f-instrumented-build:
     name: Stage-F instrumented-test build + inventory (PROPOSED; evidence build, not for merge; no device/runtime)
     max_build_duration: 30
@@ -385,7 +520,7 @@ workflows:
           git diff --name-status "$BASE" "$HEADSHA" | LC_ALL=C sort > /tmp/stage-f-actual-name-status.txt
           diff stage-e-evidence/expected-name-status.txt /tmp/stage-f-actual-name-status.txt || { echo "DIFF SCOPE MISMATCH (allowed: stage-d 31 + stage-e 7 + stage-f reviewed set only)"; exit 1; }
           echo "--- Stage-D manifest content pin (repinned for 3 reviewed files) ---"
-          echo "STAGEDMANIFESTHASH  stage-d-test-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "$SD  stage-d-test-evidence/expected-sha256.txt" | shasum -a 256 -c -
           echo "--- Stage-D verifier attestation (pinned bytes of verify_test_xml.py) ---"
           echo "81ef926c12e35df852656bc67a58687d174416acb30d22cdfaaedaf81ee13841  stage-d-test-evidence/verify_test_xml.py" | shasum -a 256 -c -
           echo "--- Stage-E path-set + manifest (repinned build.gradle.kts only) ---"
@@ -394,7 +529,7 @@ workflows:
           diff stage-e-evidence/expected-manifest-paths.txt /tmp/stage-e-manifest-paths.txt || { echo "STAGE-E MANIFEST PATH SET MISMATCH"; exit 1; }
           shasum -a 256 -c stage-e-evidence/expected-sha256.txt
           echo "--- Stage-F manifest: exact path set, then hashes (4 reviewed androidTest sources) ---"
-          echo "STAGEFPATHSHASH  stage-f-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          echo "$SFP  stage-f-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
           awk '{print $2}' stage-f-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-f-manifest-paths.txt
           diff stage-f-evidence/expected-manifest-paths.txt /tmp/stage-f-manifest-paths.txt || { echo "STAGE-F MANIFEST PATH SET MISMATCH"; exit 1; }
           shasum -a 256 -c stage-f-evidence/expected-sha256.txt

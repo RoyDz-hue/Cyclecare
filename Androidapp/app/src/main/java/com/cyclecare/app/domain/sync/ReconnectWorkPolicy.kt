@@ -40,8 +40,25 @@ object ReconnectWorkPolicy {
         data class Throttled(val retryAfterMs: Long) : Decision
     }
 
+    fun decide(state:State,isConnected:Boolean,isEligible:Boolean,currentOwner:String?,nowMs:Long):Decision =
+        nativeFirst(state,false,isConnected,isEligible,currentOwner,nowMs)
+    fun decideTrailing(state:State,isConnected:Boolean,isEligible:Boolean,currentOwner:String?,nowMs:Long):Decision =
+        nativeFirst(state,true,isConnected,isEligible,currentOwner,nowMs)
+    private fun nativeFirst(state:State,trailing:Boolean,connected:Boolean,eligible:Boolean,owner:String?,now:Long):Decision {
+        val before=State(state.wasConnected,state.lastRunAtMs,state.owner)
+        val expected=State(before.wasConnected,before.lastRunAtMs,before.owner)
+        val decision=if(trailing)decideTrailingKotlin(expected,connected,eligible,owner,now) else decideKotlin(expected,connected,eligible,owner,now)
+        val native=com.cyclecare.app.rust.CycleCareCoreBridge.reconnectState(before,trailing,connected,eligible,owner,now)
+        val accepted=native?.takeIf {it.decision==decision && it.connected==expected.wasConnected && it.last==expected.lastRunAtMs && it.owner==expected.owner}
+        // One commit only, from the accepted native result or original oracle post-state.
+        state.wasConnected=accepted?.connected ?: expected.wasConnected
+        state.lastRunAtMs=accepted?.last ?: expected.lastRunAtMs
+        state.owner=if(accepted!=null)accepted.owner else expected.owner
+        return accepted?.decision ?: decision
+    }
+
     /** Evaluate a connectivity emission. */
-    fun decide(
+    internal fun decideKotlin(
         state: State,
         isConnected: Boolean,
         isEligible: Boolean,
@@ -67,7 +84,7 @@ object ReconnectWorkPolicy {
      * expired. If newer work already ran (stamping [State.lastRunAtMs]), this
      * reports the remaining cooldown instead of running twice.
      */
-    fun decideTrailing(
+    internal fun decideTrailingKotlin(
         state: State,
         isConnected: Boolean,
         isEligible: Boolean,

@@ -13,7 +13,12 @@ object AccountStartPolicy {
      * Settings, unreachable while onboarding owns the shell. With valid local
      * data the user goes HOME (sync stays gated until the review is resolved);
      * without it the safe destination is a non-destructive RETRY. */
-    fun decide(localValid: Boolean, localState: LocalDataState, remoteProfile: Boolean?): AccountStartDestination = when {
+    fun decide(localValid: Boolean, localState: LocalDataState, remoteProfile: Boolean?): AccountStartDestination {
+        val expected=decideKotlin(localValid,localState,remoteProfile)
+        return com.cyclecare.app.rust.CycleCareCoreBridge.accountStart(localValid,localState,remoteProfile)?.takeIf {it==expected} ?: expected
+    }
+
+    internal fun decideKotlin(localValid: Boolean, localState: LocalDataState, remoteProfile: Boolean?): AccountStartDestination = when {
         localState == LocalDataState.UNKNOWN -> AccountStartDestination.RETRY
         localState == LocalDataState.CONFLICTED && localValid -> AccountStartDestination.HOME
         localState == LocalDataState.CONFLICTED -> AccountStartDestination.RETRY

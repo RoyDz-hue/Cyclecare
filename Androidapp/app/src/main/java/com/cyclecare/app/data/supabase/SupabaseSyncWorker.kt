@@ -19,6 +19,25 @@ class SupabaseSyncWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
 
+    /** Test-only seam: the PRODUCTION path is the 2-arg primary constructor
+     * WorkManager's default WorkerFactory instantiates by reflection; that
+     * path is unchanged and always uses the production defaults below. This
+     * internal secondary constructor exists only so instrumented tests can
+     * run the REAL doWork body against scripted sync/ping implementations
+     * (no global hooks, no state shared with production instances). */
+    internal constructor(
+        appContext: Context,
+        params: WorkerParameters,
+        syncServiceFactory: (Context, CycleCareDatabase, AuthPreferences) -> SupabaseSyncService,
+        pinger: suspend (String?) -> Boolean
+    ) : this(appContext, params) {
+        this.syncServiceFactoryOverride = syncServiceFactory
+        this.pingerOverride = pinger
+    }
+
+    private var syncServiceFactoryOverride: ((Context, CycleCareDatabase, AuthPreferences) -> SupabaseSyncService)? = null
+    private var pingerOverride: (suspend (String?) -> Boolean)? = null
+
     override suspend fun doWork(): Result {
         return try {
             // Consent is checked before opening the encrypted DB or constructing
@@ -28,7 +47,13 @@ class SupabaseSyncWorker(
             val ownerAtStart = authPreferences.userId
             if (OwnerDataGate.isWiped(applicationContext, ownerAtStart)) return Result.success()
             val database = CycleCareDatabase.getDatabase(applicationContext, ownerAtStart)
-            val syncService = SupabaseSyncService(database, authPreferences)
+            val syncService = syncServiceFactoryOverride?.invoke(applicationContext, database, authPreferences) ?: SupabaseSyncService(database, authPreferences)
+            // Share the authoritative routing: bind the process repository
+            // when the composition already published it. Fresh service each
+            // run, so the binding never goes stale across runs; when no
+            // composition exists yet (cold worker start), the service stays
+            // unbound and keeps original unprotected legacy behavior.
+            com.cyclecare.app.data.repository.CycleRepository.processRepository.get()?.let { syncService.bindSyncApplyRepository(it) }
 
             val result = syncService.syncAll()
 
@@ -36,7 +61,7 @@ class SupabaseSyncWorker(
             // kill switch, lease, cooldowns and budgets; failure never fails sync.
             try {
                 val token = SupabaseSessionManager.validAccessToken(authPreferences)
-                CommunityPulsePinger.ping(token)
+                (pingerOverride ?: { t -> CommunityPulsePinger.ping(t) }).invoke(token)
             } catch (_: Exception) { }
 
             when {

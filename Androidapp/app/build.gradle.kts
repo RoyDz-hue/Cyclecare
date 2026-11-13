@@ -227,6 +227,7 @@ dependencies {
   // JVM 21 at configuration) is still applied only with -Ppaparazzi.
   testImplementation("app.cash.paparazzi:paparazzi:2.0.0-alpha05")
   testImplementation(libs.mockwebserver)
+  testImplementation(libs.androidx.work.testing)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
   // UI-test-only dependencies are debug-scoped: the isolated lab test

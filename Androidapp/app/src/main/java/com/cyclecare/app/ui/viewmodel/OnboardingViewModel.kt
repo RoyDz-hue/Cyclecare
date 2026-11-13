@@ -190,16 +190,13 @@ class OnboardingViewModel : ViewModel() {
         val prior = priorDynamicAnswers()
         // Local bank renders immediately; AI refines asynchronously when available.
         val local = com.cyclecare.app.domain.onboarding.LocalAdaptiveOnboardingBank.questionsFor(step, goals, prior)
-        _uiState.update { it.copy(dynamicQuestions = it.dynamicQuestions + (step to local)) }
+        _uiState.update { OnboardingQuestionReducer.reduce(it,step,local,OnboardingQuestionReducer.Action.LOCAL) }
         val service = questionService ?: return
-        _uiState.update { it.copy(isLoadingDynamicQuestions = true) }
+        _uiState.update { OnboardingQuestionReducer.reduce(it,step,null,OnboardingQuestionReducer.Action.START) }
         viewModelScope.launch {
             val generated = service.generateQuestions(step, goals, prior)
             _uiState.update { current ->
-                current.copy(
-                    dynamicQuestions = if (!generated.isNullOrEmpty()) current.dynamicQuestions + (step to generated) else current.dynamicQuestions,
-                    isLoadingDynamicQuestions = false
-                )
+                OnboardingQuestionReducer.reduce(current,step,generated,OnboardingQuestionReducer.Action.GENERATED)
             }
         }
     }
@@ -217,32 +214,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun setExactDate(date: LocalDate) {
-        _uiState.update { current ->
-            // If an exact end date was previously chosen and is now before the new start date,
-            // clamp to new start date so the invariant end >= start is strictly maintained.
-            val validEndDate = current.selectedPeriodEndDate?.let { end ->
-                if (CycleRepository.validatePeriodDates(date, end)) end else date
-            }
-            val decision = if (validEndDate != null) {
-                com.cyclecare.app.domain.health.PeriodEpisodeEntry.decide(
-                    start = date,
-                    end = validEndDate,
-                    isOngoing = false,
-                    currentTypicalDurationDays = current.periodDurationDays
-                )
-            } else {
-                null
-            }
-            current.copy(
-                selectedExactDate = date,
-                selectedPeriodEndDate = validEndDate,
-                periodDurationDays = decision?.typicalDurationDays ?: current.periodDurationDays,
-                periodDateDialogMessage = decision?.takeIf { it.requiresConfirmation }?.warningMessage,
-                periodEndDateConfirmed = decision?.let { !it.requiresConfirmation } ?: current.periodEndDateConfirmed,
-                selectedApproximateChip = null,
-                showDatePickerDialog = false
-            )
-        }
+        _uiState.update { OnboardingDateReducer.reduce(it,OnboardingDateReducer.Event(OnboardingDateReducer.Action.EXACT_START,date=date)) }
     }
 
     fun setNotSureSelected(notSure: Boolean) {
@@ -250,12 +222,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun selectApproximateChip(chip: String) {
-        _uiState.update { current ->
-            current.copy(
-                selectedApproximateChip = chip,
-                selectedExactDate = null
-            )
-        }
+        _uiState.update { OnboardingDateReducer.reduce(it,OnboardingDateReducer.Event(OnboardingDateReducer.Action.APPROXIMATE,text=chip)) }
     }
 
     fun setDatePickerDialogVisible(visible: Boolean) {
@@ -263,37 +230,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun setExactEndDate(date: LocalDate) {
-        _uiState.update { current ->
-            val start = current.effectiveLastPeriodDate
-            // Hard chronology rule: end before start is rejected (clamped to start).
-            if (!CycleRepository.validatePeriodDates(start, date)) {
-                return@update current.copy(
-                    selectedPeriodEndDate = start,
-                    isPeriodOngoing = false,
-                    showEndDatePickerDialog = false,
-                    periodDateDialogMessage = null,
-                    periodEndDateConfirmed = true
-                )
-            }
-            // The entered end date is preserved exactly; an unusual duration
-            // asks for explicit confirmation and never drags the typical
-            // duration estimate (no silent 2..10 clamping of real entries).
-            val decision = com.cyclecare.app.domain.health.PeriodEpisodeEntry.decide(
-                start = start,
-                end = date,
-                isOngoing = false,
-                currentTypicalDurationDays = current.periodDurationDays
-            )
-            current.copy(
-                selectedPeriodEndDate = date,
-                periodDurationDays = decision.typicalDurationDays,
-                selectedPeriodDurationOption = "${ChronoUnit.DAYS.between(start, date) + 1} days",
-                isPeriodOngoing = false,
-                showEndDatePickerDialog = false,
-                periodDateDialogMessage = decision.takeIf { it.requiresConfirmation }?.warningMessage,
-                periodEndDateConfirmed = !decision.requiresConfirmation
-            )
-        }
+        _uiState.update { OnboardingDateReducer.reduce(it,OnboardingDateReducer.Event(OnboardingDateReducer.Action.EXACT_END,date=date)) }
     }
 
     /** User tapped "Dates are correct": the confirmed raw end date is kept. */
@@ -330,18 +267,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun selectPeriodDurationOption(option: String, days: Int, isOngoing: Boolean = false) {
-        _uiState.update { current ->
-            val endDate = if (isOngoing) LocalDate.now() else current.effectiveLastPeriodDate.plusDays((days - 1).toLong().coerceAtLeast(0))
-            current.copy(
-                selectedPeriodDurationOption = option,
-                periodDurationDays = days,
-                isPeriodOngoing = isOngoing,
-                selectedPeriodEndDate = if (!isOngoing) endDate else null,
-                // A preset-derived end date is not a raw user-entered record.
-                periodEndDateConfirmed = false,
-                periodDateDialogMessage = null
-            )
-        }
+        _uiState.update { OnboardingDateReducer.reduce(it,OnboardingDateReducer.Event(OnboardingDateReducer.Action.DURATION,text=option,days=days,ongoing=isOngoing)) }
     }
 
     fun setEndDatePickerDialogVisible(visible: Boolean) {

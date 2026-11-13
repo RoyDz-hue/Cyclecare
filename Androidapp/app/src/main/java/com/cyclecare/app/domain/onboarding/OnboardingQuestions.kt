@@ -19,7 +19,10 @@ data class OnboardingQuestion(
 object LocalAdaptiveOnboardingBank {
 
     /** Progressive fallback bank: keyed by step, adapted by goals + prior answers. */
-    fun questionsFor(
+    fun questionsFor(step:Int,goals:Set<String>,priorAnswers:Map<String,Set<String>>):List<OnboardingQuestion> =
+        com.cyclecare.app.rust.CycleCareCoreBridge.fullOnboardingBank(step,goals,priorAnswers) ?: questionsForKotlin(step,goals,priorAnswers)
+
+    internal fun questionsForKotlin(
         step: Int,
         goals: Set<String>,
         priorAnswers: Map<String, Set<String>>

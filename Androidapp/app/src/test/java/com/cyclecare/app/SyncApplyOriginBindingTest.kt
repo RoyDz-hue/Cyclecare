@@ -16,6 +16,10 @@ import com.cyclecare.app.data.repository.OwnerTransitionException
 import com.cyclecare.app.security.AuthPreferences
 import java.util.UUID
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -369,5 +373,60 @@ class SyncApplyOriginBindingTest {
             other.repo.dispatchSyncApply<Boolean>(origin, other.db) { _, _ -> RustBoundRoomHost.Result.Value(true) }
             Unit
         }
+    }
+
+    // --- Health pending-revoke marker under the prefs monitor ---
+
+    @Test fun markerBeforeDispatchTypesStaleWithZeroSql() = runBlocking(Dispatchers.IO) {
+        val f = ported()
+        val entry = seedPending(f, "2026-10-07")
+        val origin = capture(f)
+        f.prefs.markPendingHealthSyncRevoke()
+        // serverHealthConsentGeneration nulls while the marker is pending: the
+        // dispatch revalidation types Stale BEFORE any SQL.
+        val outcome = f.repo.dispatchAcknowledgeSync(origin, f.db, entry, 1L)
+        assertEquals(CycleRepository.SyncApplyOutcome.Stale, outcome)
+        val dao = f.db.healthSyncDao()
+        assertEquals(0L, dao.revision(owner, "2026-10-07")!!.serverRevision)
+        assertTrue(dao.pending(owner).any { it.operationId == entry.operationId })
+    }
+
+    @Test fun markerThreadWaitsForAdmittedSqlThenReturns() = runBlocking(Dispatchers.IO) {
+        val f = ported()
+        val entry = seedPending(f, "2026-10-07")
+        val origin = capture(f)
+        val markerDone = AtomicBoolean(false)
+        val markerFailure = AtomicReference<Throwable?>()
+        val markerThread = AtomicReference<Thread?>()
+        // The probe runs inside the guarded lock chain (prefs monitor held through
+        // the admitted SQL). The marker thread must reach BLOCKED on that same
+        // monitor (bounded poll), proving actual contention - not just a started
+        // latch or a sleep - before the admitted effect resumes.
+        f.host.beforeGuardedTransactionForTests = {
+            val t = Thread {
+                try {
+                    f.prefs.markPendingHealthSyncRevoke()
+                    markerDone.set(true)
+                } catch (error: Throwable) { markerFailure.set(error) }
+            }
+            t.isDaemon = true
+            markerThread.set(t)
+            t.start()
+            var waited = 0L
+            while (t.state != Thread.State.BLOCKED && waited < 15000) { Thread.sleep(25); waited += 25 }
+            assertEquals("marker thread must be BLOCKED on the held prefs monitor", Thread.State.BLOCKED, t.state)
+            assertFalse("revoke committed before the admitted SQL finished", markerDone.get())
+        }
+        try {
+            val outcome = f.repo.dispatchAcknowledgeSync(origin, f.db, entry, 1L)
+            assertEquals(CycleRepository.SyncApplyOutcome.Applied(true), outcome)
+        } finally { f.host.beforeGuardedTransactionForTests = null }
+        markerThread.get()!!.join(15000)
+        assertFalse("marker thread must complete after the admitted SQL", markerThread.get()!!.isAlive)
+        markerFailure.get()?.let { throw AssertionError("marker thread failed", it) }
+        assertTrue(markerDone.get())
+        // No retroactive cancel: the admitted effect stands.
+        assertEquals(1L, f.db.healthSyncDao().revision(owner, "2026-10-07")!!.serverRevision)
+        assertTrue(f.prefs.hasPendingHealthSyncRevoke)
     }
 }

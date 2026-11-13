@@ -10,11 +10,17 @@ wrong; the original CI terminal FAIL is preserved in the run evidence):
     section, every occurrence of a pinned coordinate must resolve to the
     pinned version, whether declared directly or as "requested -> selected".
     A requested!=selected divergence is NOT itself a failure.
-  - Lower-request provenance is REQUIRED and recorded: each
-    --requested-provenance group:name=version must be observed at least once
-    as a requested (left-hand) version with a different selected version in
-    the checked sections. Absence fails closed: the resolution chain changed
-    and the adjudication no longer applies (re-review).
+  - Pin PRESENCE is per-section, never union: each --require-pin-in
+    group:name=section must have at least one occurrence of the coordinate in
+    that exact section (reviewer: all 3 pins individually in BOTH
+    debugAndroidTestCompileClasspath and debugAndroidTestRuntimeClasspath;
+    removal from the runtime section alone must fail).
+  - Lower-request provenance is REQUIRED and recorded, section-bound: each
+    --requested-provenance group:name=version@section must be observed at
+    least once as a requested (left-hand) version diverging to a different
+    selected version in THAT section (runtime-bound, not union). Absence
+    fails closed: the resolution chain changed and the adjudication no
+    longer applies (re-review).
   - FAILED-entry checks are scoped to the checked classpath sections ONLY.
     Declarable-only "(n)" buckets (e.g. debugImplementation) render
     versionless BOM-managed coordinates (ui-tooling, ui-test-manifest) as
@@ -76,9 +82,13 @@ def main():
                          "FAILED scan and pin assertions are scoped to these")
     ap.add_argument("--selected-pin", action="append", required=True,
                     help="group:name=version, FINAL SELECTED version in every checked classpath")
+    ap.add_argument("--require-pin-in", action="append", default=[],
+                    help="group:name=section, coordinate must occur in this exact checked "
+                         "classpath section (repeatable; per-section presence, not union)")
     ap.add_argument("--requested-provenance", action="append", default=[],
-                    help="group:name=version, lower requested version that must be observed "
-                         "diverging to the selected pin (repeatable)")
+                    help="group:name=version@section, lower requested version that must be "
+                         "observed diverging to the selected pin in that exact section "
+                         "(repeatable)")
     args = ap.parse_args()
 
     text = open(args.report, encoding="utf-8", errors="replace").read()
@@ -118,17 +128,33 @@ def main():
         where = sorted({cp for cp, _, _ in occ})
         print(f"record: {coord} final-selected {version} verified in {where}")
 
-    for req in args.requested_provenance:
-        coord, version = req.rsplit("=", 1)
+    for req in args.require_pin_in:
+        coord, section = req.rsplit("=", 1)
         group, name = coord.split(":", 1)
-        hits = [(cp, r, s) for cp in args.classpath
-                for (r, s) in occurrences(sections[cp], group, name)
+        if section not in checked:
+            fail(f"--require-pin-in section '{section}' is not a checked classpath {args.classpath}")
+        occ = occurrences(sections[section], group, name)
+        if not occ:
+            fail(f"pinned coordinate {coord} ABSENT from required section '{section}' "
+                 f"(per-section presence, not union)")
+        print(f"record: {coord} present in required section '{section}' ({len(occ)} occurrence(s))")
+
+    for req in args.requested_provenance:
+        try:
+            coord, rest = req.rsplit("=", 1)
+            version, section = rest.rsplit("@", 1)
+        except ValueError:
+            fail(f"--requested-provenance must be group:name=version@section, got: {req}")
+        group, name = coord.split(":", 1)
+        if section not in checked:
+            fail(f"--requested-provenance section '{section}' is not a checked classpath {args.classpath}")
+        hits = [(r, s) for (r, s) in occurrences(sections[section], group, name)
                 if r == version and s != r]
         if not hits:
             fail(f"requested-provenance {coord} requested={version} not observed diverging "
-                 f"in checked classpaths - resolution chain changed, adjudication void, re-review")
-        for cp, r, s in hits:
-            print(f"record: provenance {coord} requested {r} -> selected {s} observed in '{cp}'")
+                 f"in required section '{section}' - resolution chain changed, adjudication void, re-review")
+        for r, s in hits:
+            print(f"record: provenance {coord} requested {r} -> selected {s} observed in '{section}'")
 
     rt = "debugAndroidTestRuntimeClasspath"
     if rt in sections:

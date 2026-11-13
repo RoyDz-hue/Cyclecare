@@ -146,6 +146,34 @@ class LegacyDispatchRegistrationTest {
         Unit
     }
 
+    @Test fun admittedGuardActiveBlocksSealAndCancelReleases() = runBlocking {
+        val db = open()
+        val repo = CycleRepository(db)
+        // Caller-discipline fixture for the sync-apply legacy effects: the guard
+        // is a routingLock counter held across the suspending section and closed
+        // in finally - no monitor crosses the suspension.
+        val guard = repo.admitLegacyDispatch()
+        assertFalse("seal must reject while the guard is active", repo.trySealLegacyDispatch())
+        guard.close()
+        assertTrue("seal engages after close", repo.trySealLegacyDispatch())
+        repo.releaseLegacyDispatchSeal()
+        // Cancellation of the suspending admitted section releases via the same finally.
+        val entered = CountDownLatch(1)
+        val job = async(Dispatchers.IO) {
+            val g = repo.admitLegacyDispatch()
+            try {
+                entered.countDown()
+                kotlinx.coroutines.delay(30_000)
+            } finally { g.close() }
+        }
+        assertTrue("admitted section entered", entered.await(15, TimeUnit.SECONDS))
+        assertFalse("seal must reject during the admitted section", repo.trySealLegacyDispatch())
+        job.cancel()
+        job.join()
+        assertTrue("cancelled admitted section released the guard", repo.trySealLegacyDispatch())
+        repo.releaseLegacyDispatchSeal()
+    }
+
     @Test fun crossThreadSealRejectsWhileInflightThenSucceedsAfterDrain() {
         val db = open()
         val repo = CycleRepository(db)

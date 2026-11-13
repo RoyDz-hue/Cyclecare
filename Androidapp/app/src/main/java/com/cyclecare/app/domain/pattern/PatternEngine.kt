@@ -167,6 +167,12 @@ object PatternEngine {
      */
     fun detectPatterns(settings: CycleSettings, logs: List<CycleDayLog>): List<HealthPattern> {
         val today = LocalDate.now()
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullPatterns(settings,logs,today)
+            ?: detectPatternsKotlin(settings,logs,today)
+    }
+
+    /** Original pattern oracle; one clock value shared with the native attempt. */
+    internal fun detectPatternsKotlin(settings: CycleSettings, logs: List<CycleDayLog>, today: LocalDate): List<HealthPattern> {
         val datedLogs = logs.mapNotNull { log ->
             runCatching { LocalDate.parse(log.dateString) to log }.getOrNull()
         }.distinctBy { it.first }

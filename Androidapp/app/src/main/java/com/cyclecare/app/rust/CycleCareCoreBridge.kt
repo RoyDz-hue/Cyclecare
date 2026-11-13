@@ -61,6 +61,61 @@ object CycleCareCoreBridge {
      * evidence and calls again with checkinResolved=true. Returns null on native unavailability
      * or any malformed reply so the caller runs the verbatim Kotlin oracle.
      */
+    internal interface FullAttentionChoice {val branch:NonsafetyBranch;val deviationIndex:Int?}
+    private class BoundAttentionChoice(val decision:NonsafetyDecision,val until:Int,val day:Int,val sleep:Double?,val title:String,val message:String):FullAttentionChoice {
+        override val branch get()=decision.branch
+        override val deviationIndex get()=decision.deviationIndex
+    }
+    internal fun chooseFullAttention(
+        safetyUrgentOrSeek: Boolean,
+        deviations: List<com.cyclecare.app.domain.pattern.BaselineDeviation>,
+        hasPrediction: Boolean,
+        dayOfCycle: Int,
+        isPeriod: Boolean,
+        isFertile: Boolean,
+        daysUntilPeriod: Int,
+        sleepAverage: Double?,
+        checkinResolved: Boolean,
+        daysSinceLastLog: Long?
+    ): FullAttentionChoice? {
+        if (sleepAverage != null && !sleepAverage.isFinite()) return null
+        val deviationSeverities=deviations.map {it.severity.name}
+        val severityArray = JSONArray()
+        deviationSeverities.forEach { severityArray.put(it) }
+        val payload = JSONObject()
+            .put("safetyUrgentOrSeek", safetyUrgentOrSeek)
+            .put("deviationSeverities", severityArray)
+            .put("hasPrediction", hasPrediction)
+            .put("dayOfCycle", dayOfCycle)
+            .put("isPeriod", isPeriod)
+            .put("isFertile", isFertile)
+            .put("daysUntilPeriod", daysUntilPeriod)
+            .put("sleepAverage", if (sleepAverage != null) sleepAverage else JSONObject.NULL)
+            .put("checkinResolved", checkinResolved)
+            .put("daysSinceLastLog", daysSinceLastLog ?: JSONObject.NULL)
+        val reply = call("attention_nonsafety_priority", payload) ?: return null
+        val decision=decodeNonsafetyReply(reply,deviationSeverities,checkinResolved) ?: return null
+        if(reply.keys().asSequence().toSet()!=setOf("ok"))return null
+        val ok=reply.optJSONObject("ok") ?: return null
+        if(ok.keys().asSequence().toSet()!=if(decision.deviationIndex==null)setOf("branch") else setOf("branch","deviationIndex"))return null
+        val expected=when {
+            safetyUrgentOrSeek -> NonsafetyBranch.SAFETY_PRIORITY
+            "STRONG" in deviationSeverities -> NonsafetyBranch.BASELINE_SHIFT_STRONG
+            deviationSeverities.any {it=="SIGNIFICANT" || it=="NOTABLE"} && !isPeriod -> NonsafetyBranch.BASELINE_SHIFT_NOTABLE
+            !hasPrediction -> NonsafetyBranch.NONE
+            daysUntilPeriod in 1..3 && sleepAverage!=null && sleepAverage<6.8 -> NonsafetyBranch.PERIOD_SLEEP_TAPER
+            isFertile && !isPeriod -> NonsafetyBranch.FERTILE_WINDOW_NOTICE
+            dayOfCycle==1 && isPeriod -> NonsafetyBranch.PHASE_MENSTRUAL_START
+            !checkinResolved -> NonsafetyBranch.NEEDS_CHECKIN
+            daysSinceLastLog!=null && daysSinceLastLog>=4 && !isPeriod -> NonsafetyBranch.WELLBEING_CHECKIN
+            else -> NonsafetyBranch.NONE
+        }
+        if(decision.branch!=expected)return null
+        val d=decision.deviationIndex?.let {deviations[it]}
+        return BoundAttentionChoice(decision,daysUntilPeriod,dayOfCycle,sleepAverage,d?.title ?: "",d?.message ?: "")
+    }
+
+
     fun attentionNonsafetyPriority(
         safetyUrgentOrSeek: Boolean,
         deviationSeverities: List<String>,
@@ -247,6 +302,444 @@ object CycleCareCoreBridge {
     /** Full observation assembly in Rust, JVM supplies exact Unicode label primitives.
      * No notes, credentials, owner or unrelated profile fields cross the local JNI boundary.
      */
+    /** Rust owns full-date pattern aggregation. JVM retains only its original
+     * exp and text primitives so floating ties and Unicode stay bit-exact. */
+    private fun completionText(s:String):String {require(attentionSafe(s));return s}
+    internal fun completionProfilePayload(i:com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.Input):JSONObject? = runCatching {
+        JSONObject().put("account",completionText(i.accountMode)).put("time",i.now).put("goals",JSONArray(i.submittedGoals.map(::completionText))).put("start",if(i.periodStartChoice=="UNKNOWN")""else i.lastPeriodDate.toString()).put("end",i.lastPeriodEndDate?.toString() ?: "").put("choice",completionText(i.periodStartChoice)).put("cycleOption",completionText(i.cycleLengthOption)).put("optionBlank",i.cycleLengthOption.isBlank()).put("cycle",i.cycleLength).put("duration",i.periodDuration).put("fertile",i.remindFertile).put("symptoms",JSONArray(i.submittedSymptoms.map(::completionText))).put("energy",completionText(i.typicalEnergy)).put("sleep",completionText(i.typicalSleep)).put("deep",i.hasCompletedDeepBaseline)
+    }.getOrNull()
+    internal fun fullCompletionProfile(i:com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.Input):com.cyclecare.app.data.local.OnboardingProfile? = runCatching {decodeCompletionProfile(call("onboarding_completion_profile_v1",completionProfilePayload(i) ?: return null) ?: return null)}.getOrNull()
+    internal fun decodeCompletionProfile(reply:JSONObject):com.cyclecare.app.data.local.OnboardingProfile? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null;require(ok.keys().asSequence().toSet()==setOf("version","profile"));require(ok.opt("version") is Int&&ok.opt("version")==1);val p=ok.opt("profile") as? JSONObject ?: return null
+        require(p.keys().asSequence().toSet()==setOf("id","isCompleted","completedAtTimestamp","isAgeVerified","isTermsAgreed","accountMode","selectedGoalsCsv","lastPeriodDateString","lastPeriodEndDateString","approximatePeriodChoice","cycleLengthOption","cycleLengthDays","periodDurationDays","remindFertileWindow","typicalSymptomsCsv","typicalEnergy","typicalSleepQuality","hasCompletedDeepBaseline"))
+        fun int(k:String)=p.opt(k) as? Int ?: throw IllegalArgumentException(k)
+        fun long(k:String):Long{val v=p.opt(k);require(v is Int||v is Long);return (v as Number).toLong()}
+        fun bool(k:String)=p.opt(k) as? Boolean ?: throw IllegalArgumentException(k)
+        fun text(k:String)=completionText(p.opt(k) as? String ?: throw IllegalArgumentException(k))
+        require(int("id")==1&&bool("isCompleted")&&bool("isAgeVerified")&&bool("isTermsAgreed"))
+        com.cyclecare.app.data.local.OnboardingProfile(id=int("id"),isCompleted=bool("isCompleted"),completedAtTimestamp=long("completedAtTimestamp"),isAgeVerified=bool("isAgeVerified"),isTermsAgreed=bool("isTermsAgreed"),accountMode=text("accountMode"),selectedGoalsCsv=text("selectedGoalsCsv"),lastPeriodDateString=text("lastPeriodDateString"),lastPeriodEndDateString=text("lastPeriodEndDateString"),approximatePeriodChoice=text("approximatePeriodChoice"),cycleLengthOption=text("cycleLengthOption"),cycleLengthDays=int("cycleLengthDays"),periodDurationDays=int("periodDurationDays"),remindFertileWindow=bool("remindFertileWindow"),typicalSymptomsCsv=text("typicalSymptomsCsv"),typicalEnergy=text("typicalEnergy"),typicalSleepQuality=text("typicalSleepQuality"),hasCompletedDeepBaseline=bool("hasCompletedDeepBaseline"))
+    }.getOrNull()
+    internal fun completionSettingsPayload(p:com.cyclecare.app.data.local.OnboardingProfile,lock:Boolean):JSONObject? = runCatching {JSONObject().put("profile",JSONObject().put("id",p.id).put("isCompleted",p.isCompleted).put("completedAtTimestamp",p.completedAtTimestamp).put("isAgeVerified",p.isAgeVerified).put("isTermsAgreed",p.isTermsAgreed).put("accountMode",completionText(p.accountMode)).put("selectedGoalsCsv",completionText(p.selectedGoalsCsv)).put("lastPeriodDateString",completionText(p.lastPeriodDateString)).put("lastPeriodEndDateString",completionText(p.lastPeriodEndDateString)).put("approximatePeriodChoice",completionText(p.approximatePeriodChoice)).put("cycleLengthOption",completionText(p.cycleLengthOption)).put("cycleLengthDays",p.cycleLengthDays).put("periodDurationDays",p.periodDurationDays).put("remindFertileWindow",p.remindFertileWindow).put("typicalSymptomsCsv",completionText(p.typicalSymptomsCsv)).put("typicalEnergy",completionText(p.typicalEnergy)).put("typicalSleepQuality",completionText(p.typicalSleepQuality)).put("hasCompletedDeepBaseline",p.hasCompletedDeepBaseline)).put("lock",lock)}.getOrNull()
+    internal fun fullCompletionSettings(current:com.cyclecare.app.data.local.CycleSettings,p:com.cyclecare.app.data.local.OnboardingProfile,lock:Boolean):com.cyclecare.app.data.local.CycleSettings? = runCatching {decodeCompletionSettings(call("onboarding_completion_settings_v1",completionSettingsPayload(p,lock) ?: return null) ?: return null,current)}.getOrNull()
+    internal fun decodeCompletionSettings(reply:JSONObject,current:com.cyclecare.app.data.local.CycleSettings):com.cyclecare.app.data.local.CycleSettings? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null;require(ok.keys().asSequence().toSet()==setOf("version","patch"));require(ok.opt("version") is Int&&ok.opt("version")==1);val p=ok.opt("patch") as? JSONObject ?: return null
+        require(p.keys().asSequence().toSet()==setOf("isOnboardingCompleted","selectedGoalsCsv","lastPeriodStartDate","averageCycleLength","periodDuration","remindFertile","isAppLockEnabled"))
+        fun int(k:String)=p.opt(k) as? Int ?: throw IllegalArgumentException(k)
+        fun bool(k:String)=p.opt(k) as? Boolean ?: throw IllegalArgumentException(k)
+        fun text(k:String)=completionText(p.opt(k) as? String ?: throw IllegalArgumentException(k))
+        require(bool("isOnboardingCompleted"))
+        current.copy(isOnboardingCompleted=true,selectedGoalsCsv=text("selectedGoalsCsv"),lastPeriodStartDate=text("lastPeriodStartDate"),averageCycleLength=int("averageCycleLength"),periodDuration=int("periodDuration"),remindFertile=bool("remindFertile"),isAppLockEnabled=bool("isAppLockEnabled"))
+    }.getOrNull()
+
+    internal fun onboardingDatePayload(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,e:com.cyclecare.app.ui.viewmodel.OnboardingDateReducer.Event,v:com.cyclecare.app.ui.viewmodel.OnboardingDateReducer.Evidence):JSONObject? = runCatching {
+        fun text(t:String):String{require(attentionSafe(t));return t};fun date(d:java.time.LocalDate?):Any=d?.toEpochDay() ?: JSONObject.NULL
+        val state=JSONObject().put("exact",date(s.selectedExactDate)).put("end",date(s.selectedPeriodEndDate)).put("chip",s.selectedApproximateChip?.let(::text) ?: JSONObject.NULL).put("duration",s.periodDurationDays).put("option",text(s.selectedPeriodDurationOption)).put("ongoing",s.isPeriodOngoing).put("datePicker",s.showDatePickerDialog).put("endPicker",s.showEndDatePickerDialog).put("confirmed",s.periodEndDateConfirmed).put("dialog",s.periodDateDialogMessage?.let(::text) ?: JSONObject.NULL)
+        JSONObject().put("state",state).put("action",e.action.name).put("date",date(e.date)).put("text",text(e.text)).put("days",e.days).put("ongoing",e.ongoing).put("effectiveStart",date(v.start)).put("calculatedEnd",date(v.end)).put("today",date(v.today))
+    }.getOrNull()
+    internal fun fullOnboardingDate(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,e:com.cyclecare.app.ui.viewmodel.OnboardingDateReducer.Event,v:com.cyclecare.app.ui.viewmodel.OnboardingDateReducer.Evidence):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        decodeFullOnboardingDate(call("onboarding_date_full_v1",onboardingDatePayload(s,e,v) ?: return null) ?: return null,s,listOfNotNull(s.selectedExactDate,s.selectedPeriodEndDate,e.date,v.start,v.end,v.today))
+    }.getOrNull()
+    internal fun decodeFullOnboardingDate(reply:JSONObject,original:com.cyclecare.app.ui.viewmodel.OnboardingUiState,dates:List<java.time.LocalDate>):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null;require(ok.keys().asSequence().toSet()==setOf("version","state"));require(ok.opt("version") is Int&&ok.opt("version")==1);val s=ok.opt("state") as? JSONObject ?: return null
+        require(s.keys().asSequence().toSet()==setOf("exact","end","chip","duration","option","ongoing","datePicker","endPicker","confirmed","dialog"))
+        fun text(v:Any?):String{val t=v as? String ?: throw IllegalArgumentException();require(attentionSafe(t));return t}
+        fun optional(k:String):String?=if(s.opt(k)===JSONObject.NULL)null else text(s.opt(k))
+        fun bool(k:String)=s.opt(k) as? Boolean ?: throw IllegalArgumentException(k)
+        fun date(k:String):java.time.LocalDate?{val v=s.opt(k);if(v===JSONObject.NULL)return null;require(v is Int||v is Long);return dates.firstOrNull{it.toEpochDay()==(v as Number).toLong()} ?: throw IllegalArgumentException("unbound date")}
+        val duration=s.opt("duration") as? Int ?: return null
+        original.copy(selectedExactDate=date("exact"),selectedPeriodEndDate=date("end"),selectedApproximateChip=optional("chip"),periodDurationDays=duration,selectedPeriodDurationOption=text(s.opt("option")),isPeriodOngoing=bool("ongoing"),showDatePickerDialog=bool("datePicker"),showEndDatePickerDialog=bool("endPicker"),periodEndDateConfirmed=bool("confirmed"),periodDateDialogMessage=optional("dialog"))
+    }.getOrNull()
+
+    private fun encodeOnboardingQuestions(questions:List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>):JSONArray {
+        fun text(v:String):String{require(attentionSafe(v));return v}
+        return JSONArray(questions.map{JSONObject().put("id",text(it.id)).put("prompt",text(it.prompt)).put("options",JSONArray(it.options.map(::text))).put("multiSelect",it.multiSelect)})
+    }
+    private fun decodeOnboardingQuestions(value:Any?):List<com.cyclecare.app.domain.onboarding.OnboardingQuestion> {
+        fun text(v:Any?):String{val s=v as? String ?: throw IllegalArgumentException();require(attentionSafe(s));return s}
+        val a=value as? JSONArray ?: throw IllegalArgumentException()
+        return (0 until a.length()).map {i->val q=a.opt(i) as? JSONObject ?: throw IllegalArgumentException();require(q.keys().asSequence().toSet()==setOf("id","prompt","options","multiSelect"));val opts=q.opt("options") as? JSONArray ?: throw IllegalArgumentException();val multi=q.opt("multiSelect") as? Boolean ?: throw IllegalArgumentException();com.cyclecare.app.domain.onboarding.OnboardingQuestion(text(q.opt("id")),text(q.opt("prompt")),(0 until opts.length()).map{text(opts.opt(it))},multi)}
+    }
+    internal fun fullOnboardingBank(step:Int,goals:Set<String>,prior:Map<String,Set<String>>):List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>? = runCatching {
+        val joined=goals.joinToString(" ").lowercase();val earlier=if(step==5)prior.values.flatten().joinToString(" ").lowercase()else ""
+        require(attentionSafe(joined)&&attentionSafe(earlier))
+        decodeFullOnboardingBank(call("onboarding_bank_full_v1",JSONObject().put("step",step).put("goals",joined).put("earlier",earlier)) ?: return null)
+    }.getOrNull()
+    internal fun decodeFullOnboardingBank(reply:JSONObject):List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null;require(ok.keys().asSequence().toSet()==setOf("version","questions"));require(ok.opt("version") is Int&&ok.opt("version")==1);decodeOnboardingQuestions(ok.opt("questions"))
+    }.getOrNull()
+    internal fun onboardingQuestionsPayload(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,step:Int,incoming:List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>?,action:com.cyclecare.app.ui.viewmodel.OnboardingQuestionReducer.Action):JSONObject? = runCatching {
+        val entries=JSONArray(s.dynamicQuestions.map{(key,value)->JSONObject().put("step",key).put("questions",encodeOnboardingQuestions(value))})
+        JSONObject().put("entries",entries).put("step",step).put("incoming",incoming?.let(::encodeOnboardingQuestions) ?: JSONObject.NULL).put("action",action.name).put("loading",s.isLoadingDynamicQuestions)
+    }.getOrNull()
+    internal fun fullOnboardingQuestions(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,step:Int,incoming:List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>?,action:com.cyclecare.app.ui.viewmodel.OnboardingQuestionReducer.Action):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        decodeFullOnboardingQuestions(call("onboarding_questions_state_v1",onboardingQuestionsPayload(s,step,incoming,action) ?: return null) ?: return null,s)
+    }.getOrNull()
+    internal fun decodeFullOnboardingQuestions(reply:JSONObject,original:com.cyclecare.app.ui.viewmodel.OnboardingUiState):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null;require(ok.keys().asSequence().toSet()==setOf("version","entries","loading"));require(ok.opt("version") is Int&&ok.opt("version")==1)
+        val loading=ok.opt("loading") as? Boolean ?: return null;val a=ok.opt("entries") as? JSONArray ?: return null;val entries=linkedMapOf<Int,List<com.cyclecare.app.domain.onboarding.OnboardingQuestion>>()
+        for(i in 0 until a.length()){val e=a.opt(i) as? JSONObject ?: return null;require(e.keys().asSequence().toSet()==setOf("step","questions"));val step=e.opt("step") as? Int ?: return null;require(!entries.containsKey(step));entries[step]=decodeOnboardingQuestions(e.opt("questions"))}
+        original.copy(dynamicQuestions=entries,isLoadingDynamicQuestions=loading)
+    }.getOrNull()
+
+    internal fun onboardingStatePayload(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,e:com.cyclecare.app.ui.viewmodel.OnboardingStateReducer.Event):JSONObject? = runCatching {
+        fun text(v:String):String {require(attentionSafe(v));return v}
+        fun strings(v:Collection<String>)=JSONArray(v.map(::text))
+        val answers=JSONArray(s.dynamicAnswers.map{(id,values)->JSONObject().put("id",text(id)).put("values",strings(values))})
+        val state=JSONObject().put("step",s.step).put("total",s.totalSteps).put("goals",strings(s.selectedGoals)).put("answers",answers).put("symptoms",strings(s.selectedTypicalSymptoms)).put("energy",text(s.selectedTypicalEnergy)).put("sleep",text(s.selectedTypicalSleep)).put("cycleOption",text(s.selectedCycleOption)).put("cycleDays",s.cycleLengthDays)
+            .put("notSure",s.isNotSureSelected).put("datePicker",s.showDatePickerDialog).put("endPicker",s.showEndDatePickerDialog).put("remind",s.remindFertileWindow ?: JSONObject.NULL).put("age",s.isAgeVerified).put("terms",s.isTermsAgreed).put("cloud",s.isCloudSyncAllowed).put("termsDialog",s.showTermsDialog).put("privacyDialog",s.showPrivacyDialog).put("deep",s.hasCompletedDeepBaseline).put("endConfirmed",s.periodEndDateConfirmed).put("dateDialog",s.periodDateDialogMessage?.let(::text) ?: JSONObject.NULL)
+        JSONObject().put("state",state).put("event",JSONObject().put("action",e.action.name).put("text",text(e.text)).put("other",text(e.other)).put("flag",e.flag).put("days",e.days))
+    }.getOrNull()
+    internal fun fullOnboardingState(s:com.cyclecare.app.ui.viewmodel.OnboardingUiState,e:com.cyclecare.app.ui.viewmodel.OnboardingStateReducer.Event):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        val p=onboardingStatePayload(s,e) ?: return null
+        decodeFullOnboardingState(call("onboarding_state_full_v1",p) ?: return null,s)
+    }.getOrNull()
+    internal fun decodeFullOnboardingState(reply:JSONObject,original:com.cyclecare.app.ui.viewmodel.OnboardingUiState):com.cyclecare.app.ui.viewmodel.OnboardingUiState? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","state"));require(ok.opt("version") is Int&&ok.opt("version")==1);val s=ok.opt("state") as? JSONObject ?: return null
+        require(s.keys().asSequence().toSet()==setOf("step","total","goals","answers","symptoms","energy","sleep","cycleOption","cycleDays","notSure","datePicker","endPicker","remind","age","terms","cloud","termsDialog","privacyDialog","deep","endConfirmed","dateDialog"))
+        fun text(v:Any?):String {val t=v as? String ?: throw IllegalArgumentException();require(attentionSafe(t));return t}
+        fun bool(k:String)=s.opt(k) as? Boolean ?: throw IllegalArgumentException(k)
+        fun int(k:String)=s.opt(k) as? Int ?: throw IllegalArgumentException(k)
+        fun strings(a:Any?):Set<String> {val list=a as? JSONArray ?: throw IllegalArgumentException();val values=(0 until list.length()).map{text(list.opt(it))};require(values.distinct().size==values.size);return values.toSet()}
+        val a=s.opt("answers") as? JSONArray ?: return null;val answers=linkedMapOf<String,Set<String>>()
+        for(i in 0 until a.length()){val v=a.opt(i) as? JSONObject ?: return null;require(v.keys().asSequence().toSet()==setOf("id","values"));val id=text(v.opt("id"));require(!answers.containsKey(id));answers[id]=strings(v.opt("values"))}
+        val remind=s.opt("remind");require(remind===JSONObject.NULL||remind is Boolean);val dialog=s.opt("dateDialog");val message=if(dialog===JSONObject.NULL)null else text(dialog)
+        require(int("total")==original.totalSteps)
+        original.copy(step=int("step"),selectedGoals=strings(s.opt("goals")),dynamicAnswers=answers,selectedTypicalSymptoms=strings(s.opt("symptoms")),selectedTypicalEnergy=text(s.opt("energy")),selectedTypicalSleep=text(s.opt("sleep")),selectedCycleOption=text(s.opt("cycleOption")),cycleLengthDays=int("cycleDays"),isNotSureSelected=bool("notSure"),showDatePickerDialog=bool("datePicker"),showEndDatePickerDialog=bool("endPicker"),remindFertileWindow=remind as? Boolean,isAgeVerified=bool("age"),isTermsAgreed=bool("terms"),isCloudSyncAllowed=bool("cloud"),showTermsDialog=bool("termsDialog"),showPrivacyDialog=bool("privacyDialog"),hasCompletedDeepBaseline=bool("deep"),periodEndDateConfirmed=bool("endConfirmed"),periodDateDialogMessage=message)
+    }.getOrNull()
+
+    internal data class PeriodEpisodeResult(val check:com.cyclecare.app.domain.health.PeriodDateConsistency.PeriodPairCheck,val storage:com.cyclecare.app.domain.health.PeriodEpisodeEntry.StorageDecision)
+    internal fun fullPeriodEpisode(start:java.time.LocalDate?,end:java.time.LocalDate?,today:java.time.LocalDate,ongoing:Boolean,typical:Int):PeriodEpisodeResult? = runCatching {
+        val p=JSONObject().put("start",start?.toEpochDay() ?: JSONObject.NULL).put("end",end?.toEpochDay() ?: JSONObject.NULL).put("today",today.toEpochDay()).put("ongoing",ongoing).put("typical",typical)
+        decodeFullPeriodEpisode(call("period_episode_full_v1",p) ?: return null,end,typical)
+    }.getOrNull()
+    internal fun decodeFullPeriodEpisode(reply:JSONObject,end:java.time.LocalDate?,currentTypical:Int):PeriodEpisodeResult? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","valid","error","warning","duration","typical","confirm","keepEnd"));require(ok.opt("version") is Int&&ok.opt("version")==1)
+        fun bool(k:String)=ok.opt(k) as? Boolean ?: throw IllegalArgumentException(k)
+        fun int(k:String)=ok.opt(k) as? Int ?: throw IllegalArgumentException(k)
+        fun optional(k:String):String? {val v=ok.opt(k);if(v===JSONObject.NULL)return null;return v as? String ?: throw IllegalArgumentException(k)}
+        val valid=bool("valid");val error=optional("error");val warning=optional("warning");val duration=int("duration");val typical=int("typical");val confirm=bool("confirm");val keep=bool("keepEnd")
+        require(keep==valid&&confirm==(warning!=null));require(if(valid)end!=null&&error==null&&typical==(if(confirm)currentTypical else duration) else error!=null&&warning==null&&duration==0&&typical==currentTypical&&!confirm)
+        PeriodEpisodeResult(com.cyclecare.app.domain.health.PeriodDateConsistency.PeriodPairCheck(valid,error,warning,duration),com.cyclecare.app.domain.health.PeriodEpisodeEntry.StorageDecision(if(keep)end else null,typical,confirm,warning,error))
+    }.getOrNull()
+
+    internal fun careMergePayload(existing:com.cyclecare.app.data.local.CycleDayLog,parsed:com.cyclecare.app.data.model.ParsedLogInterpretation):JSONObject? = runCatching {
+        fun text(s:String):String {require(attentionSafe(s));return s}
+        fun optional(s:String?):Any = if(s==null)JSONObject.NULL else text(s)
+        val tokens=(existing.symptomsCsv.split(",")+parsed.symptomsResult).map {it.trim()}.filter {it.isNotBlank()}
+        JSONObject().put("flow",text(existing.flowLevel)).put("energy",text(existing.energyLevel)).put("mood",text(existing.moodLevel)).put("pain",existing.painIntensity)
+            .put("newFlow",optional(parsed.flowLevelResult)).put("newEnergy",optional(parsed.energyResult)).put("newMood",optional(parsed.moodResult)).put("newPain",parsed.painIntensityResult).put("tokens",JSONArray(tokens.map(::text)))
+    }.getOrNull()
+    internal fun fullCareMerge(existing:com.cyclecare.app.data.local.CycleDayLog,parsed:com.cyclecare.app.data.model.ParsedLogInterpretation):com.cyclecare.app.data.local.CycleDayLog? = runCatching {
+        val input=careMergePayload(existing,parsed) ?: return null
+        decodeFullCareMerge(call("care_merge_full_v1",input) ?: return null,existing)
+    }.getOrNull()
+    internal fun decodeFullCareMerge(reply:JSONObject,existing:com.cyclecare.app.data.local.CycleDayLog):com.cyclecare.app.data.local.CycleDayLog? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","flow","energy","mood","pain","symptoms"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        fun text(key:String):String {val s=ok.opt(key) as? String ?: throw IllegalArgumentException(key);require(attentionSafe(s));return s}
+        val pain=ok.opt("pain");require(pain is Int)
+        existing.copy(flowLevel=text("flow"),energyLevel=text("energy"),moodLevel=text("mood"),symptomsCsv=text("symptoms"),painIntensity=pain as Int)
+    }.getOrNull()
+
+    internal fun fullCareContext(question:String,logs:List<com.cyclecare.app.data.local.CycleDayLog>,settings:com.cyclecare.app.data.local.CycleSettings,today:java.time.LocalDate):String? = runCatching {
+        val input=careContextPayload(question,logs,settings,today) ?: return null
+        decodeFullCareContext(call("care_context_full_v1",input) ?: return null)?.take(com.cyclecare.app.domain.ai.CareConversationPolicy.MAX_CONTEXT_LENGTH)
+    }.getOrNull()
+    internal fun careContextPayload(question:String,logs:List<com.cyclecare.app.data.local.CycleDayLog>,settings:com.cyclecare.app.data.local.CycleSettings,today:java.time.LocalDate):JSONObject? = runCatching {
+        fun safe(s:String):String {require(attentionSafe(s));return s}
+        fun selected(s:String):Any = if(s.isNotBlank())safe(s) else JSONObject.NULL
+        val entries=JSONArray()
+        for(l in logs)entries.put(JSONObject().put("date",safe(l.dateString)).put("flow",selected(l.flowLevel)).put("energy",selected(l.energyLevel)).put("mood",selected(l.moodLevel))
+            .put("symptoms",if(l.symptomsCsv.isNotBlank())safe(l.symptomsCsv.take(180)) else JSONObject.NULL)
+            .put("bits",java.lang.Integer.toHexString(l.sleepHours.toRawBits()).padStart(8,'0')).put("sleep",l.sleepHours.toString()).put("quality",selected(l.sleepQuality)).put("pain",l.painIntensity))
+        val input=JSONObject().put("question",safe(question.lowercase())).put("anchor",selected(settings.lastPeriodStartDate)).put("length",settings.averageCycleLength).put("today",today.toString()).put("logs",entries)
+        input
+    }.getOrNull()
+    internal fun decodeFullCareContext(reply:JSONObject):String? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","text"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val text=ok.opt("text") as? String ?: return null
+        require(attentionSafe(text) && text.startsWith("User-approved context. Self-reported observations, not diagnosis.\n") && text.endsWith("No free-text notes, account details, sexual activity or intimate-health records included."))
+        text
+    }.getOrNull()
+
+    internal fun accountStart(valid:Boolean,state:com.cyclecare.app.domain.sync.LocalDataState,remote:Boolean?):com.cyclecare.app.domain.sync.AccountStartDestination? = runCatching {
+        decodeAccountStart(call("account_start_v1",JSONObject().put("valid",valid).put("state",state.name).put("remote",remote ?: JSONObject.NULL)) ?: return null)
+    }.getOrNull()
+    internal fun decodeAccountStart(reply:JSONObject):com.cyclecare.app.domain.sync.AccountStartDestination? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","destination"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val route=ok.opt("destination") as? String ?: return null
+        com.cyclecare.app.domain.sync.AccountStartDestination.valueOf(route)
+    }.getOrNull()
+    internal data class ReconnectResult(val decision:com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision,val connected:Boolean,val last:Long,val owner:String?)
+    internal fun reconnectState(state:com.cyclecare.app.domain.sync.ReconnectWorkPolicy.State,trailing:Boolean,connected:Boolean,eligible:Boolean,owner:String?,now:Long):ReconnectResult? = runCatching {
+        require(listOfNotNull(state.owner,owner).all(::attentionSafe))
+        val pre=JSONObject().put("connected",state.wasConnected).put("last",state.lastRunAtMs).put("owner",state.owner ?: JSONObject.NULL)
+        val input=JSONObject().put("state",pre).put("trailing",trailing).put("connected",connected).put("eligible",eligible).put("owner",owner ?: JSONObject.NULL).put("now",now)
+        decodeReconnectState(call("reconnect_state_v1",input) ?: return null)
+    }.getOrNull()
+    internal fun decodeReconnectState(reply:JSONObject):ReconnectResult? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","kind","wait","state"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        fun long(o:JSONObject,key:String):Long {val value=o.opt(key);require(value is Int || value is Long);return (value as Number).toLong()}
+        val state=ok.opt("state") as? JSONObject ?: return null
+        require(state.keys().asSequence().toSet()==setOf("connected","last","owner"));val connected=state.opt("connected");require(connected is Boolean)
+        val rawOwner=state.opt("owner");val owner=if(rawOwner==JSONObject.NULL)null else {require(rawOwner is String && attentionSafe(rawOwner));rawOwner as String}
+        val wait=ok.opt("wait")
+        val decision=when(ok.opt("kind")) {
+            "RUN" -> {require(wait==JSONObject.NULL);com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Run}
+            "SKIP" -> {require(wait==JSONObject.NULL);com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Skip}
+            "THROTTLED" -> com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Throttled(long(ok,"wait"))
+            else -> return null
+        }
+        ReconnectResult(decision,connected as Boolean,long(state,"last"),owner)
+    }.getOrNull()
+
+    internal data class RecoveryDecision(val again:Boolean,val delayed:Boolean,val round:Int,val pending:Boolean,val inFlight:Boolean)
+    internal fun recoveryAfterPass(round:Int,absolute:Int,max:Int,budget:Int,pending:Boolean,recoverable:Boolean):RecoveryDecision? = runCatching {
+        val payload=JSONObject().put("round",round).put("absolute",absolute).put("max",max).put("budget",budget).put("pending",pending).put("recoverable",recoverable)
+        val d=decodeRecoveryDecision(call("recovery_after_pass_v1",payload) ?: return null,round) ?: return null
+        val expected=when {
+            absolute>=budget -> RecoveryDecision(false,false,round,false,false)
+            pending -> RecoveryDecision(true,false,0,false,true)
+            recoverable && round<max -> RecoveryDecision(true,true,round,false,true)
+            else -> RecoveryDecision(false,false,round,false,false)
+        }
+        d.takeIf {it==expected}
+    }.getOrNull()
+    internal fun decodeRecoveryDecision(reply:JSONObject,originalRound:Int):RecoveryDecision? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","action","round","pending","inFlight"))
+        require(ok.opt("version") is Int && ok.opt("version")==1)
+        val round=ok.opt("round");require(round is Int)
+        require(ok.opt("pending") is Boolean && ok.opt("pending")==false)
+        val active=ok.opt("inFlight");require(active is Boolean)
+        when(ok.opt("action")) {
+            "stop" -> {require(round==originalRound && active==false);RecoveryDecision(false,false,round as Int,false,false)}
+            "prompt" -> {require(round==0 && active==true);RecoveryDecision(true,false,0,false,true)}
+            "delayed" -> {require(round==originalRound && active==true);RecoveryDecision(true,true,round as Int,false,true)}
+            else -> null
+        }
+    }.getOrNull()
+
+    private fun attentionSafe(s:String):Boolean {var i=0;while(i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {if(i==s.length || !s[i++].isLowSurrogate())return false} else if(c.isLowSurrogate())return false};return true}
+    internal data class FullAttentionEvidence(val days:Int,val sleep:Double?)
+    internal fun prepareFullAttention(average:Int,day:Int,logs:List<com.cyclecare.app.data.local.CycleDayLog>):FullAttentionEvidence? = runCatching {
+        val entries=JSONArray()
+        for(log in logs) {
+            require(attentionSafe(log.dateString) && attentionSafe(log.sleepQuality))
+            val quality=log.sleepQuality.uppercase();require(attentionSafe(quality))
+            entries.put(JSONObject().put("date",log.dateString).put("bits",java.lang.Integer.toHexString(log.sleepHours.toRawBits()).padStart(8,'0')).put("quality",quality))
+        }
+        decodeFullAttentionEvidence(call("attention_full_prepare_v1",JSONObject().put("average",average).put("day",day).put("logs",entries)) ?: return null)?.also {require(it.days==(average-day).coerceAtLeast(0))}
+    }.getOrNull()
+    internal fun decodeFullAttentionEvidence(reply:JSONObject):FullAttentionEvidence? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","daysUntilPeriod","sleepBits"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val days=ok.opt("daysUntilPeriod");require(days is Int && days>=0)
+        val bits=ok.opt("sleepBits");val avg=if(bits==JSONObject.NULL)null else {
+            require(bits is String && bits.length==16 && bits.all {it in '0'..'9' || it in 'a'..'f'})
+            Double.fromBits(java.lang.Long.parseUnsignedLong(bits,16)).also {require(it.isFinite() && it>0)}
+        }
+        FullAttentionEvidence(days as Int,avg)
+    }.getOrNull()
+    internal fun renderFullAttention(choice:FullAttentionChoice):com.cyclecare.app.data.model.TodayAttentionItem? = runCatching {
+        val bound=choice as? BoundAttentionChoice ?: return null
+        val branch=bound.decision.branch.name.lowercase()
+        val title=bound.title;val message=bound.message;val until=bound.until;val day=bound.day
+        val sleep=if(bound.decision.branch==NonsafetyBranch.PERIOD_SLEEP_TAPER) "%.1f".format(bound.sleep ?: return null) else ""
+        require(listOf(branch,title,message,sleep).all(::attentionSafe))
+        val p=JSONObject().put("branch",branch).put("title",title).put("message",message).put("until",until).put("day",day).put("sleep",sleep)
+        decodeFullAttentionItem(call("attention_full_render_v1",p) ?: return null,branch)
+    }.getOrNull()
+    internal fun decodeFullAttentionItem(reply:JSONObject,branch:String):com.cyclecare.app.data.model.TodayAttentionItem? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"));val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","item"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val o=ok.opt("item") as? JSONObject ?: return null
+        require(o.keys().asSequence().toSet()==setOf("id","category","headline","message","whyThisAppeared","careSuggestion","isUrgent"))
+        require(o.opt("id")==branch && o.opt("isUrgent") is Boolean && o.opt("isUrgent")==false)
+        require(branch in setOf("baseline_shift_strong","baseline_shift_notable","period_sleep_taper","fertile_window_notice","phase_menstrual_start","wellbeing_checkin"))
+        fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+        com.cyclecare.app.data.model.TodayAttentionItem(text("id"),text("category"),text("headline"),text("message"),text("whyThisAppeared"),text("careSuggestion"),false)
+    }.getOrNull()
+
+    internal fun fullDeviations(logs:List<com.cyclecare.app.data.local.CycleDayLog>,today:java.time.LocalDate):List<com.cyclecare.app.domain.pattern.BaselineDeviation>? = runCatching {
+        fun safe(s:String):Boolean {var i=0;while(i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {if(i==s.length || !s[i++].isLowSurrogate())return false} else if(c.isLowSurrogate())return false};return true}
+        val entries=JSONArray()
+        for(log in logs) {
+            require(safe(log.dateString) && safe(log.symptomsCsv))
+            val symptoms=JSONArray()
+            for(key in log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank)) {
+                val label=key.replace('_',' ').replaceFirstChar {it.titlecase()};require(safe(label))
+                symptoms.put(JSONObject().put("key",key).put("label",label))
+            }
+            entries.put(JSONObject().put("date",log.dateString).put("pain",log.painIntensity).put("symptoms",symptoms))
+        }
+        decodeFullDeviations(call("deviation_full_v1",JSONObject().put("today",today.toString()).put("logs",entries)) ?: return null)
+    }.getOrNull()
+
+    internal fun decodeFullDeviations(reply:JSONObject):List<com.cyclecare.app.domain.pattern.BaselineDeviation>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","entries"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val entries=ok.opt("entries") as? JSONArray ?: return null
+        (0 until entries.length()).map {i ->
+            val o=entries.opt(i) as? JSONObject ?: return null
+            require(o.keys().asSequence().toSet()==setOf("factorKey","title","baselineBits","recentBits","deltaBits","severity","message"))
+            fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+            fun number(k:String):Double {val s=text(k);require(s.length==16 && s.all {it in '0'..'9' || it in 'a'..'f'});val v=Double.fromBits(java.lang.Long.parseUnsignedLong(s,16));require(v.isFinite() && v>=0.0);return v}
+            val severity=com.cyclecare.app.domain.pattern.DeviationSeverity.valueOf(text("severity"))
+            com.cyclecare.app.domain.pattern.BaselineDeviation(text("factorKey"),text("title"),number("baselineBits"),number("recentBits"),number("deltaBits"),severity,text("message"))
+        }
+    }.getOrNull()
+
+    internal fun fullReport(settings:com.cyclecare.app.data.local.CycleSettings,logs:List<com.cyclecare.app.data.local.CycleDayLog>,profile:com.cyclecare.app.data.local.OnboardingProfile?,today:String,label:(String)->String):String? = runCatching {
+        fun safe(s:String):Boolean {var i=0;while(i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {if(i==s.length || !s[i++].isLowSurrogate())return false} else if(c.isLowSurrogate())return false};return true}
+        require(safe(today) && safe(settings.lastPeriodStartDate))
+        fun tag(key:String):JSONObject {val display=label(key);require(safe(key) && safe(display));return JSONObject().put("key",key).put("label",display)}
+        val entries=JSONArray()
+        for(log in logs) {
+            require(safe(log.dateString) && safe(log.symptomsCsv) && safe(log.flowLevel) && safe(log.notes))
+            val symptoms=JSONArray();log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).forEach {symptoms.put(tag(it))}
+            entries.put(JSONObject().put("date",log.dateString).put("symptoms",symptoms).put("flow",log.flowLevel).put("flow_upper",tag(log.flowLevel.uppercase())).put("pain",log.painIntensity).put("note",log.notes.trim()))
+        }
+        val payload=JSONObject().put("today",today).put("average",settings.averageCycleLength).put("duration",settings.periodDuration)
+            .put("anchor",settings.lastPeriodStartDate).put("anchor_blank",settings.lastPeriodStartDate.isBlank())
+            .put("approximate",profile?.approximatePeriodChoice.orEmpty().startsWith("APPROXIMATE:",ignoreCase=true)).put("logs",entries)
+        decodeFullReport(call("report_full_v1",payload) ?: return null)
+    }.getOrNull()
+
+    internal fun decodeFullReport(reply:JSONObject):String? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","text"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val text=ok.opt("text") as? String ?: return null
+        require(text.isNotEmpty());text
+    }.getOrNull()
+
+    internal fun fullExplain(prediction:com.cyclecare.app.data.model.DayPrediction?):com.cyclecare.app.data.model.ExplainMyBodyResult? {
+        val p=prediction?.let {JSONObject().put("phase",it.phase.name).put("day",it.dayOfCycle)} ?: JSONObject.NULL
+        return decodeFullExplain(call("explain_full_v1",JSONObject().put("prediction",p)) ?: return null)
+    }
+
+    internal fun decodeFullExplain(reply:JSONObject):com.cyclecare.app.data.model.ExplainMyBodyResult? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","result"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val o=ok.opt("result") as? JSONObject ?: return null
+        require(o.keys().asSequence().toSet()==setOf("summary","whatMightBeHappening","whatSupportsThat","whatElseCouldExplain","whatYouCanDo","whatToWatch","whenToGetChecked","safetyLevel"))
+        fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+        require(o.opt("safetyLevel")=="LOW")
+        com.cyclecare.app.data.model.ExplainMyBodyResult(text("summary"),text("whatMightBeHappening"),text("whatSupportsThat"),text("whatElseCouldExplain"),text("whatYouCanDo"),text("whatToWatch"),text("whenToGetChecked"),com.cyclecare.app.data.model.SafetyLevel.LOW)
+    }.getOrNull()
+
+    internal fun fullTimeline(logs:List<com.cyclecare.app.data.local.CycleDayLog>,label:(String)->String):List<com.cyclecare.app.data.model.MonthlyTimelineEntry>? = runCatching {
+        fun safe(s:String):Boolean {var i=0;while(i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {if(i==s.length || !s[i++].isLowSurrogate())return false} else if(c.isLowSurrogate())return false};return true}
+        val format=java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")
+        fun tag(key:String):JSONObject {val display=label(key);require(safe(key) && safe(display));return JSONObject().put("key",key).put("label",display)}
+        val entries=JSONArray()
+        for(log in logs) {
+            require(safe(log.dateString) && safe(log.symptomsCsv) && safe(log.energyLevel) && safe(log.flowLevel))
+            val parsed=runCatching {java.time.LocalDate.parse(log.dateString)}.getOrNull()
+            val title=parsed?.let {java.time.YearMonth.from(it).atDay(1).format(format)} ?: ""
+            require(safe(title))
+            val symptoms=JSONArray();log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).forEach {symptoms.put(tag(it))}
+            entries.put(JSONObject().put("date",log.dateString).put("month_title",title).put("energy",tag(log.energyLevel.uppercase()))
+                .put("bleeding",log.flowLevel.uppercase() in setOf("LIGHT","MODERATE","HEAVY","UNUSUALLY_HEAVY")).put("symptoms",symptoms))
+        }
+        decodeFullTimeline(call("timeline_full_v1",JSONObject().put("logs",entries)) ?: return null,logs.size)
+    }.getOrNull()
+
+    internal fun decodeFullTimeline(reply:JSONObject,max:Int):List<com.cyclecare.app.data.model.MonthlyTimelineEntry>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","entries"));require(ok.opt("version") is Int && ok.opt("version")==1)
+        val entries=ok.opt("entries") as? JSONArray ?: return null;require(entries.length()<=max)
+        (0 until entries.length()).map {i ->
+            val o=entries.opt(i) as? JSONObject ?: return null
+            require(o.keys().asSequence().toSet()==setOf("monthTitle","cycleLengthDays","periodBleedingDays","dominantEnergy","dominantSymptom","patternNoticed"))
+            fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+            require(o.opt("cycleLengthDays") is Int && o.opt("cycleLengthDays")==0)
+            val bleed=o.opt("periodBleedingDays");require(bleed is Int && bleed in 0..max)
+            require(o.opt("patternNoticed")==JSONObject.NULL)
+            com.cyclecare.app.data.model.MonthlyTimelineEntry(text("monthTitle"),0,bleed as Int,text("dominantEnergy"),text("dominantSymptom"),null)
+        }
+    }.getOrNull()
+
+    internal fun fullPatterns(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        logs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        today: java.time.LocalDate
+    ): List<com.cyclecare.app.data.model.HealthPattern>? = runCatching {
+        fun safe(s:String):Boolean {
+            var i=0
+            while(i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {
+                if(i==s.length || !s[i++].isLowSurrogate())return false
+            } else if(c.isLowSurrogate())return false}
+            return true
+        }
+        if(!safe(settings.lastPeriodStartDate))return null
+        val entries=JSONArray()
+        for(log in logs) {
+            if(!safe(log.dateString) || !safe(log.symptomsCsv))return null
+            val symptoms=JSONArray()
+            for(key in log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank)) {
+                val label=key.replace('_',' ').replaceFirstChar {it.titlecase()}
+                val lower=key.lowercase()
+                if(!safe(label) || !safe(lower))return null
+                symptoms.put(JSONObject().put("key",key).put("label",label).put("lower",lower))
+            }
+            entries.put(JSONObject().put("date",log.dateString).put("symptoms",symptoms))
+        }
+        val payload=JSONObject().put("today",today.toString()).put("anchor",settings.lastPeriodStartDate)
+            .put("average",settings.averageCycleLength).put("duration",settings.periodDuration).put("luteal",settings.lutealPhaseDays)
+            .put("logs",entries).put("weights",JSONArray())
+        val plan=call("pattern_full_plan_v1",payload) ?: return null
+        val offsets=decodePatternOffsets(plan,logs.size) ?: return null
+        val weights=JSONArray()
+        for(day in offsets) {
+            val weight=kotlin.math.exp(-0.03 * day.toDouble())
+            weights.put(JSONObject().put("day",day).put("bits",java.lang.Long.toHexString(weight.toRawBits()).padStart(16,'0')))
+        }
+        payload.put("weights",weights)
+        decodeFullPatterns(call("pattern_full_v1",payload) ?: return null)
+    }.getOrNull()
+
+    internal fun decodePatternOffsets(reply:JSONObject,max:Int):List<Long>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","days"))
+        require(ok.opt("version") is Int && ok.opt("version")==1)
+        val items=ok.opt("days") as? JSONArray ?: return null
+        require(items.length()<=max)
+        val days=(0 until items.length()).map {i ->
+            val v=items.opt(i);require(v is Int || v is Long);val d=(v as Number).toLong()
+            require(d in 0..730484999633L);d
+        }
+        require(days.zipWithNext().all {it.first<it.second})
+        days
+    }.getOrNull()
+
+    internal fun decodeFullPatterns(reply:JSONObject):List<com.cyclecare.app.data.model.HealthPattern>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","patterns"))
+        require(ok.opt("version") is Int && ok.opt("version")==1)
+        val items=ok.opt("patterns") as? JSONArray ?: return null
+        require(items.length()<=6)
+        (0 until items.length()).map {i ->
+            val o=items.opt(i) as? JSONObject ?: return null
+            require(o.keys().asSequence().toSet()==setOf("id","title","supportingObservations","confidence","cyclePhase","explanation","actionableCare"))
+            fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+            require(o.opt("confidence") in setOf("High","Moderate","Emerging"))
+            require(o.opt("cyclePhase") in setOf("Menstruation","Follicular Phase","Fertile & Ovulation","Luteal Phase"))
+            com.cyclecare.app.data.model.HealthPattern(text("id"),text("title"),text("supportingObservations"),text("confidence"),text("cyclePhase"),text("explanation"),text("actionableCare"))
+        }
+    }.getOrNull()
+
     internal fun learnedObservations(
         settings: com.cyclecare.app.data.local.CycleSettings,
         logs: List<com.cyclecare.app.data.local.CycleDayLog>,

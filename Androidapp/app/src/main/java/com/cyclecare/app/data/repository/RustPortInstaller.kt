@@ -1,6 +1,5 @@
 package com.cyclecare.app.data.repository
 
-import com.cyclecare.app.data.local.CycleCareDatabase
 import com.cyclecare.app.data.local.rust.RustBoundRoomHost
 import com.cyclecare.app.data.local.rust.RustRepositoryPort
 import com.cyclecare.app.security.AuthPreferences
@@ -12,15 +11,18 @@ import com.cyclecare.app.security.AuthPreferences
  * 1. The caller warms the native library OFF the main thread (RustTrackNative
  *    documents the cost) and constructs the host; this class refuses the main
  *    thread and never suspends.
- * 2. RESOLUTION BINDING: [database] and [expectedOwner] are supplied at
- *    construction - the database the caller resolved FOR that owner
- *    (production: CycleCareDatabase.getDatabase namespaced per owner). The
- *    binding is immutable for this installer's life: if the current identity
- *    no longer matches [expectedOwner], install refuses with StaleIdentity
- *    and NEVER rebinds this database to another identity. Database binding is
- *    owner-scoped by design; session/consent/accountMode/localOnly moves
- *    invalidate tokens (republished fresh), never the database. An owner move
- *    requires re-resolution and a fresh installer.
+ * 2. RESOLUTION BINDING (CAPABILITY): [resolution] is the private-constructor
+ *    RustPortInstallResolver.Resolution carrying the exact preferences
+ *    instance, the FULL captured operation snapshot and the preopened
+ *    database AS ONE binding; no caller can supply an arbitrary
+ *    (database, owner) pair. The binding is revalidated TWICE: before publish
+ *    and inside the admitted commit (mutatePublicationIdentityIfCurrent runs
+ *    the action only while the full snapshot still matches, with
+ *    Resolution.stillCurrent as the second fence), so same-owner
+ *    session/consent/accountMode/localOnly moves between resolution and
+ *    commit abort as StaleIdentity. The binding is immutable for this
+ *    installer's life: it NEVER rebinds its database to another identity; an
+ *    owner move requires re-resolution and a fresh installer.
  * 3. ADMISSION REQUIRED: the preferences must carry an attached publication
  *    admission before any publish, because identity exclusion during
  *    seal+install comes from that admission (every identity-mutating setter
@@ -47,10 +49,9 @@ import com.cyclecare.app.security.AuthPreferences
 internal class RustPortInstaller(
     private val repository: CycleRepository,
     private val host: RustBoundRoomHost,
-    private val preferences: AuthPreferences,
-    private val database: CycleCareDatabase,
-    private val expectedOwner: String?,
+    private val resolution: RustPortInstallResolver.Resolution,
 ) {
+    private val preferences: AuthPreferences get() = resolution.preferences
 
     sealed class Outcome {
         data class Installed(val epoch: Long) : Outcome()
@@ -79,11 +80,14 @@ internal class RustPortInstaller(
         // Fail closed: without the admission there is NO identity exclusion
         // (mutatePublicationIdentityIfCurrent runs unserialized), so publish
         // nothing.
-        if (preferences.publicationAdmission == null)
-            return Outcome.Failed(IllegalStateException("rust_install_without_admission"))
-        val captured = preferences.rustOperationSnapshot()
-        if (captured.operation.owner != expectedOwner) return Outcome.StaleIdentity
-        val token = when (val published = host.publish(minted, database, captured)) {
+        val admission = preferences.publicationAdmission
+            ?: return Outcome.Failed(IllegalStateException("rust_install_without_admission"))
+        val captured = resolution.captured
+        // Pre-publish binding check; the FULL snapshot is revalidated again at
+        // the admitted commit below, so same-owner session/localOnly/
+        // accountMode moves in between cannot slip a stale binding through.
+        if (!resolution.stillCurrent()) return Outcome.StaleIdentity
+        val token = when (val published = host.publish(minted, resolution.database, captured)) {
             is RustBoundRoomHost.Result.Value -> published.value
             RustBoundRoomHost.Result.Stale -> return Outcome.StaleIdentity
             else -> return Outcome.Failed(IllegalStateException("rust_publish_rejected:$published"))
@@ -92,10 +96,21 @@ internal class RustPortInstaller(
         repeat(maxAttempts) {
             var installed = false
             var failure: Throwable? = null
-            val committed = preferences.mutatePublicationIdentityIfCurrent(captured) {
+            val committed = preferences.mutatePublicationIdentityIfCurrent(captured, resolution::stillCurrent) {
                 if (repository.trySealLegacyDispatch()) {
                     try {
-                        repository.installRustPort(RustRepositoryPort(host, token))
+                        // PUBLICATION BOUNDARY: installRustPort assigns raw
+                        // MutableStateFlows (activeDatabase/rustPortRevision),
+                        // and a synchronous/Unconfined collector resumes INLINE
+                        // on this thread mid-assignment. callbacks demotes this
+                        // stack from transition privilege to publication kind,
+                        // so a reentrant raw identity setter from such a
+                        // collector QUEUES behind this job (mutate) or is
+                        // rejected (mutateResult) instead of mutating identity
+                        // inline during the routing swap.
+                        admission.callbacks {
+                            repository.installRustPort(RustRepositoryPort(host, token))
+                        }
                         installed = true
                     } catch (t: Throwable) {
                         // Captured, not folded: the policy decision happens

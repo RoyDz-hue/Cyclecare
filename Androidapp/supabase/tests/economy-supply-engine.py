@@ -1,4 +1,4 @@
-import pgserver, sys, psycopg2
+import os, pgserver, sys, psycopg2
 srv = pgserver.get_server('/tmp/econ/pgdata')
 db = psycopg2.connect(srv.get_uri())
 db.autocommit = True
@@ -6,7 +6,7 @@ cur = db.cursor()
 def run(path):
     cur.execute(open(path).read())
 run('/tmp/econ/stubs.sql')
-cur.execute(open('/home/sandbox/cyclecare/Androidapp/supabase/migrations/20261031180000_economy_supply_engine.sql').read())
+cur.execute(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','migrations','20261031180000_economy_supply_engine.sql')).read())
 print("migration applied OK")
 fails = []
 def check(name, cond, extra=""):

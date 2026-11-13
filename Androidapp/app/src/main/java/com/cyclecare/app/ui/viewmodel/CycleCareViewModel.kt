@@ -468,7 +468,8 @@ class CycleCareViewModel(
             port.verifyPreferences(authPreferences)
             repository.replaceRustPort(port)
             afterPortRepositoryInstallForTests?.invoke()
-            syncService.attachRustPort(port)
+            // The sync service reads the authoritative port from the bound
+            // repository; no per-instance attach exists anymore.
             // Force fresh same-owner/token reload as well as owner switches.
             activeUiSession=Long.MIN_VALUE
             com.cyclecare.app.security.PublicationOrigin.withOrigin({true}){resetIdentityUiIfNeeded()}
@@ -3255,28 +3256,8 @@ class CycleCareViewModel(
                     }
                 }
 
-                val profile = OnboardingProfile(
-                    id = 1,
-                    isCompleted = true,
-                    completedAtTimestamp = System.currentTimeMillis(),
-                    isAgeVerified = true,
-                    isTermsAgreed = true,
-                    accountMode = accountMode,
-                    selectedGoalsCsv = submittedGoals.joinToString(","),
-                    lastPeriodDateString = if (periodStartChoice == "UNKNOWN") "" else lastPeriodDate.toString(),
-                    // Raw episode record: the end date exactly as entered and
-                    // confirmed, never clamped into the typical-duration range.
-                    lastPeriodEndDateString = lastPeriodEndDate?.toString() ?: "",
-                    approximatePeriodChoice = periodStartChoice,
-                    cycleLengthOption = cycleLengthOption.ifBlank { "UNKNOWN" },
-                    cycleLengthDays = cycleLength,
-                    periodDurationDays = periodDuration,
-                    remindFertileWindow = remindFertile,
-                    typicalSymptomsCsv = submittedSymptoms.joinToString(","),
-                    typicalEnergy = typicalEnergy,
-                    typicalSleepQuality = typicalSleep,
-                    hasCompletedDeepBaseline = hasCompletedDeepBaseline
-                )
+                val profile = com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.profile(
+                    com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.Input(accountMode,System.currentTimeMillis(),submittedGoals,lastPeriodDate,lastPeriodEndDate,periodStartChoice,cycleLengthOption,cycleLength,periodDuration,remindFertile,submittedSymptoms,typicalEnergy,typicalSleep,hasCompletedDeepBaseline))
                 // The write uses the intent-time token (post-choice consent generation), never a later lookup.
                 val completion = try {
                     repository.completeOnboardingWithProfile(profile = profile, pin = pin, enableLock = enableLock, token = writeToken)

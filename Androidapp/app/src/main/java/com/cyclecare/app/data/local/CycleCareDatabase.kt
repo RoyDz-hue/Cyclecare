@@ -28,28 +28,37 @@ abstract class CycleCareDatabase : RoomDatabase() {
         private var INSTANCE: CycleCareDatabase? = null
         private val OWNER_INSTANCES = ConcurrentHashMap<String, CycleCareDatabase>()
 
-        fun createMigration4To5(context: Context): Migration = object : Migration(4, 5) {
+        /** Reserved prefix marking instrumentation-owned owner identities. */
+        internal const val TEST_OWNER_IDENTITY_PREFIX = "instrumented-test-"
+
+        /** Names of instances created through the instrumentation seam. */
+        private val TEST_INSTANCE_NAMES = mutableSetOf<String>()
+
+        fun createMigration4To5(context: Context, authPreferences: (Context) -> AuthPreferences = { AuthPreferences(it) }): Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 1. Check for any legacy plaintext PIN in cycle_settings and migrate to AuthPreferences
-                try {
-                    val cursor = db.query("SELECT appLockPin FROM cycle_settings WHERE id = 1")
-                    if (cursor.moveToFirst()) {
-                        val pinIdx = cursor.getColumnIndex("appLockPin")
-                        if (pinIdx != -1) {
-                            val rawPin = cursor.getString(pinIdx)
-                            if (!rawPin.isNullOrBlank()) {
-                                val authPrefs = AuthPreferences(context)
-                                if (authPrefs.pin.isNullOrBlank()) {
-                                    authPrefs.pin = rawPin
-                                    authPrefs.isPinEnabled = true
-                                }
-                            }
-                        }
+                // 1. Legacy plaintext PIN handoff. Column existence is probed
+                // structurally (PRAGMA), not inferred from a swallowed
+                // exception: any failure while a handoff is required aborts
+                // the migration and Room rolls the whole upgrade back, so the
+                // plaintext copy is never destroyed unverified.
+                var pinHandoffRequired = false
+                var pinHandoffVerified = false
+                val hasPinColumn = db.query("PRAGMA table_info(cycle_settings)").use { c ->
+                    generateSequence { if (c.moveToNext()) c.getString(1) else null }.toList()
+                }.contains("appLockPin")
+                if (hasPinColumn) {
+                    val rawPin = db.query("SELECT appLockPin FROM cycle_settings WHERE id = 1").use { c ->
+                        if (c.moveToFirst()) c.getString(0) else null
                     }
-                    cursor.close()
-                } catch (_: Throwable) {
-                    // Column might not exist or table is empty
+                    if (!rawPin.isNullOrBlank()) {
+                        pinHandoffRequired = true
+                        // One durable path for every store state: empty,
+                        // matching (enabled or not), memory-ahead-of-disk.
+                        // Conflicting stores fail closed inside.
+                        pinHandoffVerified = authPreferences(context).ensureMigratedPinDurable(rawPin)
+                    }
                 }
+                check(!pinHandoffRequired || pinHandoffVerified) { "pin_handoff_unverified" }
 
                 // 2. Safely recreate cycle_settings table without plaintext appLockPin
                 db.execSQL(
@@ -109,6 +118,9 @@ abstract class CycleCareDatabase : RoomDatabase() {
                     INSTANCE ?: buildDatabase(context, name).also { INSTANCE = it }
                 }
             }
+            require(!ownerIdentity.startsWith(TEST_OWNER_IDENTITY_PREFIX)) {
+                "Reserved instrumentation owner prefix reached the production path."
+            }
             return OWNER_INSTANCES[name] ?: synchronized(this) {
                 OWNER_INSTANCES[name] ?: buildDatabase(context, name).also { OWNER_INSTANCES[name] = it }
             }
@@ -116,6 +128,53 @@ abstract class CycleCareDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context, authPreferences: AuthPreferences): CycleCareDatabase =
             getDatabase(context, authPreferences.userId)
+
+        /**
+         * Instrumentation-only seam: test-owned owner namespace AND test-owned key
+         * material (injected [keyManager]). Confinement is bidirectional: this seam
+         * REQUIRES the reserved test prefix (arbitrary real owner identities are
+         * refused) and the production path refuses the prefix, so neither path can
+         * hand back the other's handle. A cached instance not created here (a
+         * foreign/production handle) is never returned.
+         */
+        internal fun getDatabase(context: Context, ownerIdentity: String, keyManager: DatabaseKeyManager): CycleCareDatabase {
+            require(ownerIdentity.startsWith(TEST_OWNER_IDENTITY_PREFIX)) {
+                "Test injection requires the reserved test-owned owner prefix."
+            }
+            val name = namespaceFor(ownerIdentity)
+            return synchronized(this) {
+                val cached = OWNER_INSTANCES[name]
+                if (cached != null) {
+                    check(name in TEST_INSTANCE_NAMES) {
+                        "Refusing cached instance not created by the test seam."
+                    }
+                    cached
+                } else {
+                    buildDatabase(context, name, keyManager).also {
+                        OWNER_INSTANCES[name] = it
+                        TEST_INSTANCE_NAMES += name
+                    }
+                }
+            }
+        }
+
+        /** Instrumentation-only: drop a cached TEST instance so a close+reopen oracle is possible. */
+        internal fun evictCachedInstanceForTest(databaseName: String) {
+            synchronized(this) {
+                check(OWNER_INSTANCES.remove(databaseName) != null || databaseName in TEST_INSTANCE_NAMES) {
+                    "Only test-seam instances may be evicted."
+                }
+                TEST_INSTANCE_NAMES -= databaseName
+            }
+        }
+
+        /** Test-only owned cleanup: close + evict a CACHED owner instance if one
+         * exists; NEVER creates. Absent names are a no-op returning false, so
+         * cleanup cannot mint a database or key material just to delete it. */
+        internal fun closeAndEvictCachedOwnerInstance(ownerIdentity: String): Boolean {
+            val name = namespaceFor(ownerIdentity)
+            return synchronized(this) { OWNER_INSTANCES.remove(name)?.also { it.close() } != null }
+        }
 
         /** Raw auth IDs never become filenames; this is stable across app restarts. */
         fun namespaceFor(ownerIdentity: String): String {
@@ -156,10 +215,10 @@ abstract class CycleCareDatabase : RoomDatabase() {
             }
         }
 
-        private fun buildDatabase(context: Context, databaseName: String): CycleCareDatabase {
+        private fun buildDatabase(context: Context, databaseName: String, keyManager: DatabaseKeyManager? = null): CycleCareDatabase {
                 val appContext = context.applicationContext
                 System.loadLibrary("sqlcipher")
-                val passphrase = DatabaseKeyManager(appContext).getOrCreatePassphrase()
+                val passphrase = (keyManager ?: DatabaseKeyManager(appContext)).getOrCreatePassphrase()
                 DatabaseEncryption.ensureEncrypted(appContext, databaseName, passphrase)
                 val encryptedFactory = SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8))
                 val instance = Room.databaseBuilder(

@@ -243,7 +243,12 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     val hasPendingHealthSyncRevoke: Boolean
         get() = isSecureStorageAvailable && prefs.getBoolean("health_sync_pending_revoke_$effectiveUserId", false)
     fun markPendingHealthSyncRevoke() = mutatePublicationIdentity {
-        if (isSecureStorageAvailable) prefs.edit().putBoolean("health_sync_pending_revoke_$effectiveUserId", true).commit()
+        // Same prefs monitor the sync-identity snapshots and dispatch guards hold
+        // through admitted SQL (admission-before-prefs order, established): a revoke
+        // can no longer interleave between a guard read and the guarded SQL and
+        // surface as a mistyped storage-looking failure. Commit-result semantics
+        // unchanged (unchecked, no durability claim).
+        if (isSecureStorageAvailable) synchronized(prefs) { prefs.edit().putBoolean("health_sync_pending_revoke_$effectiveUserId", true).commit() }
     }
     fun pauseHealthSyncFor(owner: String, session: Long): Long? = mutatePublicationResult(null) {
       val result=synchronized(prefs) {
@@ -390,8 +395,8 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
      * Runs [block] only if the account and session are still exactly [owner] and
      * [session], holding that same lock, so an identity change (userId, clearSession) or a
      * cloud-sync consent / account mode change through the synchronized setters cannot
-     * land in the middle of [block]. Provider consents and markPendingHealthSyncRevoke
-     * do not take this lock and are NOT covered. Returns null (block not run) when
+     * land in the middle of [block]. markPendingHealthSyncRevoke takes this lock;
+     * provider consents do not and are NOT covered. Returns null (block not run) when
      * stale. Atomic with preference changes only; not atomic with any database write.
      */
     fun <T> runIfIdentityUnchanged(owner: String?, session: Long, block: () -> T): T? = synchronized(prefs) {
@@ -552,6 +557,58 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
                 prefs.edit { putString(KEY_PIN, nativeEncodePinPbkdf2(value) ?: encodePinPbkdf2(value)) }
             }
         }
+
+    /** Migration handoff only: whatever the store currently holds, end in ONE
+     * synchronous, disk-acknowledged commit of the verified encoding plus the
+     * enabled flag, then verify by readback. Ordinary setters use asynchronous
+     * apply(), and a failed commit(false) can leave memory ahead of disk; a
+     * migration that is about to DROP the plaintext SQL copy must never depend
+     * on unacknowledged persistence of either key.
+     *
+     * ENABLEMENT POLICY (grounded in the original migration + PIN writers):
+     * - EMPTY store: the original 4->5 migration set isPinEnabled=true when it
+     *   copied a plaintext appLockPin into an empty store, so this branch
+     *   commits enabled=true.
+     * - EXISTING store: the original migration did NOTHING to a non-empty
+     *   store, and the app's PIN writers keep PIN and enablement separate
+     *   (CycleCareViewModel.setPinProtectionEnabled flips isPinEnabled without
+     *   touching the stored PIN; cycle_settings carries its own
+     *   isAppLockEnabled). A stored PIN alone therefore does NOT establish
+     *   lock-on, so this branch preserves the store's current enablement
+     *   EXACTLY: the flag is committed back at its current value (never
+     *   flipped), which also closes the memory-ahead-of-disk window for the
+     *   flag itself.
+     * An existing store holding a DIFFERENT PIN fails closed: deliberately
+     * STRICTER than the original migration (which silently skipped any
+     * non-empty store). That is an intentional safety behavior, not parity:
+     * the plaintext SQL copy is about to be dropped, so an unverifiable
+     * existing store must abort the upgrade rather than be trusted.
+     * Returns false
+     * when secure storage is unavailable, the store conflicts, the commit
+     * fails, or the readback does not verify - the caller then fails the
+     * migration closed. */
+    internal fun ensureMigratedPinDurable(rawPin: String): Boolean {
+        if (!isSecureStorageAvailable) return false
+        val existing = pin
+        val chosen: String
+        val enabled: Boolean
+        if (existing.isNullOrBlank()) {
+            chosen = nativeEncodePinPbkdf2(rawPin) ?: encodePinPbkdf2(rawPin)
+            enabled = true
+        } else {
+            if (!verifyPin(rawPin)) return false
+            // Re-read after verification: a legacy-format store was just
+            // re-encoded in memory by verifyPin, and the durable commit must
+            // carry the CURRENT encoding, never the legacy value.
+            chosen = pin ?: return false
+            // Preserve, never flip: the existing store's enablement is its own
+            // policy state (see the kdoc); commit it back unchanged so the
+            // flag is as durable as the encoding.
+            enabled = isPinEnabled
+        }
+        val committed = prefs.edit().putString(KEY_PIN, chosen).putBoolean(KEY_PIN_ENABLED, enabled).commit()
+        return committed && verifyPin(rawPin) && isPinEnabled == enabled
+    }
 
     fun verifyPin(candidate: String): Boolean {
         val stored = readSecureString(KEY_PIN) ?: return false

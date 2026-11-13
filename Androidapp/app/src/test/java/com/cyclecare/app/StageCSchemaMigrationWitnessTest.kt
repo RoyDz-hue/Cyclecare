@@ -3,7 +3,8 @@ package com.cyclecare.app
 import android.content.Context
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
-import androidx.sqlite.db.framework.FrameworkSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.cyclecare.app.data.local.CycleCareDatabase
 import com.cyclecare.app.data.local.CycleDayLog
@@ -28,12 +29,16 @@ import org.robolectric.annotation.Config
  * (RUST_FLOAT_METADATA_DRAFT in addMigrations + the production onCreate
  * callback running the same applyRustMetadataDraft). Tier: tier-agnostic
  * host DDL/upgrade evidence over plain temporary Room files (Robolectric;
- * no SQLCipher/Keystore). The v9 fixtures are GENUINE v9 files: created by
- * Room itself, then stripped of exactly the draft object set with
- * user_version rewound to 9. That is byte-schema-identical to a historical
- * v9 file because the 9->10 draft adds ONLY non-entity rust_* objects; the
- * identical-entities premise is ASSERTED at runtime (entity DDL equality
- * plus an unchanged Room identity hash), never assumed.
+ * no SQLCipher/Keystore). The v9 fixtures are GENUINE, INDEPENDENTLY
+ * ANCHORED v9 files: created by StageDV9AnchorDatabase - a test-only Room
+ * database over the same 7 entity classes at version=9 - never derived
+ * from the current v10 generator (no strip/relabel circularity). The
+ * anchor's Room identity hash is asserted EQUAL to the production v10
+ * hash, which is the evidence that current entity sources still generate
+ * the v9 entity schema (Room's hash fingerprints entities, not version).
+ * ARCHITECTURE NOTE: Room validates only the 7 domain entities; the 6
+ * rust_* auxiliary tables + 12 triggers are raw metadata guarded by
+ * applyRustMetadataDraft's strict shape verification, not the Room hash.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -41,7 +46,8 @@ class StageCSchemaMigrationWitnessTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val names = mutableListOf<String>()
     private val handles = mutableListOf<CycleCareDatabase>()
-    private val rawHandles = mutableListOf<FrameworkSQLiteDatabase>()
+    private val rawHandles = mutableListOf<SupportSQLiteDatabase>()
+    private val rawHelpers = mutableListOf<SupportSQLiteOpenHelper>()
 
     /** Mirrors the production builder: registered 9->10 migration AND the
      * onCreate callback running the same draft for fresh files. */
@@ -64,17 +70,59 @@ class StageCSchemaMigrationWitnessTest {
     @After fun cleanup() {
         handles.forEach { if (it.isOpen) it.close() }
         rawHandles.forEach { if (it.isOpen) it.close() }
+        rawHelpers.forEach { it.close() }
         names.forEach { context.deleteDatabase(it) }
     }
 
     private fun sql(db: CycleCareDatabase): SupportSQLiteDatabase = db.openHelper.writableDatabase
 
-    /** Raw framework connection over a FILE, bypassing Room entirely: the
-     * only way to hold a v9 file open now that Room requires a 9->10 path. */
-    private fun raw(name: String): FrameworkSQLiteDatabase =
-        FrameworkSQLiteDatabase(android.database.sqlite.SQLiteDatabase.openDatabase(
-            context.getDatabasePath(name).path, null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
-        )).also { rawHandles += it }
+    /** Raw connection over a FILE, bypassing Room entirely: the only way to
+     * hold a v9 file open now that Room requires a 9->10 path. Opens via the
+     * PUBLIC FrameworkSQLiteOpenHelperFactory, but with the file's OWN
+     * recorded version: SQLiteOpenHelper unconditionally setVersion()s the
+     * callback version after any callback, so a fixed-version no-op callback
+     * would silently rewrite user_version and invalidate every migration/
+     * version oracle below. The version is measured read-only first,
+     * restricted to the only states this suite creates (9 pre-migration,
+     * 10 post-migration), and any create/upgrade/downgrade callback THROWS:
+     * raw() may observe, never create or migrate. */
+    private fun raw(name: String): SupportSQLiteDatabase {
+        val path = context.getDatabasePath(name)
+        check(path.isFile) { "raw() refuses to create missing file: $name" }
+        val recordedVersion = android.database.sqlite.SQLiteDatabase.openDatabase(
+            path.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+        ).use { probe ->
+            probe.rawQuery("PRAGMA user_version", null).use { c ->
+                check(c.moveToFirst()) { "user_version probe returned no row for $name" }
+                c.getLong(0)
+            }
+        }
+        check(recordedVersion == 9L || recordedVersion == 10L) {
+            "raw() expects an existing v9/v10 suite file for $name, found user_version=$recordedVersion"
+        }
+        val callback = object : SupportSQLiteOpenHelper.Callback(recordedVersion.toInt()) {
+            override fun onConfigure(db: SupportSQLiteDatabase) {}
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                throw AssertionError("raw() must never create: $name")
+            }
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                throw AssertionError("raw() must never upgrade: $name $oldVersion->$newVersion")
+            }
+            override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                throw AssertionError("raw() must never downgrade: $name $oldVersion->$newVersion")
+            }
+        }
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(path.path)
+                .callback(callback)
+                .build())
+        rawHelpers += helper
+        val db = helper.writableDatabase.also { rawHandles += it }
+        assertEquals("raw() open must preserve the recorded version for $name",
+            recordedVersion, scalar(db, "PRAGMA user_version"))
+        return db
+    }
 
     private fun scalar(db: SupportSQLiteDatabase, query: String): Long =
         db.query(query).use { c -> c.moveToNext(); c.getLong(0) }
@@ -94,63 +142,60 @@ class StageCSchemaMigrationWitnessTest {
     private fun identityHash(db: SupportSQLiteDatabase): String =
         db.query("SELECT identity_hash FROM room_master_table").use { c -> c.moveToNext(); c.getString(0) }
 
-    /** name -> stored sql for every non-rust schema object. */
+    /** name -> stored sql for every non-rust schema object, filtered by
+     * OWNING table as well as object name: sqlite_autoindex_rust_* rows are
+     * keyed by their index name (not rust_*), so they must follow their
+     * rust_* owning table out of the comparison exactly as the rust_*
+     * tables do. Every non-rust-domain object and index is preserved. */
     private fun entityShape(db: SupportSQLiteDatabase): Map<String, String> =
-        db.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'rust_%'").use { c ->
+        db.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'rust_%' AND tbl_name NOT LIKE 'rust_%'").use { c ->
             generateSequence { if (c.moveToNext()) c.getString(0) to c.getString(1) else null }.toMap()
         }
 
-    private val draftTables = listOf(
-        "rust_domain_epoch", "rust_enrollments", "rust_enrollment_rows",
-        "rust_enrollment_receipts", "rust_float_bits", "rust_commit_receipts",
-    )
-    private val draftTriggers = listOf(
-        "rust_epoch_cycle_day_logs_insert", "rust_epoch_cycle_day_logs_update", "rust_epoch_cycle_day_logs_delete",
-        "rust_epoch_cycle_settings_insert", "rust_epoch_cycle_settings_update", "rust_epoch_cycle_settings_delete",
-        "rust_epoch_onboarding_profiles_insert", "rust_epoch_onboarding_profiles_update", "rust_epoch_onboarding_profiles_delete",
-        "rust_float_update", "rust_float_delete", "rust_float_insert",
-    )
-
-    /** Creates a GENUINE v9 file: a real Room-created file with the draft
-     * objects stripped and user_version rewound to 9. Asserts the premise
-     * that makes it genuine: entity DDL identical to a fresh v10 file and
-     * the SAME Room identity hash (Room fingerprints entities, not the
-     * version). Returns the identity hash the upgrade must preserve. */
+    /** Creates a GENUINE v9 file via the independent anchor class
+     * (StageDV9AnchorDatabase: same entities, version=9) and asserts the
+     * non-circular premise: the anchor's Room-generated identity hash and
+     * entity DDL are EXACTLY what the production v10 generator produces
+     * (minus the raw rust_* auxiliary objects the hash never covered).
+     * Returns the anchor identity hash the upgrade must preserve. */
     private fun createGenuineV9File(name: String, populate: Boolean = false): String = runBlocking {
         names += name
         context.getDatabasePath(name).parentFile?.mkdirs()
-        val built = mirrorBuilder(name).build()
-        val s = sql(built)
-        val hash = identityHash(s)
-        val freshShape = entityShape(s)
-        if (populate) populateV9(built)
-        built.close()
+        val anchor = Room.databaseBuilder(context, StageDV9AnchorDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        val a = anchor.openHelper.writableDatabase
+        val anchorHash = identityHash(a)
+        val anchorShape = entityShape(a)
+        if (populate) populateV9(anchor.cycleDao(), anchor.onboardingDao(), anchor.healthSyncDao())
+        anchor.close()
+        // Independent comparison: a fresh production v10 create.
+        val probe = open()
+        val p = sql(probe)
+        assertEquals("anchor v9 identity hash == production v10 hash (entity schema unchanged)", identityHash(p), anchorHash)
+        assertEquals("anchor v9 entity DDL == production entity DDL (raw rust_* excluded on both sides)", entityShape(p), anchorShape)
         val r = raw(name)
-        for (t in draftTriggers) r.execSQL("DROP TRIGGER IF EXISTS $t")
-        for (t in draftTables) r.execSQL("DROP TABLE IF EXISTS $t")
-        r.execSQL("PRAGMA user_version=9")
-        // Premise asserted, not assumed: after removing exactly the draft
-        // object set, the remaining schema is byte-identical to what the
-        // same Room schema bundle created WITH the draft objects present.
-        assertEquals("entity DDL identical between v9 fixture and v10 create", freshShape, entityShape(r))
-        assertEquals("identity hash survives the strip untouched", hash, identityHash(r))
         assertEquals(9L, scalar(r, "PRAGMA user_version"))
-        assertTrue(tableNames(r).none { it.startsWith("rust_") })
+        assertTrue("no rust_* objects exist on a genuine v9 file", tableNames(r).none { it.startsWith("rust_") })
         assertTrue(triggerNames(r).none { it.startsWith("rust_") })
         r.close(); rawHandles.remove(r)
-        hash
+        anchorHash
     }
 
-    /** Marker rows in every v9 entity table, written through the real DAOs. */
-    private fun populateV9(db: CycleCareDatabase) = runBlocking {
-        db.cycleDao().insertOrUpdateLog(CycleDayLog(dateString = "2026-10-01", flowLevel = "LIGHT", bbtCelsius = 36.5f, sleepHours = 7.5f, notes = "marker-note", painIntensity = 2))
-        db.cycleDao().insertOrUpdateLog(CycleDayLog(dateString = "2026-10-02", flowLevel = "MEDIUM"))
-        db.cycleDao().saveSettings(CycleSettings(id = 1, isOnboardingCompleted = true, lastPeriodStartDate = "2026-09-28", averageCycleLength = 31, periodDuration = 6))
-        db.onboardingDao().insertOrUpdateProfile(OnboardingProfile(id = 1, isCompleted = true, accountMode = "PRIVATE", lastPeriodDateString = "2026-09-28", lastPeriodEndDateString = "2026-10-02", cycleLengthDays = 31))
-        db.healthSyncDao().putRevision(HealthSyncRevision(ownerId = "owner-a", recordId = "rec-1", revision = 3L, payloadHash = "hash-1", tombstone = false, updatedAt = 111L, serverRevision = 2L))
-        db.healthSyncDao().enqueue(HealthSyncOutboxEntry(ownerId = "owner-a", operationId = "op-1", recordId = "rec-1", kind = "UPSERT", baseRevision = 2L, revision = 3L, payloadJson = "{}", payloadHash = "hash-1", consentGeneration = 1L, attempts = 1, nextAttemptAt = 0L, lastError = null, serverReceipt = "rcpt-1", serverRevision = 7L))
-        db.healthSyncDao().putConflict(HealthSyncConflictEntity(ownerId = "owner-a", recordId = "rec-2", operationId = "op-2", localRevision = 4L, localPayloadJson = "{}", localKind = "UPSERT", remoteRevision = 5L, remotePayloadJson = "{}", remoteTombstone = false, createdAt = 222L))
-        db.healthSyncDao().putCursor(HealthSyncCursor(ownerId = "owner-a", changeSeq = 42L))
+    /** Marker rows in every v9 entity table, written through the real DAOs
+     * (shared interfaces; the anchor database exercises the same mappings). */
+    private fun populateV9(
+        cycleDao: com.cyclecare.app.data.local.CycleDayLogDao,
+        onboardingDao: com.cyclecare.app.data.local.OnboardingProfileDao,
+        healthSyncDao: com.cyclecare.app.data.local.HealthSyncLocalDao,
+    ) = runBlocking {
+        cycleDao.insertOrUpdateLog(CycleDayLog(dateString = "2026-10-01", flowLevel = "LIGHT", bbtCelsius = 36.5f, sleepHours = 7.5f, notes = "marker-note", painIntensity = 2))
+        cycleDao.insertOrUpdateLog(CycleDayLog(dateString = "2026-10-02", flowLevel = "MEDIUM"))
+        cycleDao.saveSettings(CycleSettings(id = 1, isOnboardingCompleted = true, lastPeriodStartDate = "2026-09-28", averageCycleLength = 31, periodDuration = 6))
+        onboardingDao.insertOrUpdateProfile(OnboardingProfile(id = 1, isCompleted = true, accountMode = "PRIVATE", lastPeriodDateString = "2026-09-28", lastPeriodEndDateString = "2026-10-02", cycleLengthDays = 31))
+        healthSyncDao.putRevision(HealthSyncRevision(ownerId = "owner-a", recordId = "rec-1", revision = 3L, payloadHash = "hash-1", tombstone = false, updatedAt = 111L, serverRevision = 2L))
+        healthSyncDao.enqueue(HealthSyncOutboxEntry(ownerId = "owner-a", operationId = "op-1", recordId = "rec-1", kind = "UPSERT", baseRevision = 2L, revision = 3L, payloadJson = "{}", payloadHash = "hash-1", consentGeneration = 1L, attempts = 1, nextAttemptAt = 0L, lastError = null, serverReceipt = "rcpt-1", serverRevision = 7L))
+        healthSyncDao.putConflict(HealthSyncConflictEntity(ownerId = "owner-a", recordId = "rec-2", operationId = "op-2", localRevision = 4L, localPayloadJson = "{}", localKind = "UPSERT", remoteRevision = 5L, remotePayloadJson = "{}", remoteTombstone = false, createdAt = 222L))
+        healthSyncDao.putCursor(HealthSyncCursor(ownerId = "owner-a", changeSeq = 42L))
     }
 
     private fun dumpTable(db: SupportSQLiteDatabase, table: String): List<String> =
@@ -259,7 +304,12 @@ class StageCSchemaMigrationWitnessTest {
         // Complete what the registered path would do so Room can reopen the
         // file for real-DAO write witnesses below.
         r.execSQL("PRAGMA user_version=10")
+        assertEquals("explicit PRAGMA bump recorded", 10L, scalar(r, "PRAGMA user_version"))
         r.close(); rawHandles.remove(r)
+        raw(name).also { reopen ->
+            assertEquals("v10 survives close/reopen", 10L, scalar(reopen, "PRAGMA user_version"))
+            reopen.close(); rawHandles.remove(reopen)
+        }
         val db = Room.databaseBuilder(context, CycleCareDatabase::class.java, name)
             .allowMainThreadQueries().build().also { handles += it }
         val s = sql(db)

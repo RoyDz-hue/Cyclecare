@@ -39,7 +39,6 @@ class StageDTransitionWitnessTest {
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "stage-d-transition-it").apply { isDaemon = true } }
 
     @After fun cleanup() {
-        RustPortInstallResolver.beforeActualOpenForTests = null
         openDbs.forEach { if (it.isOpen) it.close() }
         openDbs.clear()
         pool.shutdownNow()
@@ -49,13 +48,16 @@ class StageDTransitionWitnessTest {
         AuthPreferences(context, context.getSharedPreferences("stage-d-transition-${UUID.randomUUID()}", Context.MODE_PRIVATE), true)
             .apply { userId = owner; attachPublicationAdmission(IdentityPublicationAdmission.forAndroid()) }
 
-    private fun newDb(): CycleCareDatabase =
+    private fun newDb(onOpen: (() -> Unit)? = null): CycleCareDatabase =
         Room.inMemoryDatabaseBuilder(context, CycleCareDatabase::class.java)
             .allowMainThreadQueries()
             .addMigrations(com.cyclecare.app.data.local.rust.RUST_FLOAT_METADATA_DRAFT)
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                     com.cyclecare.app.data.local.rust.applyRustMetadataDraft(db)
+                }
+                override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    onOpen?.invoke()
                 }
             })
             .build().also(openDbs::add)
@@ -64,14 +66,13 @@ class StageDTransitionWitnessTest {
      * in for CycleCareDatabase.getDatabase owner namespacing. */
     private class FixtureNamespaces {
         val byOwner = mutableMapOf<String?, CycleCareDatabase>()
-        fun dbFor(owner: String?, newDb: () -> CycleCareDatabase): CycleCareDatabase =
-            byOwner.getOrPut(owner) { newDb() }
     }
 
     private fun transitioner(
         context: Context, prefs: AuthPreferences, repo: CycleRepository, ns: FixtureNamespaces,
+        onOpen: (() -> Unit)? = null,
     ) = RustPortTransitioner(context, prefs, repo) { c, p ->
-        RustPortInstallResolver(c, p) { _, owner -> ns.dbFor(owner) { newDb() } }
+        RustPortInstallResolver(c, p) { _, owner -> ns.byOwner.getOrPut(owner) { newDb(onOpen) } }
     }
 
     private fun <T> offMain(block: () -> T): T =
@@ -131,12 +132,11 @@ class StageDTransitionWitnessTest {
         ns.byOwner["owner-a"] = dbA
         install(Triple(repo, p, dbA))
         offMain { p.userId = "owner-b" }
-        // Move identity AGAIN inside the resolver's opener barrier: the
-        // post-open re-verification must catch it and refuse the binding.
-        RustPortInstallResolver.beforeActualOpenForTests = { p.userId = "owner-c" }
+        // Move identity AGAIN INSIDE the actual open (Room onOpen callback on
+        // the owner-b fixture): a pre-open check cannot observe this move, so
+        // refusal REQUIRES the post-open re-verification.
         assertEquals(RustPortTransitioner.Outcome.StaleIdentity,
-            offMain { transitioner(context, p, repo, ns).ensureCurrentRouting() })
-        RustPortInstallResolver.beforeActualOpenForTests = null
+            offMain { transitioner(context, p, repo, ns, onOpen = { p.userId = "owner-c" }).ensureCurrentRouting() })
         val stale = repo.currentRustPortForOnboarding()!!
         assertEquals("nothing rebound: the stale owner-a port stays selected (safe refusal)",
             "owner-a", stale.token.preference.operation.owner)

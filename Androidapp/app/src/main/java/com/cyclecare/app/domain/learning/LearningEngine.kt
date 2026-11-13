@@ -162,6 +162,13 @@ object LearningEngine {
         profile: OnboardingProfile? = null
     ): String {
         val today = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullReport(settings,logs,profile,today,::displayLabel)
+            ?: generateClinicianReportTextKotlin(settings,logs,profile,today)
+    }
+
+    /** Original complete report body, clock formatted once for native/fallback. */
+    internal fun generateClinicianReportTextKotlin(settings: CycleSettings, logs: List<CycleDayLog>, profile: OnboardingProfile? = null,
+        today: String = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy"))): String {
         val validLogs = logsWithDates(logs)
         val symptoms = symptomCounts(validLogs)
         val questions = generateDoctorSummary(settings, validLogs.map { it.log })
@@ -223,6 +230,12 @@ object LearningEngine {
         settings: CycleSettings,
         logs: List<CycleDayLog>
     ): List<MonthlyTimelineEntry> {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullTimeline(logs,::displayLabel)
+            ?: generateMonthlyTimelineKotlin(settings,logs)
+    }
+
+    /** Original monthly timeline retained as whole-call fallback. */
+    internal fun generateMonthlyTimelineKotlin(settings: CycleSettings, logs: List<CycleDayLog>): List<MonthlyTimelineEntry> {
         val formatter = DateTimeFormatter.ofPattern("MMMM yyyy")
         return logsWithDates(logs)
             .groupBy { YearMonth.from(it.date) }
@@ -251,6 +264,12 @@ object LearningEngine {
         prediction: DayPrediction?,
         query: String
     ): ExplainMyBodyResult {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullExplain(prediction)
+            ?: synthesizeExplainMyBodyKotlin(settings,logs,prediction,query)
+    }
+
+    /** Original education output retained as complete native fallback. */
+    internal fun synthesizeExplainMyBodyKotlin(settings: CycleSettings, logs: List<CycleDayLog>, prediction: DayPrediction?, query: String): ExplainMyBodyResult {
         if (prediction == null) {
             return ExplainMyBodyResult(
                 summary = "No cycle estimate is available yet.",

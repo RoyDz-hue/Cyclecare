@@ -76,7 +76,7 @@ NOT_PORTED	ui/components/FloatingDispatchBanner.kt
 NOT_PORTED	ui/components/GiftReceivedDialog.kt	
 NOT_PORTED	ui/components/InteractiveArtifact3D.kt	
 NOT_PORTED	ui/components/NotificationCenterScreen.kt	
-PARTIAL	ui/screens/AppLockScreen.kt	Dioxus render proof v3 (pre-compaction)
+PARTIAL	ui/screens/AppLockScreen.kt	Dioxus render proof v3
 NOT_PORTED	ui/screens/AtelierScreen.kt	
 NOT_PORTED	ui/screens/CalendarScreen.kt	
 NOT_PORTED	ui/screens/CareScreen.kt	

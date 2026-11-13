@@ -46,9 +46,9 @@ object RustReconnectPolicy {
         val pre = Pre(state.wasConnected, state.lastRunAtMs, state.owner)
         val oracleState = ReconnectWorkPolicy.State(pre.wasConnected, pre.lastRunAtMs, pre.owner)
         val kotlinDecision = if (contract == "decide_reconnect_trailing")
-            ReconnectWorkPolicy.decideTrailing(oracleState, isConnected, isEligible, currentOwner, nowMs)
+            ReconnectWorkPolicy.decideTrailingKotlin(oracleState, isConnected, isEligible, currentOwner, nowMs)
         else
-            ReconnectWorkPolicy.decide(oracleState, isConnected, isEligible, currentOwner, nowMs)
+            ReconnectWorkPolicy.decideKotlin(oracleState, isConnected, isEligible, currentOwner, nowMs)
         val kotlinPost = Pre(oracleState.wasConnected, oracleState.lastRunAtMs, oracleState.owner)
         val native = nativeStep(contract, pre, isConnected, isEligible, currentOwner, nowMs)
         // Defense-parity shadow, not new policy: the native decision is used only when the

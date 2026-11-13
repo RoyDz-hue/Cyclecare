@@ -10,7 +10,7 @@ pub struct LearningLog {pub date_string:String,pub symptoms:Vec<Symptom>}
 pub struct LearningProfile {pub is_completed:bool,pub symptoms:Vec<Symptom>}
 #[derive(Clone)]
 struct DatedLog<'a> {date:String,epoch:i64,log:&'a LearningLog}
-fn date_text(parsed:ParsedLocalDate)->Option<(i64,String)> {
+pub(crate) fn date_text(parsed:ParsedLocalDate)->Option<(i64,String)> {
     let epoch=parsed.epoch_day()?;
     let (year,month,day)=match parsed {
         ParsedLocalDate::Representable(d)=>(d.year() as i64,d.month(),d.day()),

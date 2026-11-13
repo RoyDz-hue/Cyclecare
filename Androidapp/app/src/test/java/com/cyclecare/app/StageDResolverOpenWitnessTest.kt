@@ -33,7 +33,6 @@ class StageDResolverOpenWitnessTest {
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "stage-d-resolver-it").apply { isDaemon = true } }
 
     @After fun cleanup() {
-        RustPortInstallResolver.beforeActualOpenForTests = null
         openDbs.forEach { if (it.isOpen) it.close() }
         openDbs.clear()
         pool.shutdownNow()
@@ -63,26 +62,43 @@ class StageDResolverOpenWitnessTest {
         assertFalse("fixture starts lazy/unopened", db.isOpen)
         val result = offMain { RustPortInstallResolver(context, p) { _, _ -> db }.resolve() }
         val resolved = result as? RustPortInstallResolver.Result.Resolved
-            ?: fail("expected Resolved, got $result")
+            ?: throw AssertionError("expected Resolved, got $result")
         assertTrue("resolver forced the ACTUAL open before binding", db.isOpen)
         assertEquals("owner-a", resolved.resolution.owner)
         assertTrue("captured snapshot still current", resolved.resolution.stillCurrent())
     }
 
-    @Test fun identityMoveInsideTheActualOpenWindowYieldsStale() {
+    @Test fun identityMoveInsideTheActualOpenYieldsStale() {
         val p = prefs("owner-a")
-        val db = newLazyDb()
-        // Deterministic barrier: the identity moves after the lazy instance
-        // is obtained, exactly within the window the slow open covers.
-        RustPortInstallResolver.beforeActualOpenForTests = { p.userId = "owner-b" }
+        // The mutation runs in Room's onOpen callback - INSIDE the actual
+        // writableDatabase open the resolver forces, on the resolver thread.
+        // A re-verification placed BEFORE the open cannot observe this move
+        // (it has not happened yet at any pre-open point), so passing
+        // REQUIRES the check to follow the open: this witness falsifies an
+        // early check, unlike a before-open barrier.
+        val db = Room.inMemoryDatabaseBuilder(context, CycleCareDatabase::class.java)
+            .allowMainThreadQueries()
+            .addMigrations(com.cyclecare.app.data.local.rust.RUST_FLOAT_METADATA_DRAFT)
+            .addCallback(object : androidx.room.RoomDatabase.Callback() {
+                override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    com.cyclecare.app.data.local.rust.applyRustMetadataDraft(db)
+                }
+                override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    p.userId = "owner-b" // off-main open thread: the admission joins synchronously
+                }
+            })
+            .build().also(openDbs::add)
+        assertFalse("fixture starts lazy/unopened", db.isOpen)
         val result = offMain { RustPortInstallResolver(context, p) { _, _ -> db }.resolve() }
-        assertEquals("post-open re-verification rejects the moved identity",
+        assertEquals("post-open re-verification rejects the identity moved DURING the open",
             RustPortInstallResolver.Result.Stale, result)
         assertTrue("the open really happened (the check follows it, not precedes it)", db.isOpen)
-        // Recovery: a fresh resolve binds the NEW identity.
+        assertEquals("owner-b", p.userId)
+        // Recovery: a fresh resolve binds the NEW identity (the fixture is
+        // already open; onOpen does not refire).
         val second = offMain { RustPortInstallResolver(context, p) { _, _ -> db }.resolve() }
         val resolved = second as? RustPortInstallResolver.Result.Resolved
-            ?: fail("expected Resolved after re-resolution, got $second")
+            ?: throw AssertionError("expected Resolved after re-resolution, got $second")
         assertEquals("owner-b", resolved.resolution.owner)
     }
 

@@ -22,7 +22,6 @@ import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -40,8 +39,12 @@ import org.junit.runner.RunWith
  * repository flow the ViewModel consumes.
  *
  * Isolation: a process-wide fail-closed ProxySelector denies ALL network
- * (token-bearing or anonymous) and counts attempts; the class drains it to
- * ZERO. Grounded route audit: the home + day-log overlay path does not open
+ * (token-bearing or anonymous) and counts attempts; its installation is
+ * ASSERTED before every Activity launch, so every client the Activity
+ * constructs resolves the wall (init-timing, not prose); the class drains
+ * it to ZERO. The native warm-up on this route is MainActivity's own
+ * off-main warmUp call (MainActivity.kt) - the REAL startup ordering, not
+ * a test-side shortcut. Grounded route audit: the home + day-log overlay path does not open
  * VaultEconomyScreen (the only RemoteCoinPackages/RemoteLocalPricing refresh
  * site) nor GuidedChatsScreen (the other anonymous community-pulse site);
  * the daily-sync work scheduled by MainActivity is cancelled and CONFIRMED
@@ -79,14 +82,21 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
         } catch (t: Throwable) {
             failures += "scenario close: $t"
         }
+        // STOP-state discipline: if the holder's recovery does not reach a
+        // terminal state within the bound, cleanup STOPS here - no identity
+        // resets, no database deletion, NO selector restore. The holder
+        // RETAINS ownership (resetForTestsAndAwait drops it only after a
+        // terminal join) and the deny wall stays installed, so the next
+        // install fails closed. This check PROPAGATES out of the @After.
+        check(runBlocking { CycleCareComposition.resetForTestsAndAwait() }) {
+            "holder recovery did not quiesce within the bound; STOPPING cleanup (wall left installed, ownership retained)"
+        }
         try {
             val prefs = CycleCareComposition.current(context).authPreferences
             for (owner in ownedOwners) {
                 runCatching { ProductionTestControls.resetOwnedIdentity(prefs, owner) }
                     .onFailure { failures += "reset $owner: $it" }
             }
-            runCatching { CycleCareComposition.resetForTests() }
-                .onFailure { failures += "composition reset: $it" }
             for (owner in ownedOwners) {
                 runCatching { ProductionTestControls.deleteOwnedDatabase(context, owner) }
                     .onFailure { failures += "delete $owner: $it" }
@@ -100,13 +110,12 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
         }
         runCatching { ProductionTestControls.cancelAndConfirmNoUnfinishedSyncWork(context) }
             .onFailure { failures += "work barrier: $it" }
-        val attempts = runCatching { ProductionTestControls.uninstallNetworkDenyAndDrainAttempts() }
-            .getOrElse { failures += "network deny uninstall: $it"; -1 }
+        val leftovers = runCatching { ProductionTestControls.uninstallNetworkDenyAndDrainAttempts() }
+            .getOrElse { failures += "network deny uninstall: $it"; listOf("<uninstall failed>") }
         assertTrue("cleanup failed: $failures", failures.isEmpty())
-        assertEquals(
-            "no network attempt may escape the startup/screens route (vault/guided screens never opened)",
-            0,
-            attempts
+        assertTrue(
+            "no network attempt may escape the startup/screens route (vault/guided screens never opened), unexplained: $leftovers",
+            leftovers.isEmpty()
         )
     }
 
@@ -118,6 +127,8 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
         prefs.userId = owner
         prefs.isLocalOnlyMode = true
 
+        ProductionTestControls.assertNetworkDenyInstalled()
+        com.cyclecare.app.security.StartupRouteDiagnostics.start()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         // MainActivity schedules the daily sync on launch: confirm it cannot
         // run before continuing.
@@ -202,8 +213,8 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
         runBlocking {
             repository.saveDayLogBound(CycleDayLog(dateString = today, flowLevel = "MODERATE"))
         }
-        ProductionTestControls.awaitUntil(15_000, "port-routed write visible through repository.allLogs") {
-            val logs = runBlocking { repository.allLogs.first() }
+        ProductionTestControls.awaitUntilSuspending(15_000, "port-routed write visible through repository.allLogs") {
+            val logs = repository.allLogs.first()
             if (logs.any { it.dateString == today && it.flowLevel == "MODERATE" }) Unit else null
         }
         assertTrue(
@@ -236,6 +247,7 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
         prefs.userId = ownerA
         prefs.isLocalOnlyMode = true
 
+        ProductionTestControls.assertNetworkDenyInstalled()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         ProductionTestControls.cancelAndConfirmNoUnfinishedSyncWork(context)
         val repository = CycleCareComposition.current(context).repository
@@ -260,8 +272,8 @@ class ProductionIntegratedStartupScreensInstrumentedTest {
             "the owner move must advance the rust port revision",
             repository.currentRustPortRevision() > revisionBeforeMove
         )
-        ProductionTestControls.awaitUntil(15_000, "owner A records not visible after the move") {
-            val logs = runBlocking { repository.allLogs.first() }
+        ProductionTestControls.awaitUntilSuspending(15_000, "owner A records not visible after the move") {
+            val logs = repository.allLogs.first()
             if (logs.none { it.flowLevel == "HEAVY" }) Unit else null
         }
         ProductionTestControls.saveScreenshot(context, "stage-g-after-owner-move")
