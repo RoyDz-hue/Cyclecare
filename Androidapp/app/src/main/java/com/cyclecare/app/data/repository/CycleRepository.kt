@@ -506,6 +506,37 @@ class CycleRepository(database: CycleCareDatabase) {
             rustPortRevision.value=next
         }finally{replacingPort.set(false)}
     }
+    /** FIRST-INSTALL publication: installs the first Rust port into a
+     * legacy-only repository. Distinct from [replaceRustPort], whose
+     * replacement-only invariant (rust_port_not_installed) is preserved
+     * untouched. Same publication discipline: single replacement slot,
+     * current-token check, no routing leases during the swap, observer
+     * flows assigned outside the monitor. A stale token is rejected with
+     * rust_port_not_current BEFORE any state moves; an already-installed
+     * repository rejects with rust_port_already_installed (the admitted
+     * ViewModel path owns replacement). */
+    internal fun installRustPort(port:com.cyclecare.app.data.local.rust.RustRepositoryPort){
+        check(replacingPort.compareAndSet(false,true)){"rust_replacement_in_progress"}
+        try{
+            check(port.isCurrent()){"rust_port_not_current"}
+            val next=synchronized(routingLock){
+                check(routingLeases==0){"rust_replacement_during_commit"}
+                check(rustPort==null){"rust_port_already_installed"}
+                val revision=Math.addExact(rustPortRevision.value,1L)
+                rustPort=port
+                current=StoredContext(port.token.database,port.token.preference.operation.owner,port.token.epoch)
+                lifecycleIdentity=port.token.preference.operation.owner
+                storedPeriodDateRange=null
+                revision
+            }
+            // No repository monitor during synchronous callbacks. The
+            // replacement slot remains owned through both observer
+            // publications, exactly as replaceRustPort.
+            activeDatabase.value=port.token.database
+            rustPortRevision.value=next
+        }finally{replacingPort.set(false)}
+    }
+
     /** Read-only view of the currently installed port for shared writers
      * (SupabaseSyncService reads its ONLY port selection through here).
      * Locked read: pairs the port with the routing state installed under the
@@ -1196,6 +1227,18 @@ class CycleRepository(database: CycleCareDatabase) {
     }
 
     companion object {
+        // Process-wide handle for shared writers constructed OUTSIDE the
+        // MainActivity composition (SupabaseSyncWorker builds a fresh
+        // SupabaseSyncService each run and binds through this). Set once
+        // per composition (MainActivity), never cleared: a stale binding is
+        // safe by design - bound repositories run portless legacy effects
+        // under the SAME admission/seal lock, and owner identity is
+        // re-verified per effect (capture identity + preferences + database
+        // checks), so a stale owner cannot apply another owner's data.
+        // Cold start / separate process: null, the original UNBOUND legacy
+        // behavior. Design endorsed by reviewer 2026-11-13; concurrency and
+        // lifecycle analysis in the commit message.
+        val processRepository = java.util.concurrent.atomic.AtomicReference<CycleRepository?>(null)
         fun validatePeriodDates(
             period_start_date: LocalDate?,
             period_end_date: LocalDate?

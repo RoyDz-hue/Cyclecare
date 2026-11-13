@@ -1,5 +1,7 @@
 package com.cyclecare.app.data.repository
 
+import com.cyclecare.app.data.local.CycleCareDatabase
+
 import com.cyclecare.app.data.local.rust.RustBoundRoomHost
 import com.cyclecare.app.data.local.rust.RustRepositoryPort
 import com.cyclecare.app.security.AuthPreferences
@@ -46,12 +48,35 @@ import com.cyclecare.app.security.AuthPreferences
  * any other Throwable becomes Failed. Failure before a successful install
  * leaves the repository legacy-only; no routing change is visible to
  * readers. */
-internal class RustPortInstaller(
+internal class RustPortInstaller private constructor(
     private val repository: CycleRepository,
     private val host: RustBoundRoomHost,
-    private val resolution: RustPortInstallResolver.Resolution,
+    private val preferences: AuthPreferences,
+    private val captured: AuthPreferences.RustOperationSnapshot,
+    private val resolvedDatabase: CycleCareDatabase?,
 ) {
-    private val preferences: AuthPreferences get() = resolution.preferences
+    /** Stage-C witness shape (the pre-loss contract the witness suite
+     * calls): the installer binds the CURRENT identity snapshot at
+     * construction; install(db) binds that snapshot to the passed
+     * owner-bound database. An identity move after construction turns the
+     * next pass StaleIdentity. */
+    constructor(repository: CycleRepository, host: RustBoundRoomHost, preferences: AuthPreferences) :
+        this(repository, host, preferences, preferences.rustOperationSnapshot(), null)
+
+    /** Production shape: the resolver's verified binding (snapshot captured
+     * at resolve time, preopened database carried as one capability). */
+    constructor(repository: CycleRepository, host: RustBoundRoomHost, resolution: RustPortInstallResolver.Resolution) :
+        this(repository, host, resolution.preferences, resolution.captured, resolution.database)
+
+    /** FULL snapshot equality (operation + localOnly + accountMode); the
+     * same check Resolution.stillCurrent performs. */
+    private fun stillCurrent(): Boolean =
+        preferences.runIfRustOperationUnchanged(captured) { true } == true
+
+    /** Set once a pass installs successfully: a spent installer never
+     * rebinds (witness: second invocation reports StaleIdentity without
+     * disturbing routing). */
+    private var completedInstall = false
 
     sealed class Outcome {
         data class Installed(val epoch: Long) : Outcome()
@@ -72,7 +97,14 @@ internal class RustPortInstaller(
      * admission-excluded sealed install tries. Never sleeps; spacing retries
      * is the caller's job. Safe to call again after Busy or Failed while the
      * binding still holds: the next publish advances from the owned token. */
-    fun install(maxAttempts: Int = 3): Outcome {
+    /** install() without an explicit database: the resolver-bound shape
+     * (its preopened database rides the binding). */
+    fun install(maxAttempts: Int = 3): Outcome =
+        install(resolvedDatabase ?: error("rust_install_without_database"), maxAttempts)
+
+    fun install(db: CycleCareDatabase, maxAttempts: Int = 3): Outcome {
+        // A spent installer reports StaleIdentity and disturbs nothing.
+        if (completedInstall) return Outcome.StaleIdentity
         // Preference and owner-gate reads happen on this path; it must never
         // run on the main thread. Native warmup and host construction also
         // stay off main (RustTrackNative documents the load cost).
@@ -82,12 +114,11 @@ internal class RustPortInstaller(
         // nothing.
         val admission = preferences.publicationAdmission
             ?: return Outcome.Failed(IllegalStateException("rust_install_without_admission"))
-        val captured = resolution.captured
         // Pre-publish binding check; the FULL snapshot is revalidated again at
         // the admitted commit below, so same-owner session/localOnly/
         // accountMode moves in between cannot slip a stale binding through.
-        if (!resolution.stillCurrent()) return Outcome.StaleIdentity
-        val token = when (val published = host.publish(minted, resolution.database, captured)) {
+        if (!stillCurrent()) return Outcome.StaleIdentity
+        val token = when (val published = host.publish(minted, db, captured)) {
             is RustBoundRoomHost.Result.Value -> published.value
             RustBoundRoomHost.Result.Stale -> return Outcome.StaleIdentity
             else -> return Outcome.Failed(IllegalStateException("rust_publish_rejected:$published"))
@@ -96,7 +127,7 @@ internal class RustPortInstaller(
         repeat(maxAttempts) {
             var installed = false
             var failure: Throwable? = null
-            val committed = preferences.mutatePublicationIdentityIfCurrent(captured, resolution::stillCurrent) {
+            val committed = preferences.mutatePublicationIdentityIfCurrent(captured, ::stillCurrent) {
                 if (repository.trySealLegacyDispatch()) {
                     try {
                         // PUBLICATION BOUNDARY: installRustPort assigns raw
@@ -109,7 +140,13 @@ internal class RustPortInstaller(
                         // rejected (mutateResult) instead of mutating identity
                         // inline during the routing swap.
                         admission.callbacks {
-                            repository.replaceRustPort(RustRepositoryPort(host, token)) // COMPILE RESTORE (2026-11-13): the replay referenced a never-existent installRustPort; the repository's actual publish method is replaceRustPort (CycleRepository.kt:487)
+                            // FIRST-INSTALL publication (CycleRepository.
+                            // installRustPort): replacement is the admitted
+                            // ViewModel path's job (replaceRustPort keeps its
+                            // replacement-only invariant untouched). An
+                            // already-installed repository throws
+                            // rust_port_already_installed -> Outcome.Failed.
+                            repository.installRustPort(RustRepositoryPort(host, token))
                         }
                         installed = true
                     } catch (t: Throwable) {
@@ -133,6 +170,7 @@ internal class RustPortInstaller(
             }
             if (installed) {
                 minted = null
+                completedInstall = true
                 return Outcome.Installed(token.epoch)
             }
         }
