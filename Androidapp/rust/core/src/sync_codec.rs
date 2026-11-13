@@ -201,11 +201,16 @@ pub fn aosp_opt_string(obj: &JsonValue, key: &str, default: &str) -> String {
         Some(JsonValue::Int(i)) => i.to_string(),
         Some(JsonValue::Long(l)) => l.to_string(),
         Some(JsonValue::Double(d)) => java_double_to_string(*d),
-        // String.valueOf(array/object.toString()); toString returns null on
-        // a non-finite Double inside (numberToString's checkDouble), and
-        // String.valueOf(null) is the literal "null".
+        // optString is JSON.toString(value) ?: defaultValue: an array or
+        // object renders its toString, and when toString itself collapses
+        // to null (a non-finite Double inside trips numberToString's
+        // checkDouble) the DEFAULT is returned - NOT the literal "null".
+        // (SDK34 oracle: optString("url","FB") on [NaN] is "FB".)
         Some(other @ (JsonValue::Array(_) | JsonValue::Object(_))) => {
-            aosp_json_to_string_or_null(other)
+            match aosp_json_to_string_opt(other) {
+                Some(rendered) => rendered,
+                None => default.to_string(),
+            }
         }
     }
 }
@@ -240,7 +245,9 @@ fn aosp_class_name(v: &JsonValue) -> &'static str {
 /// concatenation then renders "null"). Reachable via a non-finite Double
 /// inside the tree: numberToString runs JSON.checkDouble, and ARRAY puts
 /// let non-finite doubles in (object puts reject them at parse time).
-fn aosp_json_to_string_or_null(v: &JsonValue) -> String {
+/// JSONObject/JSONArray.toString with the AOSP catch-collapse: None when a
+/// non-finite Double inside makes toString throw and return null.
+fn aosp_json_to_string_opt(v: &JsonValue) -> Option<String> {
     fn contains_nonfinite(v: &JsonValue) -> bool {
         match v {
             JsonValue::Double(d) => !d.is_finite(),
@@ -249,7 +256,13 @@ fn aosp_json_to_string_or_null(v: &JsonValue) -> String {
             _ => false,
         }
     }
-    if contains_nonfinite(v) { "null".to_string() } else { json_value_to_string(v) }
+    if contains_nonfinite(v) { None } else { Some(json_value_to_string(v)) }
+}
+
+/// String-CONCATENATION rendering of the collapsed toString: Java's
+/// "..." + null renders the literal "null" (error-message contexts).
+fn aosp_json_to_string_or_null(v: &JsonValue) -> String {
+    aosp_json_to_string_opt(v).unwrap_or_else(|| "null".to_string())
 }
 
 /// AOSP JSONTokener.readObject's non-String-name rejection: "Names must be
@@ -344,7 +357,30 @@ impl<'a> JsonParser<'a> {
         JsonParser { chars: src.chars().collect(), pos: 0, src, fallback_requested: false }
     }
 
-    /// Java Double.valueOf acceptance for a non-integral readLiteral literal.
+    /// Mark this parse as needing the Kotlin path: per-instance flag for the
+    /// parsing seam, plus the thread-local marker the FFI transport checks.
+    fn request_fallback(&mut self) {
+        self.fallback_requested = true;
+        UNSUPPORTED_SEMANTICS.with(|c| c.set(true));
+    }
+
+    thread_local! {
+    /// Central "unsupported parser semantics" marker for the JNI transport:
+    /// set when ANY JsonParser on this thread meets a construct the port
+    /// cannot represent exactly (a LONE surrogate \u escape or a Java
+    /// hex-float literal). The FFI entry point declines the whole contract
+    /// call when this is set, so every native-first seam routes such inputs
+    /// to its existing Kotlin fallback without per-seam drift heuristics.
+    static UNSUPPORTED_SEMANTICS: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// Test-and-clear for the FFI transport (cleared again at call entry, so a
+/// stale marker can never leak into an unrelated call on the same thread).
+pub fn take_unsupported_semantics() -> bool {
+    UNSUPPORTED_SEMANTICS.with(|c| c.replace(false))
+}
+
+/// Java Double.valueOf acceptance for a non-integral readLiteral literal.
 /// Covers the exact case-sensitive "NaN"/signed "Infinity" names, ordinary
 /// decimal literals (including overflow to Infinity - Java saturates,
 /// matching Rust's parse), and the d/D (double) and f/F (float, widened)
@@ -359,9 +395,14 @@ fn java_double_literal(literal: &str) -> Option<f64> {
         }
         return None;
     }
-    let (body, widened_float) = match literal.as_bytes().last() {
-        Some(b'd') | Some(b'D') => (&literal[..literal.len() - 1], false),
-        Some(b'f') | Some(b'F') => (&literal[..literal.len() - 1], true),
+    // A d/D/f/F suffix is a nominal TYPE specifier only: "trailing format
+    // specifiers ... do not influence the results of this method ... the
+    // numerical value of the input string is converted directly to the
+    // target floating-point type" (java.lang.Double.parseDouble, Java 11
+    // docs). Double.valueOf("0.1f") is 0.1d, NOT the float-widened
+    // 0.10000000149011612 (SDK34 oracle: optString gives "0.1").
+    let body = match literal.as_bytes().last() {
+        Some(b'd') | Some(b'D') | Some(b'f') | Some(b'F') => &literal[..literal.len() - 1],
         _ => return None,
     };
     // NaN/Infinity take no suffix; hex literals are the fallback case.
@@ -375,12 +416,7 @@ fn java_double_literal(literal: &str) -> Option<f64> {
     if !body.bytes().any(|b| b.is_ascii_digit()) {
         return None;
     }
-    if widened_float {
-        // An f-suffixed literal is parsed at FLOAT precision, then widened.
-        body.parse::<f32>().ok().map(|v| v as f64)
-    } else {
-        body.parse::<f64>().ok()
-    }
+    body.parse::<f64>().ok()
 }
 
 /// Java hex floating-point shape ("0x1.8p1"): this port cannot evaluate it
@@ -619,12 +655,12 @@ fn looks_like_hex_float(literal: &str) -> bool {
                                         out.push(char::from_u32(c).expect("surrogate pair is a scalar"));
                                     }
                                     None => {
-                                        self.fallback_requested = true;
+                                        self.request_fallback();
                                         out.push('\u{FFFD}');
                                     }
                                 }
                             } else if (0xDC00..0xE000).contains(&cp) {
-                                self.fallback_requested = true;
+                                self.request_fallback();
                                 out.push('\u{FFFD}');
                             } else {
                                 out.push(char::from_u32(cp).expect("non-surrogate BMP is a char"));
@@ -689,7 +725,7 @@ fn looks_like_hex_float(literal: &str) -> bool {
         if looks_like_hex_float(&literal) {
             // Java parses hex-float literals ("0x1.8p1"); this port cannot
             // evaluate one exactly - request the Kotlin fallback.
-            self.fallback_requested = true;
+            self.request_fallback();
         }
         Ok(JsonValue::Str(literal))
     }

@@ -588,15 +588,26 @@ mod tests {
         assert_eq!(
             interpret_google_link_response(true, "{\"x\":-NaN}", None),
             GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: NaN".to_string()));
-        // d/f suffixes: "5d" parses as the double 5.0 (Double.toString
-        // "5.0" via optString's String.valueOf); "0.1f" is parsed at FLOAT
-        // precision then widened.
+        // d/f suffixes are nominal type specifiers only (java.lang.Double
+        // .parseDouble docs: they "do not influence the results"; the value
+        // converts DIRECTLY to double). "5d" -> 5.0, and "0.1f" -> 0.1d -
+        // NOT the float-widened 0.10000000149011612. SDK34 oracle
+        // (reviewer-executed): optString renders "0.1" and "3.4028235E38".
         assert_eq!(
             interpret_google_link_response(true, "{\"url\":5d}", None),
             GoogleLinkResponseDecision::Url("5.0".to_string()));
         assert_eq!(
             interpret_google_link_response(true, "{\"url\":0.1f}", None),
-            GoogleLinkResponseDecision::Url("0.10000000149011612".to_string()));
+            GoogleLinkResponseDecision::Url("0.1".to_string()));
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":3.4028235e38f}", None),
+            GoogleLinkResponseDecision::Url("3.4028235E38".to_string()));
+        // optString's toString collapse yields the DEFAULT (""), so a
+        // non-finite array takes the Location-header branch (SDK34 oracle:
+        // optString("url","FB") on [NaN] is "FB").
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":[NaN]}", Some("https://loc.example/x")),
+            GoogleLinkResponseDecision::Url("https://loc.example/x".to_string()));
         // Overflow numerics saturate to Infinity (Java Double.parseDouble),
         // so the object put rejects them; Rust-only "inf" stays a string.
         assert_eq!(

@@ -46,8 +46,22 @@ pub extern "system" fn Java_com_cyclecare_app_rust_CycleCareCoreBridge_nativeCal
         Ok(s) => s.into(),
         Err(e) => return out(&mut env, &err(&format!("payload not a string: {e}"))),
     };
+    // Central unsupported-parser-semantics routing (2026-11-13): when the
+    // shared JsonParser meets a construct it cannot represent exactly (a
+    // lone-surrogate \u escape or a Java hex-float literal), it marks the
+    // thread; the whole contract call is then declined with {"error": ...},
+    // which every bridge wrapper maps to null -> the caller's verbatim
+    // Kotlin implementation (real org.json, exact by construction). One
+    // transport-level signal, no per-seam drift heuristics; the marker is
+    // cleared at entry so nothing stale leaks between calls on a thread.
+    corelib::sync_codec::take_unsupported_semantics();
     let result = std::panic::catch_unwind(|| dispatch(&contract, &payload))
         .unwrap_or_else(|_| err("rust panic caught at FFI boundary".into()));
+    let result = if corelib::sync_codec::take_unsupported_semantics() {
+        err("unsupported parser semantics; input routed to the Kotlin implementation")
+    } else {
+        result
+    };
     out(&mut env, &result)
 }
 
