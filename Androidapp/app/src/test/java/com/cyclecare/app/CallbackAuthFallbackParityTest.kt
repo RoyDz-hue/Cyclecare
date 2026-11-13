@@ -123,14 +123,19 @@ class CallbackAuthFallbackParityTest {
     }
 
     @Test
-    fun linkUserRecoveryUsesKotlinUnicodeCaseFold() {
-        // Real Kotlin equals(ignoreCase = true): the Unicode long s folds to
-        // S, so this is a recovery link - the pin the native side must match.
-        val d = linkUserTwin(freshPrefs(), true, """{"id":"u","email_confirmed_at":"x"}""", "recoverſ")
-        assertEquals(CycleCareCoreBridge.CbLinkUserKind.SUCCESS, d.kind)
-        assertTrue(d.success!!.passwordRecovery)
-        assertTrue(d.success!!.needsPasswordSetup)
-        assertEquals("Your reset link is verified. Set a new password to finish.", d.success!!.message)
+    fun linkUserRecoveryCaseFoldMatchesKotlin() {
+        // ASCII mixed case IS a recovery link (real Kotlin equals ignoreCase).
+        val upper = linkUserTwin(freshPrefs(), true, """{"id":"u","email_confirmed_at":"x"}""", "RECOVERY")
+        assertEquals(CycleCareCoreBridge.CbLinkUserKind.SUCCESS, upper.kind)
+        assertTrue(upper.success!!.passwordRecovery)
+        assertTrue(upper.success!!.needsPasswordSetup)
+        assertEquals("Your reset link is verified. Set a new password to finish.", upper.success!!.message)
+        // The Unicode long s folds to S ("RECOVERS"), so "recoverſ" is NOT
+        // recovery - the pin the native comparator must match.
+        val longS = linkUserTwin(freshPrefs(), true, """{"id":"u","email_confirmed_at":"x"}""", "recoverſ")
+        assertEquals(CycleCareCoreBridge.CbLinkUserKind.SUCCESS, longS.kind)
+        assertFalse(longS.success!!.passwordRecovery)
+        assertFalse(longS.success!!.needsPasswordSetup)
     }
 
     @Test

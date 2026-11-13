@@ -611,14 +611,19 @@ class SupabaseAuthService(
     private suspend fun completeAuthCode(authCode: String, callbackContext:AuthPreferences.RustOperationSnapshot,callbackCurrent:()->Boolean): AuthResult {
         // Native-first NON-CLOCK pre-flight (NEW IMPLEMENTATION wiring,
         // 2026-11-13): verifier presence, the pendingAuthAction default,
-        // linkingGuest and the already-signed-in gate. The verifier value
-        // itself is re-read below for the request body (no writes between;
-        // the ERROR_CLEAR_FLOW branch returns before reaching it).
+        // linkingGuest and the already-signed-in gate. verifier is
+        // captured once where the source read it (its first statement);
+        // existingUserId is captured once before the seam call that needs
+        // it, and no writes intervene before the source's own read. The
+        // request body and the response seam use those captures (no
+        // concurrent-mutation drift from re-reads).
+        val verifier = authPreferences.googlePkceVerifier
+        val existingUserId = authPreferences.userId
         val pre = com.cyclecare.app.rust.CycleCareCoreBridge.authCbCodePre(
-            authPreferences.googlePkceVerifier != null,
+            verifier != null,
             authPreferences.pendingAuthAction,
             authPreferences.isPendingGuestEmailLink,
-            authPreferences.userId)
+            existingUserId)
             ?: interpretCbCodePreKotlin()
         when (pre.kind) {
             com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.ERROR ->
@@ -632,8 +637,9 @@ class SupabaseAuthService(
         val action = pre.action ?: return AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
         val linkingGuest = pre.linkingGuest
         val operation = operationForAction(action)
-        val existingUserId = authPreferences.userId
-        val verifier = authPreferences.googlePkceVerifier
+        // Unreachable when the pre decision worked (it returns the same
+        // error first); the elvis guards the CAPTURED local, no re-read.
+        val verifier = verifier
             ?: return AuthResult.Error(AuthErrorMessages.forResponse("expired code", AuthOperation.CALLBACK))
         return try {
             val request = authRequest("token?grant_type=pkce", JSONObject().apply {

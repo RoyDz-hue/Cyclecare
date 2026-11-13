@@ -1080,6 +1080,9 @@ pub fn interpret_cb_code_response(
 
 /// Verbatim port of completeEmailLink. `auth_api_url` mirrors the service's
 /// injected base URL; the transport receives the exact GET the service builds.
+/// ONE IMPLEMENTATION: every branch decision comes from the wiring seams
+/// (interpret_cb_*); this tree owns only the transport and the commits
+/// (with the expiry clock read at its own original commit point).
 pub fn complete_email_link(
     prefs: &mut AuthPrefsState,
     url: &str,
@@ -1094,31 +1097,16 @@ pub fn complete_email_link(
         Some(p) => p,
         None => return AuthOutcome::Error(MSG_INVALID_LINK.to_string()),
     };
-    let value = |key: &str| -> Option<&str> {
-        parameters
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    };
-
-    let link_error = value("error_description").or_else(|| value("error"));
-    if let Some(e) = link_error {
-        if !kotlin_is_blank(e) {
-            return AuthOutcome::Error(for_response(&e.replace('+', " "), AuthOperation::Callback));
-        }
-    }
-    let auth_code = value("code").unwrap_or("");
-    if !auth_code.is_empty() {
-        if value("access_token").is_some() || value("refresh_token").is_some() {
-            return AuthOutcome::Error(MSG_CONFLICTING.to_string());
-        }
-        return complete_auth_code(prefs, auth_code, auth_api_url, now_seconds, transport);
-    }
-    let access_token = value("access_token").unwrap_or("");
-    let refresh_token = value("refresh_token").unwrap_or("");
-    if access_token.is_empty() || refresh_token.is_empty() {
-        return AuthOutcome::Error(for_response("expired link", AuthOperation::Callback));
-    }
+    let (access_token, refresh_token, expires_at_raw, expires_in_raw, link_type) =
+        match interpret_cb_link_params(&parameters) {
+            CbLinkParamsDecision::Error(m) => return AuthOutcome::Error(m),
+            CbLinkParamsDecision::Code(code) => {
+                return complete_auth_code(prefs, &code, auth_api_url, now_seconds, transport);
+            }
+            CbLinkParamsDecision::Tokens { access_token, refresh_token, expires_at, expires_in, link_type } => {
+                (access_token, refresh_token, expires_at, expires_in, link_type)
+            }
+        };
 
     // try { ... } catch -> "couldn't verify" copy
     let user_url = format!("{auth_api_url}/user");
@@ -1126,61 +1114,43 @@ pub fn complete_email_link(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(MSG_VERIFY_FAILED.to_string()),
     };
-    if !response.successful {
-        return AuthOutcome::Error(for_response(&response.body, AuthOperation::Callback));
-    }
-    let user = match JsonParser::new(&response.body).parse() {
-        Ok(v) => v,
-        Err(_) => return AuthOutcome::Error(MSG_VERIFY_FAILED.to_string()),
+    let su = match interpret_cb_link_user(
+        response.successful,
+        &response.body,
+        prefs.is_pending_guest_email_link,
+        prefs.user_id.as_deref(),
+        prefs.pending_email.as_deref(),
+        prefs.pending_auth_action.as_deref(),
+        link_type.as_deref(),
+    ) {
+        CbLinkUserDecision::Error(m) => return AuthOutcome::Error(m),
+        CbLinkUserDecision::Success(su) => su,
     };
-    if kotlin_is_blank(&aosp_opt_string(&user, "id", "")) {
-        return AuthOutcome::Error(fallback(AuthOperation::Callback).to_string());
-    }
-    let is_anonymous = opt_boolean(&user, "is_anonymous", false);
-    if !is_anonymous && !email_is_confirmed(&user) {
-        return AuthOutcome::Error(MSG_UNCONFIRMED.to_string());
-    }
-    if prefs.is_pending_guest_email_link
-        && prefs.user_id.as_deref().map(|u| !u.is_empty()).unwrap_or(false)
-        && prefs.user_id.as_deref() != Some(aosp_opt_string(&user, "id", "").as_str())
-    {
-        return AuthOutcome::Error(MSG_DIFFERENT_ACCOUNT.to_string());
-    }
 
-    prefs.access_token = Some(access_token.to_string());
-    prefs.refresh_token = Some(refresh_token.to_string());
-    prefs.session_expires_at_seconds = value("expires_at")
+    // The commit, in the source's write order. The expiry default's clock
+    // read is the injected now_seconds - the tree's original commit point.
+    // The expiry strings convert with toLongOrNull semantics (the source's
+    // grammar here, NOT optLong); the userEmail write is ifBlank -> null.
+    prefs.access_token = Some(access_token);
+    prefs.refresh_token = Some(refresh_token);
+    prefs.session_expires_at_seconds = expires_at_raw
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or_else(|| {
-            now_seconds + value("expires_in").and_then(|v| v.parse::<i64>().ok()).unwrap_or(3600)
+            now_seconds + expires_in_raw.and_then(|v| v.parse::<i64>().ok()).unwrap_or(3600)
         });
-    let new_user_id = aosp_opt_string(&user, "id", "");
-    prefs.set_user_id(Some(new_user_id));
-    let email = if_blank(aosp_opt_string(&user, "email", ""))
-        .or_else(|| prefs.pending_email.clone())
-        .unwrap_or_default();
-    prefs.user_email = if email.is_empty() { None } else { Some(email.clone()) };
-    prefs.account_mode = Some(if is_anonymous { "ANONYMOUS" } else { "EMAIL" }.to_string());
-    let linked_guest = prefs.is_pending_guest_email_link && !is_anonymous;
+    prefs.set_user_id(Some(su.user_id));
+    prefs.user_email = if kotlin_is_blank(&su.email) { None } else { Some(su.email.clone()) };
+    prefs.account_mode = Some(su.account_mode.clone());
     prefs.is_pending_guest_email_link = false;
     prefs.pending_email = None;
-    let password_recovery = value("type").map(|t| t.eq_ignore_ascii_case("recovery")).unwrap_or(false)
-        || prefs.pending_auth_action.as_deref() == Some(AUTH_ACTION_PASSWORD_RESET);
     prefs.clear_pending_auth_flow(false);
-    prefs.needs_password_setup = linked_guest || password_recovery;
-    AuthOutcome::Success {
-        user: read_user(&user, Some(email.as_str())),
-        message: if linked_guest {
-            success_message_for_action(AUTH_ACTION_GUEST_LINK).to_string()
-        } else if password_recovery {
-            success_message_for_action(AUTH_ACTION_PASSWORD_RESET).to_string()
-        } else {
-            "Your CycleCare email is verified and you are signed in.".to_string()
-        },
-    }
+    prefs.needs_password_setup = su.needs_password_setup;
+    AuthOutcome::Success { user: su.user, message: su.message }
 }
 
-/// Verbatim port of completeAuthCode (PKCE token exchange branch).
+/// Verbatim port of completeAuthCode (PKCE token exchange branch), composed
+/// on the same wiring seams (ONE implementation): the tree owns the
+/// transport and the commits, the seams own the branch logic.
 fn complete_auth_code(
     prefs: &mut AuthPrefsState,
     auth_code: &str,
@@ -1188,28 +1158,27 @@ fn complete_auth_code(
     now_seconds: i64,
     transport: &mut Transport,
 ) -> AuthOutcome {
-    let verifier = match &prefs.google_pkce_verifier {
-        Some(v) => v.clone(),
+    // Single captures at the source's read points.
+    let verifier = prefs.google_pkce_verifier.clone();
+    let existing_user_id = prefs.user_id.clone();
+    let (action, linking_guest) = match interpret_cb_code_pre(
+        verifier.is_some(),
+        prefs.pending_auth_action.as_deref(),
+        prefs.is_pending_guest_email_link,
+        existing_user_id.as_deref(),
+    ) {
+        CbCodePreDecision::Error(m) => return AuthOutcome::Error(m),
+        CbCodePreDecision::ErrorClearFlow(m) => {
+            prefs.clear_pending_auth_flow(false);
+            return AuthOutcome::Error(m);
+        }
+        CbCodePreDecision::Ok { action, linking_guest } => (action, linking_guest),
+    };
+    let operation = operation_for_action(&action);
+    let verifier = match verifier {
+        Some(v) => v,
         None => return AuthOutcome::Error(for_response("expired code", AuthOperation::Callback)),
     };
-    let action = prefs
-        .pending_auth_action
-        .clone()
-        .unwrap_or_else(|| {
-            if prefs.is_pending_guest_email_link {
-                AUTH_ACTION_GUEST_LINK.to_string()
-            } else {
-                AUTH_ACTION_GOOGLE.to_string()
-            }
-        });
-    let operation = operation_for_action(&action);
-    let linking_guest = (action == AUTH_ACTION_GUEST_LINK && prefs.is_pending_guest_email_link)
-        || action == AUTH_ACTION_GOOGLE_LINK;
-    let existing_user_id = prefs.user_id.clone();
-    if existing_user_id.as_deref().map(|u| !u.is_empty()).unwrap_or(false) && !linking_guest {
-        prefs.clear_pending_auth_flow(false);
-        return AuthOutcome::Error(MSG_ALREADY_SIGNED_IN.to_string());
-    }
     let body = format!(
         "{{\"auth_code\":\"{}\",\"code_verifier\":\"{}\"}}",
         auth_code, verifier
@@ -1219,44 +1188,27 @@ fn complete_auth_code(
         Ok(r) => r,
         Err(_) => return AuthOutcome::Error(fallback(operation).to_string()),
     };
-    if !response.successful {
-        prefs.clear_pending_auth_flow(true);
-        return AuthOutcome::Error(for_response(&response.body, operation));
-    }
-    let json = match JsonParser::new(&response.body).parse() {
-        Ok(v) => v,
-        Err(_) => return AuthOutcome::Error(fallback(operation).to_string()),
-    };
-    let empty = JsonValue::Object(vec![]);
-    let user = opt_object(&json, "user").unwrap_or(&empty);
-    let user_id = aosp_opt_string(user, "id", "");
-    if kotlin_is_blank(&aosp_opt_string(&json, "access_token", "")) || kotlin_is_blank(&user_id) {
-        prefs.clear_pending_auth_flow(true);
-        return AuthOutcome::Error(fallback(operation).to_string());
-    }
-    if linking_guest
-        && existing_user_id.as_deref().map(|u| !u.is_empty()).unwrap_or(false)
-        && existing_user_id.as_deref() != Some(user_id.as_str())
-    {
-        // A link callback must upgrade THIS account, never switch to another one.
-        prefs.clear_pending_auth_flow(true);
-        return AuthOutcome::Error(MSG_DIFFERENT_ACCOUNT.to_string());
-    }
-    if !email_is_confirmed(user) {
-        prefs.clear_pending_auth_flow(true);
-        return AuthOutcome::Error(MSG_VERIFY_EMAIL_FIRST.to_string());
-    }
-    save_session(prefs, &json, "EMAIL", now_seconds);
-    let email = if_blank(aosp_opt_string(user, "email", ""))
-        .or_else(|| prefs.pending_email.clone())
-        .unwrap_or_default();
-    prefs.is_pending_guest_email_link = false;
-    prefs.clear_pending_auth_flow(true);
-    prefs.needs_password_setup =
-        action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET;
-    AuthOutcome::Success {
-        user: read_user(user, Some(email.as_str())),
-        message: success_message_for_action(&action).to_string(),
+    match interpret_cb_code_response(
+        &action,
+        linking_guest,
+        existing_user_id.as_deref(),
+        prefs.pending_email.as_deref(),
+        response.successful,
+        &response.body,
+    ) {
+        CbCodeResponseDecision::ErrorClear(m) => {
+            prefs.clear_pending_auth_flow(true);
+            AuthOutcome::Error(m)
+        }
+        CbCodeResponseDecision::ErrorPlain(m) => AuthOutcome::Error(m),
+        CbCodeResponseDecision::Ok { session, needs_password_setup, message, user, .. } => {
+            // Source commit order: saveSession's writes, then the flags.
+            apply_session_fields(prefs, &session, now_seconds);
+            prefs.is_pending_guest_email_link = false;
+            prefs.clear_pending_auth_flow(true);
+            prefs.needs_password_setup = needs_password_setup;
+            AuthOutcome::Success { user, message }
+        }
     }
 }
 
@@ -1610,7 +1562,9 @@ mod tests {
         // kotlin_eq_ignore_case: Kotlin's ignoreCase does Unicode case
         // folding (e.g. long s U+017F uppercases to S); plain ASCII too.
         assert!(kotlin_eq_ignore_case("RECOVERY", "recovery"));
-        assert!(kotlin_eq_ignore_case("recover\u{17f}", "recovery"));
+        // U+017F (long s) folds to S, so "recoverſ" is "RECOVERS" - NOT a
+        // match (the reviewer caught a false positive expectation here).
+        assert!(!kotlin_eq_ignore_case("recover\u{17f}", "recovery"));
         assert!(!kotlin_eq_ignore_case("recoverx", "recovery"));
         assert!(!kotlin_eq_ignore_case("recovery", "recover"));
 
