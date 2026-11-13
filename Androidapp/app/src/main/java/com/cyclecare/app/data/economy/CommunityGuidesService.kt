@@ -43,6 +43,72 @@ class CommunityGuidesService(
             return authPreferences.userId?.trim()?.takeIf { it.isNotEmpty() }
         }
 
+    /** Verbatim pre-wiring fetchTopics row parse (org.json, AOSP); null
+     * mirrors the original catch (UNAVAILABLE). Reached when the native
+     * parse declines or fails. */
+    private fun kotlinParseTopicRows(raw: String): List<ServerTopic>? = try {
+        val array = JSONArray(raw)
+        val topics = mutableListOf<ServerTopic>()
+        for (i in 0 until array.length()) {
+            val row = array.optJSONObject(i) ?: continue
+            val id = row.optString("id").trim()
+            val title = row.optString("title").trim()
+            if (id.isEmpty() || title.isEmpty()) continue
+            topics.add(ServerTopic(id = id, title = title, description = row.optString("description").trim()))
+        }
+        topics
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Verbatim pre-wiring fetchMessages row expressions (org.json, AOSP),
+     * returned as wire rows so the caller's construction points (fresh
+     * UUID per message) are unchanged; null mirrors the original catch
+     * (emptyList). */
+    private fun kotlinParseMessageRows(raw: String, selfId: String?): List<com.cyclecare.app.rust.CycleCareCoreBridge.CommunityMessageRow>? = try {
+        val array = JSONArray(raw)
+        val rows = mutableListOf<com.cyclecare.app.rust.CycleCareCoreBridge.CommunityMessageRow>()
+        for (i in 0 until array.length()) {
+            val row = array.optJSONObject(i) ?: continue
+            val content = row.optString("content").trim()
+            if (content.isEmpty()) continue
+            val personaId = row.optString("persona_id").trim().lowercase().ifBlank { null }
+            val authorId = row.optString("user_id").trim().ifBlank { null }
+            rows.add(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityMessageRow(
+                    content = content.take(500),
+                    senderAlias = row.optString("sender_alias").ifBlank { if (personaId != null) "Community Guide" else "Member" },
+                    personaId = personaId,
+                    remoteId = row.optString("id").trim().ifBlank { null },
+                    timestampMs = isoTimestamp(row.optString("created_at")),
+                    isSelf = authorId != null && authorId == selfId,
+                    isFlagged = row.optBoolean("is_flagged", false)
+                )
+            )
+        }
+        rows
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Verbatim pre-wiring postMessage response interpretation (org.json,
+     * AOSP): parse throw (malformed OR valid non-array) -> SOFT_ECHO; a
+     * null optJSONObject(0) -> FAILED; else CONFIRMED with the
+     * optString("id").trim().ifBlank remote id and iso created_at. */
+    private fun kotlinPostRow(raw: String): com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostRow = try {
+        when (val row = JSONArray(raw).optJSONObject(0)) {
+            null -> com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostRow(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.FAILED, null, 0L)
+            else -> com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostRow(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.CONFIRMED,
+                row.optString("id").trim().ifBlank { null },
+                isoTimestamp(row.optString("created_at")))
+        }
+    } catch (_: Exception) {
+        com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostRow(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.SOFT_ECHO, null, 0L)
+    }
+
     // Strict shared parsing: honors offsets and fraction precision, and returns
     // 0 for unparseable input so a malformed message sorts oldest in the
     // oldest-first stream instead of masquerading as the freshest.
@@ -117,19 +183,16 @@ class CommunityGuidesService(
                     return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
             }
             val raw = boundedBody(it) ?: return@withContext TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
-            try {
-                val array = JSONArray(raw)
-                val topics = mutableListOf<ServerTopic>()
-                for (i in 0 until array.length()) {
-                    val row = array.optJSONObject(i) ?: continue
-                    val id = row.optString("id").trim()
-                    val title = row.optString("title").trim()
-                    if (id.isEmpty() || title.isEmpty()) continue
-                    topics.add(ServerTopic(id = id, title = title, description = row.optString("description").trim()))
-                }
-                TopicsFetch(topics, if (topics.isEmpty()) CircleServiceStatus.EMPTY else CircleServiceStatus.OK)
-            } catch (_: Exception) {
+            // Native-first row parsing (NEW IMPLEMENTATION wiring,
+            // 2026-11-13): org.json row semantics via community_parse_v1.
+            // A null reply (native unavailable/declined/parse failure) runs
+            // the verbatim Kotlin parse, whose own failure is UNAVAILABLE.
+            val topics = com.cyclecare.app.rust.CycleCareCoreBridge.communityParseTopics(raw)
+                ?: kotlinParseTopicRows(raw)
+            if (topics == null) {
                 TopicsFetch(emptyList(), CircleServiceStatus.UNAVAILABLE)
+            } else {
+                TopicsFetch(topics, if (topics.isEmpty()) CircleServiceStatus.EMPTY else CircleServiceStatus.OK)
             }
         }
     }
@@ -160,32 +223,25 @@ class CommunityGuidesService(
         response.use {
             if (!it.isSuccessful) return@withContext emptyList()
             val raw = boundedBody(it) ?: return@withContext emptyList()
-            try {
-                val array = JSONArray(raw)
-                val messages = mutableListOf<GuidedChatMessage>()
-                for (i in 0 until array.length()) {
-                    val row = array.optJSONObject(i) ?: continue
-                    val content = row.optString("content").trim()
-                    if (content.isEmpty()) continue
-                    val personaId = row.optString("persona_id").trim().lowercase().ifBlank { null }
-                    val authorId = row.optString("user_id").trim().ifBlank { null }
-                    messages.add(
-                        GuidedChatMessage(
-                            channelId = serverTopicId,
-                            senderAlias = row.optString("sender_alias").ifBlank { if (personaId != null) "Community Guide" else "Member" },
-                            content = content.take(500),
-                            timestampMs = isoTimestamp(row.optString("created_at")),
-                            isSelf = authorId != null && authorId == selfId,
-                            personaId = personaId,
-                            remoteId = row.optString("id").trim().ifBlank { null },
-                            isFlagged = row.optBoolean("is_flagged", false)
-                        )
-                    )
-                }
-                messages
-            } catch (_: Exception) {
-                emptyList()
-            }
+            // Native-first row parsing (NEW IMPLEMENTATION wiring,
+            // 2026-11-13); a null reply runs the verbatim Kotlin parse. The
+            // message objects are still constructed HERE, so their fresh
+            // random UUIDs (and any clock defaults) keep their original
+            // per-row construction points.
+            val rows = com.cyclecare.app.rust.CycleCareCoreBridge.communityParseMessages(raw, serverTopicId, selfId)
+                ?: kotlinParseMessageRows(raw, selfId)
+            rows?.map { row ->
+                GuidedChatMessage(
+                    channelId = serverTopicId,
+                    senderAlias = row.senderAlias,
+                    content = row.content,
+                    timestampMs = row.timestampMs,
+                    isSelf = row.isSelf,
+                    personaId = row.personaId,
+                    remoteId = row.remoteId,
+                    isFlagged = row.isFlagged
+                )
+            } ?: emptyList()
         }
     }
 
@@ -215,19 +271,26 @@ class CommunityGuidesService(
         response.use {
             if (!it.isSuccessful) return@withContext null
             val raw = boundedBody(it) ?: return@withContext null
-            try {
-                val row = JSONArray(raw).optJSONObject(0) ?: return@withContext null
-                GuidedChatMessage(
-                    channelId = serverTopicId,
-                    senderAlias = alias,
-                    content = trimmed,
-                    timestampMs = isoTimestamp(row.optString("created_at")),
-                    isSelf = true,
-                    remoteId = row.optString("id").trim().ifBlank { null }
-                )
-            } catch (_: Exception) {
-                // The write may still have landed; a soft local echo keeps the UI calm.
-                GuidedChatMessage(channelId = serverTopicId, senderAlias = alias, content = trimmed, isSelf = true)
+            // Native-first response interpretation (NEW IMPLEMENTATION
+            // wiring, 2026-11-13); a null reply runs the verbatim Kotlin
+            // interpretation. Construction stays HERE: the confirmed path's
+            // fresh UUID and the soft echo's wall-clock default are read at
+            // their original points.
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.communityPostRow(raw) ?: kotlinPostRow(raw)
+            when (decision.verdict) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.FAILED -> null
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.SOFT_ECHO ->
+                    // The write may still have landed; a soft local echo keeps the UI calm.
+                    GuidedChatMessage(channelId = serverTopicId, senderAlias = alias, content = trimmed, isSelf = true)
+                com.cyclecare.app.rust.CycleCareCoreBridge.CommunityPostVerdict.CONFIRMED ->
+                    GuidedChatMessage(
+                        channelId = serverTopicId,
+                        senderAlias = alias,
+                        content = trimmed,
+                        timestampMs = decision.timestampMs,
+                        isSelf = true,
+                        remoteId = decision.remoteId
+                    )
             }
         }
     }

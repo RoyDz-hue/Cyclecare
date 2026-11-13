@@ -894,6 +894,107 @@ object CycleCareCoreBridge {
 
     fun communityPulsePath(): String? = communityPath(communityCall("pulse_path", JSONObject()))
 
+    // -- community_parse_v1: circle RESPONSE interpretation (NEW IMPLEMENTATION,
+    // 2026-11-13). The service still constructs GuidedChatMessage objects
+    // itself so fresh UUIDs and the soft-echo clock default stay at their
+    // original Kotlin construction points.
+
+    /** Wire fields of one circle message row (no runtime defaults). */
+    data class CommunityMessageRow(
+        val content: String,
+        val senderAlias: String,
+        val personaId: String?,
+        val remoteId: String?,
+        val timestampMs: Long,
+        val isSelf: Boolean,
+        val isFlagged: Boolean,
+    )
+
+    enum class CommunityPostVerdict { CONFIRMED, SOFT_ECHO, FAILED }
+
+    data class CommunityPostRow(val verdict: CommunityPostVerdict, val remoteId: String?, val timestampMs: Long)
+
+    /** fetchTopics row parsing; null = native declined/malformed reply ->
+     * the caller runs its verbatim Kotlin parse (a native parse FAILURE
+     * also arrives as null and takes the same Kotlin path). */
+    fun communityParseTopics(raw: String): List<com.cyclecare.app.data.economy.CommunityGuidesService.ServerTopic>? {
+        val reply = call("community_parse_v1", JSONObject().put("op", "topics").put("raw", raw)) ?: return null
+        return decodeCommunityTopics(reply)
+    }
+
+    internal fun decodeCommunityTopics(reply: JSONObject): List<com.cyclecare.app.data.economy.CommunityGuidesService.ServerTopic>? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        if (ok.isNull("topics")) return null // native parse failed -> Kotlin parse decides
+        val array = ok.optJSONArray("topics") ?: return null
+        val out = ArrayList<com.cyclecare.app.data.economy.CommunityGuidesService.ServerTopic>(array.length())
+        for (i in 0 until array.length()) {
+            val row = array.optJSONObject(i) ?: return null
+            val id = row.opt("id") as? String ?: return null
+            val title = row.opt("title") as? String ?: return null
+            val description = row.opt("description") as? String ?: return null
+            out.add(com.cyclecare.app.data.economy.CommunityGuidesService.ServerTopic(id = id, title = title, description = description))
+        }
+        return out
+    }
+
+    /** fetchMessages row parsing (wire fields only; no UUID/clock defaults). */
+    fun communityParseMessages(raw: String, topicId: String, selfId: String?): List<CommunityMessageRow>? {
+        val reply = call("community_parse_v1", JSONObject()
+            .put("op", "messages").put("raw", raw).put("topicId", topicId)
+            .put("selfId", selfId ?: JSONObject.NULL)) ?: return null
+        return decodeCommunityMessageRows(reply)
+    }
+
+    internal fun decodeCommunityMessageRows(reply: JSONObject): List<CommunityMessageRow>? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        if (ok.isNull("messages")) return null // native parse failed -> Kotlin parse decides
+        val array = ok.optJSONArray("messages") ?: return null
+        val out = ArrayList<CommunityMessageRow>(array.length())
+        for (i in 0 until array.length()) {
+            val row = array.optJSONObject(i) ?: return null
+            val content = row.opt("content") as? String ?: return null
+            val senderAlias = row.opt("senderAlias") as? String ?: return null
+            if (!row.has("personaId") || !row.has("remoteId")) return null
+            val personaId = row.opt("personaId").takeIf { it != JSONObject.NULL }?.let { it as? String ?: return null }
+            val remoteId = row.opt("remoteId").takeIf { it != JSONObject.NULL }?.let { it as? String ?: return null }
+            val ts = row.opt("timestampMs")
+            if (ts !is Int && ts !is Long) return null
+            val isSelf = row.opt("isSelf") as? Boolean ?: return null
+            val isFlagged = row.opt("isFlagged") as? Boolean ?: return null
+            out.add(CommunityMessageRow(content, senderAlias, personaId, remoteId, (ts as Number).toLong(), isSelf, isFlagged))
+        }
+        return out
+    }
+
+    /** postMessage response-row verdict; null = native declined/malformed
+     * reply -> the caller runs its verbatim Kotlin interpretation. */
+    fun communityPostRow(raw: String): CommunityPostRow? {
+        val reply = call("community_parse_v1", JSONObject().put("op", "post_row").put("raw", raw)) ?: return null
+        return decodeCommunityPostRow(reply)
+    }
+
+    internal fun decodeCommunityPostRow(reply: JSONObject): CommunityPostRow? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("verdict") as? String) {
+            "soft_echo" -> CommunityPostRow(CommunityPostVerdict.SOFT_ECHO, null, 0L)
+            "failed" -> CommunityPostRow(CommunityPostVerdict.FAILED, null, 0L)
+            "confirmed" -> {
+                if (!ok.has("remoteId")) return null
+                val remoteId = ok.opt("remoteId").takeIf { it != JSONObject.NULL }?.let { it as? String ?: return null }
+                val ts = ok.opt("timestampMs")
+                if (ts !is Int && ts !is Long) return null
+                CommunityPostRow(CommunityPostVerdict.CONFIRMED, remoteId, (ts as Number).toLong())
+            }
+            else -> null
+        }
+    }
+
     /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
      * session_token parity port for SupabaseSessionManager.tokenExpiry
      * (SessionTokenParity JVM locks t01-t08). 0 mirrors the source's

@@ -383,8 +383,9 @@ pub fn take_unsupported_semantics() -> bool {
 /// Java Double.valueOf acceptance for a non-integral readLiteral literal.
 /// Covers the exact case-sensitive "NaN"/signed "Infinity" names, ordinary
 /// decimal literals (including overflow to Infinity - Java saturates,
-/// matching Rust's parse), and the d/D (double) and f/F (float, widened)
-/// suffixes. Returns None where Java would reject the literal - it stays
+/// matching Rust's parse), and the d/D and f/F suffixes (nominal type
+/// specifiers only: both parse DIRECTLY as double, per the parseDouble
+/// docs). Returns None where Java would reject the literal - it stays
 /// an unquoted string (e.g. Rust-only "inf"/"infinity" spellings).
 fn java_double_literal(literal: &str) -> Option<f64> {
     if let Ok(d) = literal.parse::<f64>() {

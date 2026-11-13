@@ -110,3 +110,56 @@ fn aosp_explicit_null_is_literal_string() {
     assert_eq!(topics[0].description, "null");
     assert_eq!(topics[1].description, "");
 }
+
+#[test]
+fn whitespace_alias_falls_back_ifblank() {
+    // Kotlin ifBlank (not isEmpty): a whitespace-only sender_alias takes the
+    // same fallback as an empty one.
+    let raw = r#"[{"id":"m","user_id":"u","sender_alias":" ","content":"hi"},
+                  {"id":"m2","user_id":"u","sender_alias":"\t","content":"hi2","persona_id":"nova"}]"#;
+    let msgs = parse_circle_messages(raw, "c", None).unwrap();
+    assert_eq!(msgs[0].sender_alias, "Member");
+    assert_eq!(msgs[1].sender_alias, "Community Guide");
+}
+
+#[test]
+fn post_response_row_boundaries() {
+    use PostRowDecision as D;
+    // JSONArray(raw) throws - malformed OR valid non-array - -> soft echo.
+    assert_eq!(interpret_post_response_row("not json"), D::SoftEcho);
+    assert_eq!(interpret_post_response_row("{}"), D::SoftEcho);
+    // optJSONObject(0) null - empty array or non-object first row - -> failed.
+    assert_eq!(interpret_post_response_row("[]"), D::Failed);
+    assert_eq!(interpret_post_response_row("[42]"), D::Failed);
+    // Object row: optString("id").trim().ifBlank semantics.
+    assert_eq!(
+        interpret_post_response_row(r#"[{"id":"  ","created_at":"junk"}]"#),
+        D::Confirmed { remote_id: None, timestamp_ms: 0 });
+    assert_eq!(
+        interpret_post_response_row(r#"[{"id":42}]"#),
+        D::Confirmed { remote_id: Some("42".to_string()), timestamp_ms: 0 });
+    // AOSP optString of an explicit JSON null is the literal "null"
+    // (labeled parity quirk, PostProbe-documented).
+    assert_eq!(
+        interpret_post_response_row(r#"[{"id":null}]"#),
+        D::Confirmed { remote_id: Some("null".to_string()), timestamp_ms: 0 });
+    assert_eq!(
+        interpret_post_response_row(r#"[{"id":"m1","created_at":"2026-01-01T00:00:00Z"}]"#),
+        D::Confirmed { remote_id: Some("m1".to_string()), timestamp_ms: 1_767_225_600_000 });
+}
+
+#[test]
+fn unrepresentable_constructs_flag_the_kotlin_fallback() {
+    // The shared parser's central signal (FFI transport declines the call,
+    // the Kotlin twin runs): lone-surrogate escapes and Java hex-float
+    // literals request the fallback; a combined surrogate pair does not.
+    let mut p = cyclecare_core::sync_codec::JsonParser::new(r#"[{"content":"\uD83D"}]"#);
+    assert!(p.parse().is_ok());
+    assert!(p.fallback_requested);
+    let mut p = cyclecare_core::sync_codec::JsonParser::new("[0x1.8p1]");
+    assert!(p.parse().is_ok());
+    assert!(p.fallback_requested);
+    let mut p = cyclecare_core::sync_codec::JsonParser::new(r#"[{"content":"\uD83D\uDCA9"}]"#);
+    assert!(p.parse().is_ok());
+    assert!(!p.fallback_requested);
+}

@@ -894,6 +894,64 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown community_transport op"),
             }
         })(),
+        "community_parse_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity ports community_guides::parse_topics /
+            // parse_circle_messages / interpret_post_response_row
+            // (CommunityGuidesService.kt fetchTopics/fetchMessages/postMessage
+            // RESPONSE interpretation, main@31b88f5 lineage; community_guides
+            // corpus + PostProbe-documented boundaries). Interpretation only:
+            // no I/O and no credentials cross; the Kotlin caller constructs
+            // the runtime message objects, so fresh UUIDs and the soft-echo
+            // clock default stay at their original construction points. A
+            // lone-surrogate/hex-float construct in a body is declined by the
+            // central transport marker to the verbatim Kotlin parse.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let raw = match v.get("raw").and_then(|x| x.as_str()) { Some(s) => s, None => return err("raw missing or not a string") };
+            match op {
+                "topics" => {
+                    match corelib::community_guides::parse_topics(raw) {
+                        Some(topics) => {
+                            let rows: Vec<serde_json::Value> = topics.iter().map(|t| serde_json::json!({
+                                "id": t.id, "title": t.title, "description": t.description,
+                            })).collect();
+                            serde_json::json!({"ok":{"version":1,"topics":rows}}).to_string()
+                        }
+                        None => serde_json::json!({"ok":{"version":1,"topics":null}}).to_string(),
+                    }
+                }
+                "messages" => {
+                    let topic_id = match v.get("topicId").and_then(|x| x.as_str()) { Some(s) => s, None => return err("topicId missing or not a string") };
+                    let self_id = match v.get("selfId") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("selfId not a string or null") },
+                    };
+                    match corelib::community_guides::parse_circle_messages(raw, topic_id, self_id) {
+                        Some(msgs) => {
+                            let rows: Vec<serde_json::Value> = msgs.iter().map(|m| serde_json::json!({
+                                "content": m.content, "senderAlias": m.sender_alias,
+                                "personaId": m.persona_id, "remoteId": m.remote_id,
+                                "timestampMs": m.timestamp_ms, "isSelf": m.is_self,
+                                "isFlagged": m.is_flagged,
+                            })).collect();
+                            serde_json::json!({"ok":{"version":1,"messages":rows}}).to_string()
+                        }
+                        None => serde_json::json!({"ok":{"version":1,"messages":null}}).to_string(),
+                    }
+                }
+                "post_row" => {
+                    use corelib::community_guides::PostRowDecision as D;
+                    match corelib::community_guides::interpret_post_response_row(raw) {
+                        D::Confirmed { remote_id, timestamp_ms } => serde_json::json!({
+                            "ok":{"version":1,"verdict":"confirmed","remoteId":remote_id,"timestampMs":timestamp_ms}
+                        }).to_string(),
+                        D::SoftEcho => serde_json::json!({"ok":{"version":1,"verdict":"soft_echo"}}).to_string(),
+                        D::Failed => serde_json::json!({"ok":{"version":1,"verdict":"failed"}}).to_string(),
+                    }
+                }
+                _ => err("unknown community_parse op"),
+            }
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry

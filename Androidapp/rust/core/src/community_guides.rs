@@ -126,8 +126,9 @@ pub fn parse_circle_messages(raw: &str, channel_id: &str, self_id: Option<&str>)
         }
         let persona_raw = kotlin_trim(&opt_string(row, "persona_id")).to_lowercase();
         let persona_id = if persona_raw.is_empty() { None } else { Some(persona_raw) };
+        // Kotlin ifBlank (not isEmpty): a WHITESPACE-only alias falls back.
         let alias_raw = opt_string(row, "sender_alias");
-        let sender_alias = if alias_raw.is_empty() {
+        let sender_alias = if crate::kotlin_text::kotlin_is_blank(&alias_raw) {
             if persona_id.is_some() { "Community Guide" } else { "Member" }.to_string()
         } else {
             alias_raw
@@ -148,6 +149,40 @@ pub fn parse_circle_messages(raw: &str, channel_id: &str, self_id: Option<&str>)
         });
     }
     Some(out)
+}
+
+/// postMessage response-row interpretation (CommunityGuidesService.kt;
+/// PostProbe-documented boundaries, 2026-11-03): JSONArray(raw) THROWS -
+/// malformed OR valid-but-not-an-array - -> SOFT ECHO (the write may still
+/// have landed); optJSONObject(0) null (empty array, or a non-object first
+/// row) -> FAILED; an object row -> CONFIRMED with the
+/// optString("id").trim().ifBlank remote id (explicit JSON null renders the
+/// literal "null" - the labeled AOSP parity quirk) and iso-parsed
+/// created_at millis (unparseable -> 0, sorts oldest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostRowDecision {
+    SoftEcho,
+    Failed,
+    Confirmed { remote_id: Option<String>, timestamp_ms: i64 },
+}
+
+pub fn interpret_post_response_row(raw: &str) -> PostRowDecision {
+    let v = match crate::sync_codec::JsonParser::new(raw).parse() {
+        Ok(v) => v,
+        Err(_) => return PostRowDecision::SoftEcho,
+    };
+    let crate::sync_codec::JsonValue::Array(rows) = &v else { return PostRowDecision::SoftEcho };
+    match rows.first() {
+        Some(row @ crate::sync_codec::JsonValue::Object(_)) => {
+            let id_raw = kotlin_trim(&opt_string(row, "id")).to_string();
+            let created_raw = opt_string(row, "created_at");
+            PostRowDecision::Confirmed {
+                remote_id: if id_raw.is_empty() { None } else { Some(id_raw) },
+                timestamp_ms: crate::notifications::parse_iso_timestamp(Some(&created_raw)),
+            }
+        }
+        _ => PostRowDecision::Failed,
+    }
 }
 
 /// CircleServiceStatus (all five cases; the offline-empty UI copy maps the
