@@ -4,6 +4,7 @@ import com.cyclecare.app.data.economy.CoinPurchasePackage
 import com.cyclecare.app.data.economy.EconomyProfile
 import com.cyclecare.app.data.supabase.SupabaseConfig
 import com.cyclecare.app.data.supabase.SupabaseSessionManager
+import com.cyclecare.app.rust.CycleCareCoreBridge
 import com.cyclecare.app.security.AuthPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -237,6 +238,14 @@ class SupabasePaymentService(
     }
 
     /**
+     * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the
+     * original capture-status interpretation, reached whenever the native
+     * payment_capture_status_v1 reply is null.
+     */
+    private fun kotlinCaptureStatus(httpSuccessful: Boolean, body: String): PaymentStatus =
+        PaymentStatusVerifier.captureStatus(httpSuccessful, body)
+
+    /**
      * Execute PayPal Capture Edge Function
      */
     suspend fun capturePaypalOrder(externalReference: String): Boolean =
@@ -259,7 +268,16 @@ class SupabasePaymentService(
                 .build()
 
             val response = client.newCall(request).execute()
-            PaymentStatusVerifier.captureStatus(response.isSuccessful, response.body?.string().orEmpty())
+            // NEW IMPLEMENTATION (2026-11-13): native-first via
+            // payment_capture_status_v1. The response body is a
+            // consumable-once stream: capture it ONCE here, in the original
+            // read order (isSuccessful, then body), and hand the same two
+            // captures to the native route and, on any null reply, to the
+            // verbatim Kotlin twin. No transport, token, or write moves.
+            val httpSuccessful = response.isSuccessful
+            val responseBody = response.body?.string().orEmpty()
+            CycleCareCoreBridge.paymentCaptureStatus(httpSuccessful, responseBody)
+                ?: kotlinCaptureStatus(httpSuccessful, responseBody)
         } catch (_: Exception) {
             PaymentStatus.AMBIGUOUS
         }

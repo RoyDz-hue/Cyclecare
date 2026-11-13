@@ -1005,6 +1005,36 @@ object CycleCareCoreBridge {
         return decodeRemotePricingParse(reply)
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first PayPal capture-status
+     * interpretation (payment_capture_status_v1). Pure interpretation of the
+     * caller's httpSuccessful/body captures; a null reply (native absent,
+     * {"error"}, or strict-decode failure) means the caller runs its verbatim
+     * Kotlin twin.
+     */
+    fun paymentCaptureStatus(httpSuccessful: Boolean, body: String): com.cyclecare.app.data.payment.PaymentStatus? {
+        val reply = call("payment_capture_status_v1", JSONObject()
+            .put("httpSuccessful", httpSuccessful)
+            .put("body", body)) ?: return null
+        return decodePaymentCaptureStatus(reply)
+    }
+
+    internal fun decodePaymentCaptureStatus(reply: JSONObject): com.cyclecare.app.data.payment.PaymentStatus? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("status")) {
+            "PENDING" -> com.cyclecare.app.data.payment.PaymentStatus.PENDING
+            "COMPLETED" -> com.cyclecare.app.data.payment.PaymentStatus.COMPLETED
+            "FAILED" -> com.cyclecare.app.data.payment.PaymentStatus.FAILED
+            "CANCELLED" -> com.cyclecare.app.data.payment.PaymentStatus.CANCELLED
+            "REFUNDED" -> com.cyclecare.app.data.payment.PaymentStatus.REFUNDED
+            "REVERSED" -> com.cyclecare.app.data.payment.PaymentStatus.REVERSED
+            "AMBIGUOUS" -> com.cyclecare.app.data.payment.PaymentStatus.AMBIGUOUS
+            else -> null
+        }
+    }
+
     internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")

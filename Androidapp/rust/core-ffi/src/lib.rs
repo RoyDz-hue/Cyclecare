@@ -982,6 +982,22 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 None => serde_json::json!({"ok":{"version":1,"packages":null}}).to_string(),
             }
         })(),
+        "payment_capture_status_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port payment_safety::PaymentStatusVerifier::capture_status
+            // (PaymentSafety.kt PaymentStatusVerifier.captureStatus, main@31b88f5
+            // lineage; PaymentParity corpus cs21-cs29). Pure response
+            // interpretation: no I/O, no clock, no store access; the
+            // httpSuccessful/body captures are taken by the Kotlin caller at
+            // the original read point. The body parses with the AOSP-faithful
+            // lenient tokener; lone-surrogate/hex-float constructs trip the
+            // central unsupported-semantics marker and the transport declines
+            // to the Kotlin twin (real org.json).
+            let http_successful = match v.get("httpSuccessful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("httpSuccessful missing or not a boolean") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let status = corelib::payment_safety::PaymentStatusVerifier::capture_status(http_successful, body);
+            serde_json::json!({"ok":{"version":1,"status":status.kotlin_name()}}).to_string()
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry

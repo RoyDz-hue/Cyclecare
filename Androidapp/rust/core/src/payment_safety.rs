@@ -247,3 +247,42 @@ pub fn encoded_transaction_status_url(rest_url: &str, external_reference: &str) 
         url_encode_utf8(external_reference)
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PaymentStatus as PS;
+    use super::PaymentStatusVerifier as V;
+
+    /// Wired-surface pins (NEW IMPLEMENTATION, 2026-11-13): the verdicts the
+    /// Kotlin twin pins assert against real org.json, asserted here against
+    /// the port. Written, NOT executed in this workspace.
+    #[test]
+    fn capture_status_pins() {
+        // HTTP failure / malformed / non-object roots -> Ambiguous.
+        assert_eq!(V::capture_status(false, "{\"status\":\"success\",\"success\":true}"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "not json"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "[1,2]"), PS::Ambiguous);
+        // refunded/reversed branch order wins over the success combo.
+        assert_eq!(V::capture_status(true, "{\"status\":\"refunded\",\"success\":true}"), PS::Refunded);
+        assert_eq!(V::capture_status(true, "{\"status\":\"reversed\",\"settled\":true}"), PS::Reversed);
+        // Kotlin trim (Unicode) + lowercase: NBSP-padded "refunded" matches.
+        assert_eq!(V::capture_status(true, "{\"status\":\"\u{00A0}refunded\u{00A0}\"}"), PS::Refunded);
+        // COMPLETED requires optBoolean success AND (status success/settled
+        // OR optBoolean settled); strings parse, numbers do not.
+        assert_eq!(V::capture_status(true, "{\"status\":\"success\",\"success\":true}"), PS::Completed);
+        assert_eq!(V::capture_status(true, "{\"status\":\"anything\",\"success\":\"TRUE\",\"settled\":\"true\"}"), PS::Completed);
+        assert_eq!(V::capture_status(true, "{\"status\":\"success\"}"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "{\"status\":\"anything\",\"success\":\"true\",\"settled\":1}"), PS::Ambiguous);
+        // Failed vocabulary; everything else Ambiguous.
+        for s in ["failed", "cancelled", "canceled", "expired"] {
+            assert_eq!(V::capture_status(true, &format!("{{\"status\":\"{s}\"}}")), PS::Failed);
+        }
+        assert_eq!(V::capture_status(true, "{\"status\":\"pending\"}"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "{}"), PS::Ambiguous);
+        // optString coercion of a numeric status; duplicate keys last-wins;
+        // explicit null -> "".
+        assert_eq!(V::capture_status(true, "{\"status\":200}"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "{\"status\":\"pending\",\"status\":\"refunded\"}"), PS::Refunded);
+        assert_eq!(V::capture_status(true, "{\"status\":null}"), PS::Ambiguous);
+    }
+}
