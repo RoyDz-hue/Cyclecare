@@ -802,6 +802,280 @@ pub fn interpret_flow_status(
     }
 }
 
+// ---------- wiring seams: auth callback (link/code) interpretation ----------
+
+/// Kotlin Char.equals(ignoreCase): per-char equality, then uppercase-fold,
+/// then lowercase-fold (Kotlin's regionMatches(ignoreCase=true) algorithm).
+/// Rust char case mappings are Unicode-aware like Kotlin's; UTF-16 unit
+/// length vs code-point count can differ only for non-BMP input, which can
+/// never equal an ASCII target anyway.
+fn kotlin_eq_ignore_case(a: &str, b: &str) -> bool {
+    let ca: Vec<char> = a.chars().collect();
+    let cb: Vec<char> = b.chars().collect();
+    ca.len() == cb.len()
+        && ca.iter().zip(cb.iter()).all(|(x, y)| {
+            x == y
+                || x.to_uppercase().eq(y.to_uppercase())
+                || x.to_lowercase().eq(y.to_lowercase())
+        })
+}
+
+/// completeEmailLink's PRE-network parameter interpretation (NEW
+/// IMPLEMENTATION wiring seam, 2026-11-13). NON-CLOCK, no commits: the
+/// source branches on the parsed callback parameter map only. The
+/// parseAuthCallbackParameters call itself (android.net.Uri semantics)
+/// stays Kotlin; `params` is its ordered key/value output.
+/// NOTE the blank checks are isBlank, NOT isEmpty (a whitespace-only
+/// token/code takes the blank branch) - the older full-port tree used
+/// is_empty there; corpus-unlocked edge, mirrored Kotlin-true here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CbLinkParamsDecision {
+    /// AuthResult.Error(message), no commit.
+    Error(String),
+    /// Delegate to completeAuthCode with this code.
+    Code(String),
+    /// Proceed to the /user request carrying the raw link fields (expiry
+    /// values stay STRINGS: the commit converts with toLongOrNull at its
+    /// own original clock point).
+    Tokens {
+        access_token: String,
+        refresh_token: String,
+        expires_at: Option<String>,
+        expires_in: Option<String>,
+        link_type: Option<String>,
+    },
+}
+
+pub fn interpret_cb_link_params(params: &[(String, String)]) -> CbLinkParamsDecision {
+    let value = |key: &str| -> Option<&str> {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    };
+    // linkError = value("error_description") ?: value("error"): a PRESENT
+    // but blank error_description does NOT fall through to "error".
+    if let Some(e) = value("error_description").or_else(|| value("error")) {
+        if !kotlin_is_blank(e) {
+            return CbLinkParamsDecision::Error(for_response(
+                &e.replace('+', " "),
+                AuthOperation::Callback,
+            ));
+        }
+    }
+    let auth_code = value("code").unwrap_or("");
+    if !kotlin_is_blank(auth_code) {
+        if value("access_token").is_some() || value("refresh_token").is_some() {
+            return CbLinkParamsDecision::Error(MSG_CONFLICTING.to_string());
+        }
+        return CbLinkParamsDecision::Code(auth_code.to_string());
+    }
+    let access_token = value("access_token").unwrap_or("");
+    let refresh_token = value("refresh_token").unwrap_or("");
+    if kotlin_is_blank(access_token) || kotlin_is_blank(refresh_token) {
+        return CbLinkParamsDecision::Error(for_response("expired link", AuthOperation::Callback));
+    }
+    CbLinkParamsDecision::Tokens {
+        access_token: access_token.to_string(),
+        refresh_token: refresh_token.to_string(),
+        expires_at: value("expires_at").map(|s| s.to_string()),
+        expires_in: value("expires_in").map(|s| s.to_string()),
+        link_type: value("type").map(|s| s.to_string()),
+    }
+}
+
+/// completeEmailLink's POST-network /user response interpretation (NEW
+/// IMPLEMENTATION wiring seam, 2026-11-13). NON-CLOCK: the commit (with
+/// its expiry clock read) stays at the call site. The prefs-derived inputs
+/// are read by the caller at the source's original read points (before the
+/// commit that clears them). `link_type` is the raw "type" link parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CbLinkUserSuccess {
+    pub user_id: String,
+    /// user email ifBlank pendingEmail.orEmpty() - may itself be blank; the
+    /// commit maps blank -> null (source: `email.ifBlank { null }`).
+    pub email: String,
+    pub is_anonymous: bool,
+    pub linked_guest: bool,
+    pub password_recovery: bool,
+    pub needs_password_setup: bool,
+    pub account_mode: String,
+    pub message: String,
+    pub user: AuthUser,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CbLinkUserDecision {
+    Error(String),
+    Success(CbLinkUserSuccess),
+}
+
+pub fn interpret_cb_link_user(
+    successful: bool,
+    user_body: &str,
+    is_pending_guest_email_link: bool,
+    current_user_id: Option<&str>,
+    pending_email: Option<&str>,
+    pending_auth_action: Option<&str>,
+    link_type: Option<&str>,
+) -> CbLinkUserDecision {
+    if !successful {
+        return CbLinkUserDecision::Error(for_response(user_body, AuthOperation::Callback));
+    }
+    // JSONObject(userBody) throws on unparseable text -> source catch-all.
+    let user = match JsonParser::new(user_body).parse() {
+        Ok(v) if matches!(v, JsonValue::Object(_)) => v,
+        _ => return CbLinkUserDecision::Error(MSG_VERIFY_FAILED.to_string()),
+    };
+    let user_id = aosp_opt_string(&user, "id", "");
+    if kotlin_is_blank(&user_id) {
+        return CbLinkUserDecision::Error(fallback(AuthOperation::Callback).to_string());
+    }
+    let is_anonymous = opt_boolean(&user, "is_anonymous", false);
+    if !is_anonymous && !email_is_confirmed(&user) {
+        return CbLinkUserDecision::Error(MSG_UNCONFIRMED.to_string());
+    }
+    let current_nonblank = current_user_id.map(|u| !kotlin_is_blank(u)).unwrap_or(false);
+    if is_pending_guest_email_link && current_nonblank && current_user_id != Some(user_id.as_str()) {
+        return CbLinkUserDecision::Error(MSG_DIFFERENT_ACCOUNT.to_string());
+    }
+    let linked_guest = is_pending_guest_email_link && !is_anonymous;
+    let password_recovery = link_type
+        .map(|t| kotlin_eq_ignore_case(t, "recovery"))
+        .unwrap_or(false)
+        || pending_auth_action == Some(AUTH_ACTION_PASSWORD_RESET);
+    let email = if_blank(aosp_opt_string(&user, "email", ""))
+        .or_else(|| pending_email.map(|e| e.to_string()))
+        .unwrap_or_default();
+    let message = if linked_guest {
+        success_message_for_action(AUTH_ACTION_GUEST_LINK).to_string()
+    } else if password_recovery {
+        success_message_for_action(AUTH_ACTION_PASSWORD_RESET).to_string()
+    } else {
+        "Your CycleCare email is verified and you are signed in.".to_string()
+    };
+    CbLinkUserDecision::Success(CbLinkUserSuccess {
+        user_id: user_id.clone(),
+        user: read_user(&user, Some(email.as_str())),
+        email,
+        is_anonymous,
+        linked_guest,
+        password_recovery,
+        needs_password_setup: linked_guest || password_recovery,
+        account_mode: if is_anonymous { "ANONYMOUS" } else { "EMAIL" }.to_string(),
+        message,
+    })
+}
+
+/// completeAuthCode's PRE-network branch (NEW IMPLEMENTATION wiring seam,
+/// 2026-11-13): verifier presence, the pendingAuthAction default,
+/// linkingGuest and the already-signed-in gate. NON-CLOCK.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CbCodePreDecision {
+    /// Error(message), no commit (verifier missing -> "expired code").
+    Error(String),
+    /// Commit clearPendingAuthFlow() (no email clear), then Error(message)
+    /// (already signed in).
+    ErrorClearFlow(String),
+    /// Proceed to the PKCE token exchange with this resolved action.
+    Ok { action: String, linking_guest: bool },
+}
+
+pub fn interpret_cb_code_pre(
+    has_verifier: bool,
+    pending_auth_action: Option<&str>,
+    is_pending_guest_email_link: bool,
+    existing_user_id: Option<&str>,
+) -> CbCodePreDecision {
+    if !has_verifier {
+        return CbCodePreDecision::Error(for_response("expired code", AuthOperation::Callback));
+    }
+    let action = pending_auth_action
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| {
+            if is_pending_guest_email_link {
+                AUTH_ACTION_GUEST_LINK.to_string()
+            } else {
+                AUTH_ACTION_GOOGLE.to_string()
+            }
+        });
+    let linking_guest = (action == AUTH_ACTION_GUEST_LINK && is_pending_guest_email_link)
+        || action == AUTH_ACTION_GOOGLE_LINK;
+    let existing_nonblank = existing_user_id.map(|u| !kotlin_is_blank(u)).unwrap_or(false);
+    if existing_nonblank && !linking_guest {
+        return CbCodePreDecision::ErrorClearFlow(MSG_ALREADY_SIGNED_IN.to_string());
+    }
+    CbCodePreDecision::Ok { action, linking_guest }
+}
+
+/// completeAuthCode's POST-network token-response interpretation (NEW
+/// IMPLEMENTATION wiring seam, 2026-11-13). NON-CLOCK: the commits stay at
+/// the call site; saveSession's expiry default's clock read happens there.
+/// `action`/`linking_guest` come from interpret_cb_code_pre (or its twin);
+/// `existing_user_id`/`pending_email` are read at the source's points.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CbCodeResponseDecision {
+    /// Commit clearPendingAuthFlow(clearPendingEmail = true), then
+    /// Error(message).
+    ErrorClear(String),
+    /// Error(message) with NO commit: the source's parse catch-all
+    /// (JSONObject(body) throws inside the try).
+    ErrorPlain(String),
+    Ok {
+        /// saveSession(json, "EMAIL")'s raw field extraction (whole-body
+        /// user fallback; expires_at None = optLong default branch, caller
+        /// computes now+expires_in at the commit's clock point).
+        session: SessionFields,
+        /// user email ifBlank pendingEmail.orEmpty(); read pre-commit.
+        email: String,
+        needs_password_setup: bool,
+        message: String,
+        user: AuthUser,
+    },
+}
+
+pub fn interpret_cb_code_response(
+    action: &str,
+    linking_guest: bool,
+    existing_user_id: Option<&str>,
+    pending_email: Option<&str>,
+    successful: bool,
+    body: &str,
+) -> CbCodeResponseDecision {
+    let operation = operation_for_action(action);
+    if !successful {
+        return CbCodeResponseDecision::ErrorClear(for_response(body, operation));
+    }
+    let json = match JsonParser::new(body).parse() {
+        Ok(v) if matches!(v, JsonValue::Object(_)) => v,
+        _ => return CbCodeResponseDecision::ErrorPlain(fallback(operation).to_string()),
+    };
+    let empty = JsonValue::Object(vec![]);
+    let user = opt_object(&json, "user").unwrap_or(&empty);
+    let user_id = aosp_opt_string(user, "id", "");
+    if kotlin_is_blank(&aosp_opt_string(&json, "access_token", "")) || kotlin_is_blank(&user_id) {
+        return CbCodeResponseDecision::ErrorClear(fallback(operation).to_string());
+    }
+    let existing_nonblank = existing_user_id.map(|u| !kotlin_is_blank(u)).unwrap_or(false);
+    if linking_guest && existing_nonblank && existing_user_id != Some(user_id.as_str()) {
+        // A link callback must upgrade THIS account, never switch to another one.
+        return CbCodeResponseDecision::ErrorClear(MSG_DIFFERENT_ACCOUNT.to_string());
+    }
+    if !email_is_confirmed(user) {
+        return CbCodeResponseDecision::ErrorClear(MSG_VERIFY_EMAIL_FIRST.to_string());
+    }
+    let email = if_blank(aosp_opt_string(user, "email", ""))
+        .or_else(|| pending_email.map(|e| e.to_string()))
+        .unwrap_or_default();
+    CbCodeResponseDecision::Ok {
+        session: extract_session_fields(&json, "EMAIL"),
+        user: read_user(user, Some(email.as_str())),
+        email,
+        needs_password_setup: action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET,
+        message: success_message_for_action(action).to_string(),
+    }
+}
+
 // ---------- decision trees ----------
 
 /// Verbatim port of completeEmailLink. `auth_api_url` mirrors the service's
@@ -1331,6 +1605,207 @@ mod tests {
         assert_eq!(p2.session_expires_at_seconds, 1600);
     }
     #[test]
+    #[test]
+    fn interpret_cb_seams_wiring_pins() {
+        // kotlin_eq_ignore_case: Kotlin's ignoreCase does Unicode case
+        // folding (e.g. long s U+017F uppercases to S); plain ASCII too.
+        assert!(kotlin_eq_ignore_case("RECOVERY", "recovery"));
+        assert!(kotlin_eq_ignore_case("recover\u{17f}", "recovery"));
+        assert!(!kotlin_eq_ignore_case("recoverx", "recovery"));
+        assert!(!kotlin_eq_ignore_case("recovery", "recover"));
+
+        // --- params seam ---
+        // A PRESENT but blank error_description does NOT fall through to
+        // "error" (source: `value("error_description") ?: value("error")`
+        // picks the present blank; isNullOrBlank then skips the branch).
+        let p = vec![("error_description".to_string(), " ".to_string()),
+                     ("error".to_string(), "access_denied".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p),
+            CbLinkParamsDecision::Error(m) if m == for_response("expired link", AuthOperation::Callback)));
+        // Real link error: '+' -> ' ' before the corpus mapping.
+        let p = vec![("error_description".to_string(), "expired+link".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p),
+            CbLinkParamsDecision::Error(m) if m == for_response("expired link", AuthOperation::Callback)));
+        // code + token keys conflict.
+        let p = vec![("code".to_string(), "abc".to_string()),
+                     ("access_token".to_string(), "t".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p),
+            CbLinkParamsDecision::Error(m) if m == MSG_CONFLICTING));
+        // code alone delegates.
+        let p = vec![("code".to_string(), "abc".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p), CbLinkParamsDecision::Code(c) if c == "abc"));
+        // WHITESPACE-only code is blank (NOT isEmpty): falls to the token
+        // branch, whose tokens are absent -> expired-link error.
+        let p = vec![("code".to_string(), " ".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p),
+            CbLinkParamsDecision::Error(m) if m == for_response("expired link", AuthOperation::Callback)));
+        // Whitespace-only access token is blank -> expired-link error.
+        let p = vec![("access_token".to_string(), " ".to_string()),
+                     ("refresh_token".to_string(), "r".to_string())];
+        assert!(matches!(interpret_cb_link_params(&p),
+            CbLinkParamsDecision::Error(m) if m == for_response("expired link", AuthOperation::Callback)));
+        // Tokens carry the raw expiry/type strings unconverted.
+        let p = vec![("access_token".to_string(), "a".to_string()),
+                     ("refresh_token".to_string(), "r".to_string()),
+                     ("expires_at".to_string(), "1700000000x".to_string()),
+                     ("type".to_string(), "recovery".to_string())];
+        match interpret_cb_link_params(&p) {
+            CbLinkParamsDecision::Tokens { access_token, refresh_token, expires_at, expires_in, link_type } => {
+                assert_eq!(access_token, "a");
+                assert_eq!(refresh_token, "r");
+                assert_eq!(expires_at.as_deref(), Some("1700000000x")); // NOT parsed here
+                assert_eq!(expires_in, None);
+                assert_eq!(link_type.as_deref(), Some("recovery"));
+            }
+            other => panic!("expected tokens, got {other:?}"),
+        }
+
+        // --- link user seam ---
+        // Status error maps through the corpus with CALLBACK.
+        assert!(matches!(interpret_cb_link_user(false, "x", false, None, None, None, None),
+            CbLinkUserDecision::Error(m) if m == for_response("x", AuthOperation::Callback)));
+        // Parse failure -> the source catch-all message.
+        assert!(matches!(interpret_cb_link_user(true, "{nope", false, None, None, None, None),
+            CbLinkUserDecision::Error(m) if m == MSG_VERIFY_FAILED));
+        // Non-object 2xx -> same catch-all (JSONObject ctor throws).
+        assert!(matches!(interpret_cb_link_user(true, "[1]", false, None, None, None, None),
+            CbLinkUserDecision::Error(m) if m == MSG_VERIFY_FAILED));
+        // Blank id -> corpus fallback.
+        assert!(matches!(interpret_cb_link_user(true, "{}", false, None, None, None, None),
+            CbLinkUserDecision::Error(m) if m == fallback(AuthOperation::Callback)));
+        // Unconfirmed NON-anonymous -> verify-first message.
+        assert!(matches!(interpret_cb_link_user(true, r#"{"id":"u"}"#, false, None, None, None, None),
+            CbLinkUserDecision::Error(m) if m == MSG_UNCONFIRMED));
+        // ANONYMOUS skips the confirmation check entirely.
+        match interpret_cb_link_user(true, r#"{"id":"u","is_anonymous":true}"#, false, None, None, None, None) {
+            CbLinkUserDecision::Success(su) => {
+                assert!(su.is_anonymous);
+                assert_eq!(su.account_mode, "ANONYMOUS");
+                assert!(!su.linked_guest && !su.password_recovery && !su.needs_password_setup);
+                assert_eq!(su.message, "Your CycleCare email is verified and you are signed in.");
+                assert!(su.user.is_anonymous);
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+        // Pending guest link + different account id -> mismatch error.
+        assert!(matches!(interpret_cb_link_user(true, r#"{"id":"u2","email_confirmed_at":"x"}"#, true, Some("u1"), None, None, None),
+            CbLinkUserDecision::Error(m) if m == MSG_DIFFERENT_ACCOUNT));
+        // Same id passes and becomes a linked guest (needs password setup).
+        match interpret_cb_link_user(true, r#"{"id":"u1","email":"e@x.y","email_confirmed_at":"x"}"#, true, Some("u1"), None, None, None) {
+            CbLinkUserDecision::Success(su) => {
+                assert!(su.linked_guest && su.needs_password_setup);
+                assert_eq!(su.account_mode, "EMAIL");
+                assert_eq!(su.message, "Your guest data is now linked to your verified email. Set a password or use email sign-in.");
+                assert_eq!(su.email, "e@x.y");
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+        // Recovery detection: link type case-folded, or pending action.
+        match interpret_cb_link_user(true, r#"{"id":"u","email_confirmed_at":"x"}"#, false, None, None, None, Some("RECOVERY")) {
+            CbLinkUserDecision::Success(su) => {
+                assert!(su.password_recovery && su.needs_password_setup);
+                assert_eq!(su.message, "Your reset link is verified. Set a new password to finish.");
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+        match interpret_cb_link_user(true, r#"{"id":"u","email_confirmed_at":"x"}"#, false, None, None, Some(AUTH_ACTION_PASSWORD_RESET), None) {
+            CbLinkUserDecision::Success(su) => assert!(su.password_recovery),
+            other => panic!("expected success, got {other:?}"),
+        }
+        // Email fallback: blank user email -> pendingEmail.orEmpty(); the
+        // raw (possibly blank) value is carried for the commit's ifBlank.
+        match interpret_cb_link_user(true, r#"{"id":"u","email_confirmed_at":"x"}"#, false, None, Some("p@x.y"), None, None) {
+            CbLinkUserDecision::Success(su) => {
+                assert_eq!(su.email, "p@x.y");
+                assert_eq!(su.user.email.as_deref(), Some("p@x.y")); // readUser's fallback
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+
+        // --- code pre seam ---
+        assert!(matches!(interpret_cb_code_pre(false, None, false, None),
+            CbCodePreDecision::Error(m) if m == for_response("expired code", AuthOperation::Callback)));
+        // Action default: guest-link pending -> GUEST_LINK, else GOOGLE.
+        match interpret_cb_code_pre(true, None, true, None) {
+            CbCodePreDecision::Ok { action, linking_guest } => {
+                assert_eq!(action, AUTH_ACTION_GUEST_LINK);
+                assert!(linking_guest);
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+        match interpret_cb_code_pre(true, None, false, None) {
+            CbCodePreDecision::Ok { action, linking_guest } => {
+                assert_eq!(action, AUTH_ACTION_GOOGLE);
+                assert!(!linking_guest);
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+        // Already-signed-in gate: nonblank existing user and NOT linking.
+        assert!(matches!(interpret_cb_code_pre(true, Some(AUTH_ACTION_MAGIC_LINK), false, Some("u1")),
+            CbCodePreDecision::ErrorClearFlow(m) if m == MSG_ALREADY_SIGNED_IN));
+        // ... but a link callback upgrades THIS account: gate skipped.
+        match interpret_cb_code_pre(true, Some(AUTH_ACTION_GOOGLE_LINK), false, Some("u1")) {
+            CbCodePreDecision::Ok { linking_guest, .. } => assert!(linking_guest),
+            other => panic!("expected ok, got {other:?}"),
+        }
+
+        // --- code response seam ---
+        // Status error: CLEAR commit + corpus message (operation from action).
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, false, "x"),
+            CbCodeResponseDecision::ErrorClear(m) if m == for_response("x", AuthOperation::MagicLink)));
+        // Parse failure: NO commit (the source's catch-all) - the plain/
+        // clear distinction is the commit boundary, pinned.
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, true, "{nope"),
+            CbCodeResponseDecision::ErrorPlain(m) if m == fallback(AuthOperation::MagicLink)));
+        // Blank access token -> clear + fallback.
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, true, r#"{"user":{"id":"u"}}"#),
+            CbCodeResponseDecision::ErrorClear(m) if m == fallback(AuthOperation::MagicLink)));
+        // Blank user id -> clear + fallback.
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, true, r#"{"access_token":"t","user":{}}"#),
+            CbCodeResponseDecision::ErrorClear(m) if m == fallback(AuthOperation::MagicLink)));
+        // Link-callback account mismatch -> clear + mismatch message.
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_GUEST_LINK, true, Some("u1"), None, true,
+                r#"{"access_token":"t","user":{"id":"u2","email_confirmed_at":"x"}}"#),
+            CbCodeResponseDecision::ErrorClear(m) if m == MSG_DIFFERENT_ACCOUNT));
+        // Unconfirmed -> clear + verify message.
+        assert!(matches!(interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, true,
+                r#"{"access_token":"t","user":{"id":"u"}}"#),
+            CbCodeResponseDecision::ErrorClear(m) if m == MSG_VERIFY_EMAIL_FIRST));
+        // Success on GUEST_LINK: saveSession extraction (EMAIL mode, AOSP
+        // optLong grammar on string expires_at), needsPasswordSetup true.
+        match interpret_cb_code_response(AUTH_ACTION_GUEST_LINK, true, Some("u1"), Some("p@x.y"), true,
+                r#"{"access_token":"t","refresh_token":"r","expires_at":"3600.9","expires_in":1800,"user":{"id":"u1","email_confirmed_at":"x"}}"#) {
+            CbCodeResponseDecision::Ok { session, email, needs_password_setup, message, user } => {
+                assert_eq!(session.mode, "EMAIL");
+                assert_eq!(session.access_token.as_deref(), Some("t"));
+                assert_eq!(session.expires_at, Some(3600)); // "3600.9" via (long) Double.parseDouble
+                assert_eq!(session.expires_in, 1800);
+                assert_eq!(email, "p@x.y"); // blank user email -> pendingEmail
+                assert!(needs_password_setup);
+                assert_eq!(message, "Your guest data is now linked to your verified email. Set a password or use email sign-in.");
+                assert_eq!(user.id, "u1");
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+        // PASSWORD_RESET also needs setup; MAGIC_LINK does not.
+        match interpret_cb_code_response(AUTH_ACTION_PASSWORD_RESET, false, None, None, true,
+                r#"{"access_token":"t","user":{"id":"u","email_confirmed_at":"x"}}"#) {
+            CbCodeResponseDecision::Ok { needs_password_setup, message, .. } => {
+                assert!(needs_password_setup);
+                assert_eq!(message, "Your reset link is verified. Set a new password to finish.");
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+        match interpret_cb_code_response(AUTH_ACTION_MAGIC_LINK, false, None, None, true,
+                r#"{"access_token":"t","user":{"id":"u","email_confirmed_at":"x"}}"#) {
+            CbCodeResponseDecision::Ok { needs_password_setup, message, .. } => {
+                assert!(!needs_password_setup);
+                assert_eq!(message, "You're signed in to CycleCare.");
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+    }
+
     fn interpret_flow_seams_wiring_pins() {
         // NEW IMPLEMENTATION (2026-11-13) wiring-seam pins for signUp,
         // continueAsGuest, setPassword and the status-only flows. Written

@@ -1004,6 +1004,127 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
             }
         })(),
+        "auth_cb_link_params_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK pre-network
+            // callback-parameter interpretation (auth_link::
+            // interpret_cb_link_params). parseAuthCallbackParameters
+            // (android.net.Uri semantics) stays Kotlin; `params` is its
+            // key/value output. Tokens from the link cross IN and back OUT
+            // in the tokens verdict - same-device JNI copies, no
+            // logging/persistence/egress, no zeroization (standing
+            // accounting, as for the other auth ops).
+            let obj = match v.get("params").and_then(|x| x.as_object()) { Some(o) => o, None => return err("params missing or not an object") };
+            let mut params: Vec<(String, String)> = Vec::with_capacity(obj.len());
+            for (k, val) in obj {
+                match val.as_str() { Some(x) => params.push((k.clone(), x.to_string())), None => return err("params values must be strings") }
+            }
+            match corelib::auth_link::interpret_cb_link_params(&params) {
+                corelib::auth_link::CbLinkParamsDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::CbLinkParamsDecision::Code(c) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"code","code":c}}).to_string(),
+                corelib::auth_link::CbLinkParamsDecision::Tokens { access_token, refresh_token, expires_at, expires_in, link_type } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"tokens","accessToken":access_token,"refreshToken":refresh_token,
+                        "expiresAt":expires_at,"expiresIn":expires_in,"linkType":link_type}}).to_string(),
+            }
+        })(),
+        "auth_cb_link_user_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK /user response
+            // interpretation for completeEmailLink (auth_link::
+            // interpret_cb_link_user). The commit and its expiry clock read
+            // stay at the Kotlin call site; prefs-derived inputs are read
+            // by the caller at the source's original points.
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let user_body = match v.get("userBody").and_then(|x| x.as_str()) { Some(s) => s, None => return err("userBody missing or not a string") };
+            let pending_guest = match v.get("isPendingGuestEmailLink").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("isPendingGuestEmailLink missing or not a bool") };
+            macro_rules! opt_s {
+                ($key:literal) => {
+                    match v.get($key) {
+                        None => None,
+                        Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err(concat!($key, " not a string or null")) },
+                    }
+                };
+            }
+            let current_user_id = opt_s!("currentUserId");
+            let pending_email = opt_s!("pendingEmail");
+            let pending_action = opt_s!("pendingAuthAction");
+            let link_type = opt_s!("linkType");
+            match corelib::auth_link::interpret_cb_link_user(successful, user_body, pending_guest,
+                    current_user_id.as_deref(), pending_email.as_deref(), pending_action.as_deref(), link_type.as_deref()) {
+                corelib::auth_link::CbLinkUserDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::CbLinkUserDecision::Success(su) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","userId":su.user_id,"email":su.email,
+                        "anonymous":su.is_anonymous,"linkedGuest":su.linked_guest,"passwordRecovery":su.password_recovery,
+                        "needsPasswordSetup":su.needs_password_setup,"accountMode":su.account_mode,"message":su.message,
+                        "user":{"id":su.user.id,"email":su.user.email,"emailConfirmedAt":su.user.email_confirmed_at,"anonymous":su.user.is_anonymous}}}).to_string(),
+            }
+        })(),
+        "auth_cb_code_pre_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK pre-network
+            // completeAuthCode branch (auth_link::interpret_cb_code_pre):
+            // verifier presence (the VERIFIER ITSELF never crosses - a bool
+            // does), the pendingAuthAction default, linkingGuest, and the
+            // already-signed-in gate.
+            let has_verifier = match v.get("hasVerifier").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("hasVerifier missing or not a bool") };
+            let pending_guest = match v.get("isPendingGuestEmailLink").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("isPendingGuestEmailLink missing or not a bool") };
+            macro_rules! opt_s {
+                ($key:literal) => {
+                    match v.get($key) {
+                        None => None,
+                        Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err(concat!($key, " not a string or null")) },
+                    }
+                };
+            }
+            let pending_action = opt_s!("pendingAuthAction");
+            let existing_user_id = opt_s!("existingUserId");
+            match corelib::auth_link::interpret_cb_code_pre(has_verifier, pending_action.as_deref(), pending_guest, existing_user_id.as_deref()) {
+                corelib::auth_link::CbCodePreDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::CbCodePreDecision::ErrorClearFlow(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error_clear_flow","message":m}}).to_string(),
+                corelib::auth_link::CbCodePreDecision::Ok { action, linking_guest } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"ok","action":action,"linkingGuest":linking_guest}}).to_string(),
+            }
+        })(),
+        "auth_cb_code_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): NON-CLOCK PKCE token-response
+            // interpretation (auth_link::interpret_cb_code_response).
+            // Commits and the saveSession expiry clock read stay at the
+            // Kotlin call site. The response body (carrying tokens on
+            // success) crosses IN; session fields cross OUT - same
+            // accounting as the other auth ops.
+            let action = match v.get("action").and_then(|x| x.as_str()) { Some(s) => s, None => return err("action missing or not a string") };
+            let linking_guest = match v.get("linkingGuest").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("linkingGuest missing or not a bool") };
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            macro_rules! opt_s {
+                ($key:literal) => {
+                    match v.get($key) {
+                        None => None,
+                        Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err(concat!($key, " not a string or null")) },
+                    }
+                };
+            }
+            let existing_user_id = opt_s!("existingUserId");
+            let pending_email = opt_s!("pendingEmail");
+            match corelib::auth_link::interpret_cb_code_response(action, linking_guest, existing_user_id.as_deref(), pending_email.as_deref(), successful, body) {
+                corelib::auth_link::CbCodeResponseDecision::ErrorClear(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error_clear","message":m}}).to_string(),
+                corelib::auth_link::CbCodeResponseDecision::ErrorPlain(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_link::CbCodeResponseDecision::Ok { session, email, needs_password_setup, message, user } =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"success","message":message,"email":email,
+                        "needsPasswordSetup":needs_password_setup,
+                        "user":{"id":user.id,"email":user.email,"emailConfirmedAt":user.email_confirmed_at,"anonymous":user.is_anonymous},
+                        "session":{"mode":session.mode,"userId":session.user_id,"userEmail":session.user_email,
+                            "accessToken":session.access_token,"refreshToken":session.refresh_token,
+                            "expiresAt":session.expires_at,"expiresIn":session.expires_in}}}).to_string(),
+            }
+        })(),
         "session_refresh_shape_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13, reviewer-corrected): JNI
             // wiring of the NON-CLOCK shape segment of resolveAccessToken's

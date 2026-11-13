@@ -434,20 +434,26 @@ class SupabaseAuthService(
             return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
         }
         val parameters = parseAuthCallbackParameters(uri) ?: return@withContext AuthResult.Error("This is not a valid CycleCare sign-in link.")
-        fun value(key: String): String? = parameters[key]
 
-        val linkError = value("error_description") ?: value("error")
-        if (!linkError.isNullOrBlank()) return@withContext AuthResult.Error(AuthErrorMessages.forResponse(linkError.replace('+', ' '), AuthOperation.CALLBACK))
-        val authCode = value("code").orEmpty()
-        if (authCode.isNotBlank()) {
-            if (value("access_token") != null || value("refresh_token") != null) {
-                return@withContext AuthResult.Error("This CycleCare sign-in link contains conflicting session data. Request a new link.")
+        // Native-first NON-CLOCK parameter interpretation (NEW
+        // IMPLEMENTATION wiring, 2026-11-13); the completeAuthCode delegate
+        // and every commit stay at their original points.
+        val paramsDecision = com.cyclecare.app.rust.CycleCareCoreBridge.authCbLinkParams(parameters)
+            ?: interpretCbLinkParamsKotlin(parameters)
+        val linkTokens = when (paramsDecision.kind) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.ERROR ->
+                return@withContext AuthResult.Error(paramsDecision.message
+                    ?: AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.CODE -> {
+                val authCode = paramsDecision.code
+                    ?: return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+                return@withContext completeAuthCode(authCode,callbackContext,callbackCurrent)
             }
-            return@withContext completeAuthCode(authCode,callbackContext,callbackCurrent)
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.TOKENS -> paramsDecision.tokens
+                ?: return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
         }
-        val accessToken = value("access_token").orEmpty()
-        val refreshToken = value("refresh_token").orEmpty()
-        if (accessToken.isBlank() || refreshToken.isBlank()) return@withContext AuthResult.Error(AuthErrorMessages.forResponse("expired link", AuthOperation.CALLBACK))
+        val accessToken = linkTokens.accessToken
+        val refreshToken = linkTokens.refreshToken
 
         try {
             val userRequest = Request.Builder()
@@ -459,43 +465,40 @@ class SupabaseAuthService(
             val userResponse = client.newCall(userRequest).execute()
             val userBody = userResponse.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            if (!userResponse.isSuccessful) return@withContext AuthResult.Error(AuthErrorMessages.forResponse(userBody, AuthOperation.CALLBACK))
-            val user = JSONObject(userBody)
-            if (user.optString("id").isBlank()) return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
-            val isAnonymous = user.optBoolean("is_anonymous", false)
-            if (!isAnonymous && !emailIsConfirmed(user)) {
-                return@withContext AuthResult.Error("Email verification is not complete yet. Open the newest link from your inbox.")
+            // Native-first NON-CLOCK /user interpretation (NEW
+            // IMPLEMENTATION wiring, 2026-11-13); the prefs-derived inputs
+            // are read at the source's original points and the commit (with
+            // its expiry clock read) below is unchanged.
+            val linkUserDecision = com.cyclecare.app.rust.CycleCareCoreBridge.authCbLinkUser(
+                userResponse.isSuccessful, userBody,
+                authPreferences.isPendingGuestEmailLink, authPreferences.userId,
+                authPreferences.pendingEmail, authPreferences.pendingAuthAction, linkTokens.linkType)
+                ?: interpretCbLinkUserKotlin(userResponse.isSuccessful, userBody, linkTokens.linkType)
+            val linkUser = when (linkUserDecision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR ->
+                    return@withContext AuthResult.Error(linkUserDecision.message
+                        ?: AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.SUCCESS -> linkUserDecision.success
+                    ?: return@withContext AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
             }
-            if (authPreferences.isPendingGuestEmailLink &&
-                !authPreferences.userId.isNullOrBlank() && authPreferences.userId != user.optString("id")
-            ) {
-                return@withContext AuthResult.Error("This link belongs to a different account. Request a new CycleCare link on this device.")
-            }
-
-            val linkedGuest = authPreferences.isPendingGuestEmailLink && !isAnonymous
-            val passwordRecovery = value("type").equals("recovery", ignoreCase = true) || authPreferences.pendingAuthAction == AUTH_ACTION_PASSWORD_RESET
-            val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
             val committed=authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent) {
             authPreferences.accessToken = accessToken
             authPreferences.refreshToken = refreshToken
-            authPreferences.sessionExpiresAtSeconds = value("expires_at")?.toLongOrNull()
-                ?: ((System.currentTimeMillis() / 1000) + (value("expires_in")?.toLongOrNull() ?: 3600L))
-            authPreferences.userId = user.optString("id")
-            authPreferences.userEmail = email.ifBlank { null }
-            authPreferences.accountMode = if (isAnonymous) "ANONYMOUS" else "EMAIL"
+            authPreferences.sessionExpiresAtSeconds = linkTokens.expiresAt?.toLongOrNull()
+                ?: ((System.currentTimeMillis() / 1000) + (linkTokens.expiresIn?.toLongOrNull() ?: 3600L))
+            authPreferences.userId = linkUser.userId
+            authPreferences.userEmail = linkUser.email.ifBlank { null }
+            authPreferences.accountMode = linkUser.accountMode
             authPreferences.isPendingGuestEmailLink = false
             authPreferences.pendingEmail = null
             clearPendingAuthFlow()
-            authPreferences.needsPasswordSetup = linkedGuest || passwordRecovery
+            authPreferences.needsPasswordSetup = linkUser.needsPasswordSetup
             }
             if(!committed)return@withContext AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
             AuthResult.Success(
-                readUser(user, email),
-                when {
-                    linkedGuest -> "Your guest data is now linked to your verified email. Set a password or use email sign-in."
-                    passwordRecovery -> "Your reset link is verified. Set a new password to finish."
-                    else -> "Your CycleCare email is verified and you are signed in."
-                }
+                SupabaseUser(id = linkUser.user.id, email = linkUser.user.email,
+                    emailConfirmedAt = linkUser.user.emailConfirmedAt, isAnonymous = linkUser.user.anonymous),
+                linkUser.message
             )
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error("We couldn't verify this CycleCare link right now. Check your connection and try again.")
@@ -606,18 +609,32 @@ class SupabaseAuthService(
     }
 
     private suspend fun completeAuthCode(authCode: String, callbackContext:AuthPreferences.RustOperationSnapshot,callbackCurrent:()->Boolean): AuthResult {
+        // Native-first NON-CLOCK pre-flight (NEW IMPLEMENTATION wiring,
+        // 2026-11-13): verifier presence, the pendingAuthAction default,
+        // linkingGuest and the already-signed-in gate. The verifier value
+        // itself is re-read below for the request body (no writes between;
+        // the ERROR_CLEAR_FLOW branch returns before reaching it).
+        val pre = com.cyclecare.app.rust.CycleCareCoreBridge.authCbCodePre(
+            authPreferences.googlePkceVerifier != null,
+            authPreferences.pendingAuthAction,
+            authPreferences.isPendingGuestEmailLink,
+            authPreferences.userId)
+            ?: interpretCbCodePreKotlin()
+        when (pre.kind) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.ERROR ->
+                return AuthResult.Error(pre.message ?: AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.ERROR_CLEAR_FLOW -> {
+                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow()}
+                return AuthResult.Error(pre.message ?: AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+            }
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.OK -> {}
+        }
+        val action = pre.action ?: return AuthResult.Error(AuthErrorMessages.fallback(AuthOperation.CALLBACK))
+        val linkingGuest = pre.linkingGuest
+        val operation = operationForAction(action)
+        val existingUserId = authPreferences.userId
         val verifier = authPreferences.googlePkceVerifier
             ?: return AuthResult.Error(AuthErrorMessages.forResponse("expired code", AuthOperation.CALLBACK))
-        val action = authPreferences.pendingAuthAction ?:
-            if (authPreferences.isPendingGuestEmailLink) AUTH_ACTION_GUEST_LINK else AUTH_ACTION_GOOGLE
-        val operation = operationForAction(action)
-        val linkingGuest = (action == AUTH_ACTION_GUEST_LINK && authPreferences.isPendingGuestEmailLink) ||
-            action == AUTH_ACTION_GOOGLE_LINK
-        val existingUserId = authPreferences.userId
-        if (!existingUserId.isNullOrBlank() && !linkingGuest) {
-            authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow()}
-            return AuthResult.Error("An account is already signed in on this device. Sign out before switching accounts.")
-        }
         return try {
             val request = authRequest("token?grant_type=pkce", JSONObject().apply {
                 put("auth_code", authCode)
@@ -625,35 +642,37 @@ class SupabaseAuthService(
             })
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
-                return AuthResult.Error(AuthErrorMessages.forResponse(body, operation))
+            // Native-first NON-CLOCK token-response interpretation (NEW
+            // IMPLEMENTATION wiring, 2026-11-13); pendingEmail is read at
+            // the source's original point and every commit below is
+            // unchanged (saveSession's field writes via applySessionWrites,
+            // its expiry clock read inside).
+            val decision = com.cyclecare.app.rust.CycleCareCoreBridge.authCbCodeResponse(
+                action, linkingGuest, existingUserId, authPreferences.pendingEmail,
+                response.isSuccessful, body)
+                ?: interpretCbCodeResponseKotlin(action, linkingGuest, existingUserId, response.isSuccessful, body)
+            when (decision.kind) {
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_CLEAR -> {
+                    authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
+                    return AuthResult.Error(decision.message ?: AuthErrorMessages.fallback(operation))
+                }
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_PLAIN ->
+                    return AuthResult.Error(decision.message ?: AuthErrorMessages.fallback(operation))
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.SUCCESS -> {}
             }
-            val json = JSONObject(body)
-            val user = json.optJSONObject("user") ?: JSONObject()
-            val userId = user.optString("id")
-            if (json.optString("access_token").isBlank() || userId.isBlank()) {
-                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
-                return AuthResult.Error(AuthErrorMessages.fallback(operation))
-            }
-            if (linkingGuest && !existingUserId.isNullOrBlank() && existingUserId != userId) {
-                // A link callback must upgrade THIS account, never switch to another one.
-                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
-                return AuthResult.Error("This link belongs to a different account. Request a new CycleCare link on this device.")
-            }
-            if (!emailIsConfirmed(user)) {
-                authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){clearPendingAuthFlow(clearPendingEmail = true)}
-                return AuthResult.Error("Please verify your email using the CycleCare link before continuing.")
-            }
-            val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
+            val session = decision.session ?: return AuthResult.Error(AuthErrorMessages.fallback(operation))
+            val decidedUser = decision.user ?: return AuthResult.Error(AuthErrorMessages.fallback(operation))
             val committed=authPreferences.mutatePublicationIdentityIfCurrent(callbackContext,callbackCurrent){
-                saveSession(json, "EMAIL")
+                applySessionWrites(session)
                 authPreferences.isPendingGuestEmailLink = false
                 clearPendingAuthFlow(clearPendingEmail = true)
-                authPreferences.needsPasswordSetup = action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET
+                authPreferences.needsPasswordSetup = decision.needsPasswordSetup
             }
             if(!committed)return AuthResult.Error("This sign-in attempt is no longer current. Please try again.")
-            AuthResult.Success(readUser(user, email), successMessageForAction(action))
+            AuthResult.Success(
+                SupabaseUser(id = decidedUser.id, email = decidedUser.email,
+                    emailConfirmedAt = decidedUser.emailConfirmedAt, isAnonymous = decidedUser.anonymous),
+                decision.message ?: AuthErrorMessages.fallback(operation))
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             AuthResult.Error(AuthErrorMessages.fallback(operation))
         }
@@ -899,6 +918,150 @@ class SupabaseAuthService(
             com.cyclecare.app.rust.CycleCareCoreBridge.FlowStatusDecision(true,
                 AuthErrorMessages.forResponse(responseBody, operation))
         }
+    }
+
+    /** Verbatim Kotlin fallback of the native callback-parameter
+     * interpretation (NEW IMPLEMENTATION wiring, 2026-11-13): the original
+     * completeEmailLink pre-network branch, as a decision (the delegate and
+     * commits stay at the call site). NOTE isBlank, not isEmpty, on the
+     * code/token checks. */
+    private fun interpretCbLinkParamsKotlin(parameters: Map<String, String>): com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision {
+        fun value(key: String): String? = parameters[key]
+        val linkError = value("error_description") ?: value("error")
+        if (!linkError.isNullOrBlank()) return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.ERROR,
+            AuthErrorMessages.forResponse(linkError.replace('+', ' '), AuthOperation.CALLBACK), null, null)
+        val authCode = value("code").orEmpty()
+        if (authCode.isNotBlank()) {
+            if (value("access_token") != null || value("refresh_token") != null) {
+                return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision(
+                    com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.ERROR,
+                    "This CycleCare sign-in link contains conflicting session data. Request a new link.", null, null)
+            }
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.CODE, null, authCode, null)
+        }
+        val accessToken = value("access_token").orEmpty()
+        val refreshToken = value("refresh_token").orEmpty()
+        if (accessToken.isBlank() || refreshToken.isBlank()) return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.ERROR,
+            AuthErrorMessages.forResponse("expired link", AuthOperation.CALLBACK), null, null)
+        return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkParamsKind.TOKENS, null, null,
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkTokens(accessToken, refreshToken,
+                value("expires_at"), value("expires_in"), value("type")))
+    }
+
+    /** Verbatim Kotlin fallback of the native /user interpretation (NEW
+     * IMPLEMENTATION wiring, 2026-11-13): the original completeEmailLink
+     * post-network branch, reading authPreferences at the source's points.
+     * The commit stays at the call site. */
+    private fun interpretCbLinkUserKotlin(isSuccessful: Boolean, userBody: String, linkType: String?): com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision {
+        if (!isSuccessful) return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR,
+            AuthErrorMessages.forResponse(userBody, AuthOperation.CALLBACK), null)
+        val user = try { JSONObject(userBody) } catch (e: Exception) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR,
+                "We couldn't verify this CycleCare link right now. Check your connection and try again.", null)
+        }
+        if (user.optString("id").isBlank()) return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR,
+            AuthErrorMessages.fallback(AuthOperation.CALLBACK), null)
+        val isAnonymous = user.optBoolean("is_anonymous", false)
+        if (!isAnonymous && !emailIsConfirmed(user)) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR,
+                "Email verification is not complete yet. Open the newest link from your inbox.", null)
+        }
+        if (authPreferences.isPendingGuestEmailLink &&
+            !authPreferences.userId.isNullOrBlank() && authPreferences.userId != user.optString("id")
+        ) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.ERROR,
+                "This link belongs to a different account. Request a new CycleCare link on this device.", null)
+        }
+        val linkedGuest = authPreferences.isPendingGuestEmailLink && !isAnonymous
+        val passwordRecovery = linkType.equals("recovery", ignoreCase = true) || authPreferences.pendingAuthAction == AUTH_ACTION_PASSWORD_RESET
+        val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
+        val read = readUser(user, email)
+        return com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserKind.SUCCESS, null,
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbLinkUserSuccess(
+                user.optString("id"), email, isAnonymous, linkedGuest, passwordRecovery,
+                linkedGuest || passwordRecovery,
+                if (isAnonymous) "ANONYMOUS" else "EMAIL",
+                when {
+                    linkedGuest -> "Your guest data is now linked to your verified email. Set a password or use email sign-in."
+                    passwordRecovery -> "Your reset link is verified. Set a new password to finish."
+                    else -> "Your CycleCare email is verified and you are signed in."
+                },
+                com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous)))
+    }
+
+    /** Verbatim Kotlin fallback of the native completeAuthCode pre-flight
+     * (NEW IMPLEMENTATION wiring, 2026-11-13). */
+    private fun interpretCbCodePreKotlin(): com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreDecision {
+        val verifier = authPreferences.googlePkceVerifier
+            ?: return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.ERROR,
+                AuthErrorMessages.forResponse("expired code", AuthOperation.CALLBACK), null, false)
+        val action = authPreferences.pendingAuthAction ?:
+            if (authPreferences.isPendingGuestEmailLink) AUTH_ACTION_GUEST_LINK else AUTH_ACTION_GOOGLE
+        val linkingGuest = (action == AUTH_ACTION_GUEST_LINK && authPreferences.isPendingGuestEmailLink) ||
+            action == AUTH_ACTION_GOOGLE_LINK
+        val existingUserId = authPreferences.userId
+        if (!existingUserId.isNullOrBlank() && !linkingGuest) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.ERROR_CLEAR_FLOW,
+                "An account is already signed in on this device. Sign out before switching accounts.", null, false)
+        }
+        return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbCodePreKind.OK, null, action, linkingGuest)
+    }
+
+    /** Verbatim Kotlin fallback of the native completeAuthCode token-response
+     * interpretation (NEW IMPLEMENTATION wiring, 2026-11-13). ERROR_CLEAR
+     * carries the clearPendingAuthFlow(clearPendingEmail = true) commit;
+     * ERROR_PLAIN has NO commit (the source's parse catch-all). */
+    private fun interpretCbCodeResponseKotlin(action: String, linkingGuest: Boolean, existingUserId: String?, isSuccessful: Boolean, body: String): com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision {
+        val operation = operationForAction(action)
+        if (!isSuccessful) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_CLEAR,
+                AuthErrorMessages.forResponse(body, operation), null, false, null, null)
+        }
+        val json = try { JSONObject(body) } catch (e: Exception) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_PLAIN,
+                AuthErrorMessages.fallback(operation), null, false, null, null)
+        }
+        val user = json.optJSONObject("user") ?: JSONObject()
+        val userId = user.optString("id")
+        if (json.optString("access_token").isBlank() || userId.isBlank()) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_CLEAR,
+                AuthErrorMessages.fallback(operation), null, false, null, null)
+        }
+        if (linkingGuest && !existingUserId.isNullOrBlank() && existingUserId != userId) {
+            // A link callback must upgrade THIS account, never switch to another one.
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_CLEAR,
+                "This link belongs to a different account. Request a new CycleCare link on this device.", null, false, null, null)
+        }
+        if (!emailIsConfirmed(user)) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.ERROR_CLEAR,
+                "Please verify your email using the CycleCare link before continuing.", null, false, null, null)
+        }
+        val email = user.optString("email").ifBlank { authPreferences.pendingEmail.orEmpty() }
+        val read = readUser(user, email)
+        return com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.CbCodeResponseKind.SUCCESS,
+            successMessageForAction(action), email,
+            action == AUTH_ACTION_GUEST_LINK || action == AUTH_ACTION_PASSWORD_RESET,
+            extractSessionWritesKotlin(json, "EMAIL"),
+            com.cyclecare.app.rust.CycleCareCoreBridge.AuthUserFields(read.id, read.email, read.emailConfirmedAt, read.isAnonymous))
     }
 
     /** Applies native-decided session writes with EXACTLY saveSession's

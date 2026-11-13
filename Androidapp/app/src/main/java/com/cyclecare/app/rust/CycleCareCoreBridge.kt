@@ -1262,6 +1262,197 @@ object CycleCareCoreBridge {
         }
     }
 
+    /** Strict "ok"/version-1 envelope WITHOUT a message requirement (some
+     * callback verdicts carry no message). */
+    private fun strictOk(reply: JSONObject): JSONObject? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok
+    }
+
+    private fun strictMessage(ok: JSONObject): String? {
+        val message = ok.opt("message")
+        if (message !is String || message.isEmpty()) return null
+        return message as String
+    }
+
+    private fun strictOptString(ok: JSONObject, key: String): Pair<Boolean, String?>? {
+        return when (val v = ok.opt(key)) {
+            null, JSONObject.NULL -> Pair(true, null)
+            is String -> Pair(true, v)
+            else -> null
+        }
+    }
+
+    /** Decision of [authCbLinkParams]: the pre-network branch of
+     * completeEmailLink. ERROR: show message, no commit. CODE: delegate to
+     * completeAuthCode. TOKENS: proceed to the /user request with the raw
+     * link fields (expiry values stay STRINGS - the commit converts with
+     * toLongOrNull at its own clock point). */
+    enum class CbLinkParamsKind { ERROR, CODE, TOKENS }
+    data class CbLinkTokens(val accessToken: String, val refreshToken: String, val expiresAt: String?, val expiresIn: String?, val linkType: String?)
+    data class CbLinkParamsDecision(val kind: CbLinkParamsKind, val message: String?, val code: String?, val tokens: CbLinkTokens?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of completeEmailLink's
+     * NON-CLOCK callback-parameter interpretation (auth_link::
+     * interpret_cb_link_params). parseAuthCallbackParameters (android.net.Uri
+     * semantics) stays Kotlin; `params` is its output map. */
+    fun authCbLinkParams(params: Map<String, String>): CbLinkParamsDecision? {
+        val reply = call("auth_cb_link_params_v1", JSONObject()
+            .put("params", JSONObject(params))) ?: return null
+        return decodeCbLinkParamsDecision(reply)
+    }
+
+    internal fun decodeCbLinkParamsDecision(reply: JSONObject): CbLinkParamsDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> CbLinkParamsDecision(CbLinkParamsKind.ERROR, strictMessage(ok) ?: return null, null, null)
+            "code" -> {
+                val code = ok.opt("code")
+                if (code !is String || code.isEmpty()) return null
+                CbLinkParamsDecision(CbLinkParamsKind.CODE, null, code as String, null)
+            }
+            "tokens" -> {
+                val access = ok.opt("accessToken"); if (access !is String || access.isEmpty()) return null
+                val refresh = ok.opt("refreshToken"); if (refresh !is String || refresh.isEmpty()) return null
+                val expiresAt = strictOptString(ok, "expiresAt") ?: return null
+                val expiresIn = strictOptString(ok, "expiresIn") ?: return null
+                val linkType = strictOptString(ok, "linkType") ?: return null
+                CbLinkParamsDecision(CbLinkParamsKind.TOKENS, null, null,
+                    CbLinkTokens(access as String, refresh as String, expiresAt.second, expiresIn.second, linkType.second))
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authCbLinkUser]: the post-network /user interpretation
+     * of completeEmailLink. */
+    data class CbLinkUserSuccess(val userId: String, val email: String, val anonymous: Boolean,
+        val linkedGuest: Boolean, val passwordRecovery: Boolean, val needsPasswordSetup: Boolean,
+        val accountMode: String, val message: String, val user: AuthUserFields)
+    enum class CbLinkUserKind { ERROR, SUCCESS }
+    data class CbLinkUserDecision(val kind: CbLinkUserKind, val message: String?, val success: CbLinkUserSuccess?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of completeEmailLink's
+     * NON-CLOCK /user response interpretation (auth_link::
+     * interpret_cb_link_user). The commit and its expiry clock read stay at
+     * the call site; the prefs-derived inputs are read at the source's
+     * original points. */
+    fun authCbLinkUser(successful: Boolean, userBody: String, isPendingGuestEmailLink: Boolean,
+        currentUserId: String?, pendingEmail: String?, pendingAuthAction: String?, linkType: String?): CbLinkUserDecision? {
+        val reply = call("auth_cb_link_user_v1", JSONObject()
+            .put("successful", successful)
+            .put("userBody", userBody)
+            .put("isPendingGuestEmailLink", isPendingGuestEmailLink)
+            .put("currentUserId", currentUserId ?: JSONObject.NULL)
+            .put("pendingEmail", pendingEmail ?: JSONObject.NULL)
+            .put("pendingAuthAction", pendingAuthAction ?: JSONObject.NULL)
+            .put("linkType", linkType ?: JSONObject.NULL)) ?: return null
+        return decodeCbLinkUserDecision(reply)
+    }
+
+    internal fun decodeCbLinkUserDecision(reply: JSONObject): CbLinkUserDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> CbLinkUserDecision(CbLinkUserKind.ERROR, strictMessage(ok) ?: return null, null)
+            "success" -> {
+                val userId = ok.opt("userId"); if (userId !is String || userId.isEmpty()) return null
+                val email = ok.opt("email"); if (email !is String) return null
+                val anonymous = ok.opt("anonymous"); if (anonymous !is Boolean) return null
+                val linkedGuest = ok.opt("linkedGuest"); if (linkedGuest !is Boolean) return null
+                val passwordRecovery = ok.opt("passwordRecovery"); if (passwordRecovery !is Boolean) return null
+                val needsPasswordSetup = ok.opt("needsPasswordSetup"); if (needsPasswordSetup !is Boolean) return null
+                val accountMode = ok.opt("accountMode")
+                if (accountMode != "ANONYMOUS" && accountMode != "EMAIL") return null
+                val message = strictMessage(ok) ?: return null
+                val user = decodeAuthUserFields(ok.optJSONObject("user")) ?: return null
+                CbLinkUserDecision(CbLinkUserKind.SUCCESS, null, CbLinkUserSuccess(
+                    userId as String, email as String, anonymous as Boolean, linkedGuest as Boolean,
+                    passwordRecovery as Boolean, needsPasswordSetup as Boolean, accountMode as String, message, user))
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authCbCodePre]: completeAuthCode's pre-network branch.
+     * ERROR: no commit (verifier missing). ERROR_CLEAR_FLOW: commit
+     * clearPendingAuthFlow() (NO email clear), then error. OK: proceed with
+     * the resolved action. */
+    enum class CbCodePreKind { ERROR, ERROR_CLEAR_FLOW, OK }
+    data class CbCodePreDecision(val kind: CbCodePreKind, val message: String?, val action: String?, val linkingGuest: Boolean)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of completeAuthCode's
+     * NON-CLOCK pre-network branch (auth_link::interpret_cb_code_pre). The
+     * verifier itself never crosses - a presence bool does. */
+    fun authCbCodePre(hasVerifier: Boolean, pendingAuthAction: String?, isPendingGuestEmailLink: Boolean,
+        existingUserId: String?): CbCodePreDecision? {
+        val reply = call("auth_cb_code_pre_v1", JSONObject()
+            .put("hasVerifier", hasVerifier)
+            .put("pendingAuthAction", pendingAuthAction ?: JSONObject.NULL)
+            .put("isPendingGuestEmailLink", isPendingGuestEmailLink)
+            .put("existingUserId", existingUserId ?: JSONObject.NULL)) ?: return null
+        return decodeCbCodePreDecision(reply)
+    }
+
+    internal fun decodeCbCodePreDecision(reply: JSONObject): CbCodePreDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> CbCodePreDecision(CbCodePreKind.ERROR, strictMessage(ok) ?: return null, null, false)
+            "error_clear_flow" -> CbCodePreDecision(CbCodePreKind.ERROR_CLEAR_FLOW, strictMessage(ok) ?: return null, null, false)
+            "ok" -> {
+                val action = ok.opt("action")
+                if (action !is String || action.isEmpty()) return null
+                val linkingGuest = ok.opt("linkingGuest")
+                if (linkingGuest !is Boolean) return null
+                CbCodePreDecision(CbCodePreKind.OK, null, action as String, linkingGuest as Boolean)
+            }
+            else -> null
+        }
+    }
+
+    /** Decision of [authCbCodeResponse]: completeAuthCode's token-response
+     * interpretation. ERROR_CLEAR carries the source's
+     * clearPendingAuthFlow(clearPendingEmail = true) commit; ERROR_PLAIN
+     * has NO commit (the parse catch-all path). */
+    enum class CbCodeResponseKind { ERROR_CLEAR, ERROR_PLAIN, SUCCESS }
+    data class CbCodeResponseDecision(val kind: CbCodeResponseKind, val message: String?, val email: String?,
+        val needsPasswordSetup: Boolean, val session: SessionFieldWrites?, val user: AuthUserFields?)
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of completeAuthCode's
+     * NON-CLOCK token-response interpretation (auth_link::
+     * interpret_cb_code_response). saveSession's expiry default clock read
+     * stays at the call site's commit. */
+    fun authCbCodeResponse(action: String, linkingGuest: Boolean, existingUserId: String?, pendingEmail: String?,
+        successful: Boolean, body: String): CbCodeResponseDecision? {
+        val reply = call("auth_cb_code_response_v1", JSONObject()
+            .put("action", action)
+            .put("linkingGuest", linkingGuest)
+            .put("existingUserId", existingUserId ?: JSONObject.NULL)
+            .put("pendingEmail", pendingEmail ?: JSONObject.NULL)
+            .put("successful", successful)
+            .put("body", body)) ?: return null
+        return decodeCbCodeResponseDecision(reply)
+    }
+
+    internal fun decodeCbCodeResponseDecision(reply: JSONObject): CbCodeResponseDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error_clear" -> CbCodeResponseDecision(CbCodeResponseKind.ERROR_CLEAR, strictMessage(ok) ?: return null, null, false, null, null)
+            "error" -> CbCodeResponseDecision(CbCodeResponseKind.ERROR_PLAIN, strictMessage(ok) ?: return null, null, false, null, null)
+            "success" -> {
+                val message = strictMessage(ok) ?: return null
+                val email = ok.opt("email"); if (email !is String) return null
+                val needsPasswordSetup = ok.opt("needsPasswordSetup"); if (needsPasswordSetup !is Boolean) return null
+                val session = decodeSessionFieldWrites(ok.optJSONObject("session"), "EMAIL") ?: return null
+                val user = decodeAuthUserFields(ok.optJSONObject("user")) ?: return null
+                CbCodeResponseDecision(CbCodeResponseKind.SUCCESS, message, email as String,
+                    needsPasswordSetup as Boolean, session, user)
+            }
+            else -> null
+        }
+    }
+
     /** Reply of [supabaseConfigResolveClientSettings]. */
     data class SupabaseClientSettings(val url: String, val apiKey: String)
 
