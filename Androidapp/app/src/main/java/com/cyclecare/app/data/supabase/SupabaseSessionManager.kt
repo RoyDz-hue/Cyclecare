@@ -89,31 +89,44 @@ object SupabaseSessionManager {
                 val response = refreshTransport.execute(refreshToken)
                 currentCoroutineContext().ensureActive()
                 if(!originCurrent())return@withLock AccessTokenResolution.TemporarilyUnavailable
-                if (response.code !in 200..299) {
-                    return@withLock if (response.code in setOf(400, 401, 403)) AccessTokenResolution.ReauthenticationRequired
-                        else AccessTokenResolution.TemporarilyUnavailable
+                // Native-first validation (NEW IMPLEMENTATION wiring,
+                // 2026-11-13): the PURE decision segment only - transport,
+                // refreshMutex, publication-identity admission and the
+                // compare-and-set commit below stay Kotlin-side. nowSecs is
+                // captured at block entry for the native path; the Kotlin
+                // fallback reads the clock at its original mid-block
+                // position (same instant to second granularity; only a
+                // token whose exp equals a crossed second boundary could
+                // shift, behavior class unchanged). A null native reply
+                // keeps the verbatim Kotlin block, statement for statement.
+                val refreshValidation = com.cyclecare.app.rust.CycleCareCoreBridge.sessionRefreshValidation(
+                    response.code, response.body, owner, refreshToken, System.currentTimeMillis() / 1000)?.let {
+                    when (it.kind) {
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.VALID ->
+                            RefreshValidation.Proceed(
+                                it.accessToken ?: return@withLock AccessTokenResolution.TemporarilyUnavailable,
+                                it.rotatedRefresh ?: refreshToken, it.expiry, it.userEmail, it.anonymous)
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.REAUTH ->
+                            RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.UNAVAILABLE ->
+                            RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+                    }
+                } ?: validateRefreshResponseKotlin(response.code, response.body, owner, refreshToken)
+                val renewedToken: String
+                val rotatedRefresh: String
+                val newExpiry: Long
+                val refreshedEmail: String?
+                val refreshedAnonymous: Boolean
+                when (refreshValidation) {
+                    is RefreshValidation.Terminal -> return@withLock refreshValidation.resolution
+                    is RefreshValidation.Proceed -> {
+                        renewedToken = refreshValidation.renewedToken
+                        rotatedRefresh = refreshValidation.rotatedRefresh
+                        newExpiry = refreshValidation.newExpiry
+                        refreshedEmail = refreshValidation.userEmail
+                        refreshedAnonymous = refreshValidation.anonymous
+                    }
                 }
-                val raw = response.body ?: return@withLock AccessTokenResolution.TemporarilyUnavailable
-                if (raw.toByteArray(Charsets.UTF_8).size > MAX_RESPONSE_BYTES) return@withLock AccessTokenResolution.TemporarilyUnavailable
-                val json = JSONObject(raw)
-                val renewedToken = json.opt("access_token") as? String ?: return@withLock AccessTokenResolution.ReauthenticationRequired
-                val rotatedRefresh = if (!json.has("refresh_token")) refreshToken else
-                    json.opt("refresh_token") as? String ?: return@withLock AccessTokenResolution.ReauthenticationRequired
-                val user = json.optJSONObject("user") ?: return@withLock AccessTokenResolution.ReauthenticationRequired
-                if (user.opt("id") != owner || !validTokenForOwner(renewedToken, owner) ||
-                    rotatedRefresh.isBlank() || rotatedRefresh.length > MAX_TOKEN_CHARS || rotatedRefresh.any { it.isISOControl() }) {
-                    return@withLock AccessTokenResolution.ReauthenticationRequired
-                }
-                val now = System.currentTimeMillis() / 1000
-                val expiresAt = (json.opt("expires_at") as? Number)?.toLong() ?: 0L
-                val expiresIn = (json.opt("expires_in") as? Number)?.toLong() ?: 0L
-                val reportedExpiry = when {
-                    expiresAt > 0L -> expiresAt
-                    expiresIn in 1..604800L -> now + expiresIn
-                    else -> return@withLock AccessTokenResolution.ReauthenticationRequired
-                }
-                if (reportedExpiry <= now || reportedExpiry > now + 604800L) return@withLock AccessTokenResolution.ReauthenticationRequired
-                val newExpiry = minOf(reportedExpiry, tokenExpiry(renewedToken))
                 // Admission precedes the prefs monitor. All setters execute in one
                 // guarded transition, never waiting for admission while holding prefs.
                 var committed=false
@@ -124,8 +137,8 @@ object SupabaseSessionManager {
                     preferences.accessToken = renewedToken
                     preferences.refreshToken = rotatedRefresh
                     preferences.sessionExpiresAtSeconds = newExpiry
-                    preferences.userEmail = (user.opt("email") as? String)?.ifBlank { null } ?: preferences.userEmail
-                    preferences.accountMode = if (user.optBoolean("is_anonymous", false)) "ANONYMOUS" else "EMAIL"
+                    preferences.userEmail = refreshedEmail ?: preferences.userEmail
+                    preferences.accountMode = if (refreshedAnonymous) "ANONYMOUS" else "EMAIL"
                     true
                     } == true
                 }
@@ -137,6 +150,61 @@ object SupabaseSessionManager {
             catch (_: Exception) { AccessTokenResolution.TemporarilyUnavailable }
         }
         }
+    }
+
+    /** Result of the refresh-response validation segment: Proceed carries
+     * the validated fields for the guarded commit (rotatedRefresh is the
+     * EFFECTIVE refresh token - the old one when the response did not
+     * rotate; userEmail null = keep the stored value); Terminal maps the
+     * source's early returns. */
+    private sealed interface RefreshValidation {
+        data class Proceed(
+            val renewedToken: String,
+            val rotatedRefresh: String,
+            val newExpiry: Long,
+            val userEmail: String?,
+            val anonymous: Boolean,
+        ) : RefreshValidation
+        data class Terminal(val resolution: AccessTokenResolution) : RefreshValidation
+    }
+
+    /** Verbatim Kotlin fallback of the native refresh-response validation
+     * (NEW IMPLEMENTATION wiring, 2026-11-13): the original resolveAccessToken
+     * statements, with each return@withLock mapped to Terminal and the
+     * JSONObject(raw) parse failure - which the original code reached its
+     * outer catch (_: Exception) for - mapped to the SAME
+     * TemporarilyUnavailable outcome it produced there. validTokenForOwner
+     * and tokenExpiry keep their own (native-first) catch-alls and cannot
+     * throw from here, so no reachable exception path is altered. */
+    private fun validateRefreshResponseKotlin(code: Int, body: String?, owner: String, refreshToken: String): RefreshValidation {
+        if (code !in 200..299) {
+            return RefreshValidation.Terminal(if (code in setOf(400, 401, 403)) AccessTokenResolution.ReauthenticationRequired
+                else AccessTokenResolution.TemporarilyUnavailable)
+        }
+        val raw = body ?: return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+        if (raw.toByteArray(Charsets.UTF_8).size > MAX_RESPONSE_BYTES) return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+        val json = try { JSONObject(raw) } catch (e: Exception) { return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable) }
+        val renewedToken = json.opt("access_token") as? String ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        val rotatedRefresh = if (!json.has("refresh_token")) refreshToken else
+            json.opt("refresh_token") as? String ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        val user = json.optJSONObject("user") ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        if (user.opt("id") != owner || !validTokenForOwner(renewedToken, owner) ||
+            rotatedRefresh.isBlank() || rotatedRefresh.length > MAX_TOKEN_CHARS || rotatedRefresh.any { it.isISOControl() }) {
+            return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        }
+        val now = System.currentTimeMillis() / 1000
+        val expiresAt = (json.opt("expires_at") as? Number)?.toLong() ?: 0L
+        val expiresIn = (json.opt("expires_in") as? Number)?.toLong() ?: 0L
+        val reportedExpiry = when {
+            expiresAt > 0L -> expiresAt
+            expiresIn in 1..604800L -> now + expiresIn
+            else -> return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        }
+        if (reportedExpiry <= now || reportedExpiry > now + 604800L) return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        val newExpiry = minOf(reportedExpiry, tokenExpiry(renewedToken))
+        return RefreshValidation.Proceed(renewedToken, rotatedRefresh, newExpiry,
+            (user.opt("email") as? String)?.ifBlank { null },
+            user.optBoolean("is_anonymous", false))
     }
 
     /** Structural consistency only: authenticity is established by the fixed authenticated server, not by this parser. */

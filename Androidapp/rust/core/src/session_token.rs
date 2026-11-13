@@ -181,6 +181,105 @@ pub fn valid_token_for_owner(token: &str, owner: &str, now_secs: i64) -> bool {
     sub_ok && token_expiry(token) > now_secs
 }
 
+/// Outcome of validating a refresh HTTP response (the PURE segment of
+/// resolveAccessToken: status mapping, body bounds, org.json-locked parse,
+/// shape/owner/token/expiry checks). Transport, mutex, admission and the
+/// compare-and-set commit are host glue and stay outside this function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshValidation {
+    Proceed {
+        renewed_token: String,
+        /// Some(rotated) when the response rotated the refresh token;
+        /// None = keep the caller's old refresh token (Kotlin:
+        /// `if (!json.has("refresh_token")) refreshToken`). The EFFECTIVE
+        /// value's blank/length/ISO-control checks were applied inside.
+        rotated_refresh: Option<String>,
+        new_expiry: i64,
+        /// None = keep the stored email (Kotlin `?: preferences.userEmail`).
+        user_email: Option<String>,
+        anonymous: bool,
+    },
+    ReauthenticationRequired,
+    TemporarilyUnavailable,
+}
+
+/// The pure refresh-response validation of resolveAccessToken, shared by
+/// resolve_access_token above and the JNI wiring (NEW IMPLEMENTATION
+/// 2026-11-13) so both run ONE implementation. `old_refresh` is validated
+/// when the response carries no rotation - the Kotlin source applies the
+/// blank/UTF-16-length/ISO-control checks to the effective value regardless
+/// of origin.
+pub fn validate_refresh_response(
+    code: i32,
+    body: Option<&str>,
+    owner: &str,
+    old_refresh: &str,
+    now_secs: i64,
+) -> RefreshValidation {
+    use RefreshValidation::*;
+    if !(200..=299).contains(&code) {
+        return if matches!(code, 400 | 401 | 403) {
+            ReauthenticationRequired
+        } else {
+            TemporarilyUnavailable
+        };
+    }
+    let raw = match body {
+        Some(b) => b,
+        None => return TemporarilyUnavailable,
+    };
+    if raw.as_bytes().len() > MAX_RESPONSE_BYTES {
+        return TemporarilyUnavailable;
+    }
+    // JSONObject(raw) failure (malformed or non-object) -> catch -> Temp.
+    let json = match JsonParser::new(raw).parse() {
+        Ok(v @ JsonValue::Object(_)) => v,
+        _ => return TemporarilyUnavailable,
+    };
+    let renewed_token = match obj_get(&json, "access_token") {
+        Some(JsonValue::Str(s)) => s.clone(),
+        _ => return ReauthenticationRequired,
+    };
+    let rotated_refresh: Option<String> = match obj_get(&json, "refresh_token") {
+        None => None,
+        Some(JsonValue::Str(s)) => Some(s.clone()),
+        Some(_) => return ReauthenticationRequired,
+    };
+    let rotated_effective: &str = rotated_refresh.as_deref().unwrap_or(old_refresh);
+    let user = match obj_get(&json, "user") {
+        Some(v @ JsonValue::Object(_)) => v.clone(),
+        _ => return ReauthenticationRequired,
+    };
+    let uid_ok = matches!(obj_get(&user, "id"), Some(JsonValue::Str(s)) if *s == owner);
+    if !uid_ok
+        || !valid_token_for_owner(&renewed_token, owner, now_secs)
+        || kotlin_is_blank(rotated_effective)
+        || rotated_effective.chars().map(|c| c.len_utf16()).sum::<usize>() > MAX_TOKEN_CHARS
+        || rotated_effective.chars().any(|c| c.is_control())
+    {
+        return ReauthenticationRequired;
+    }
+    let expires_at = opt_number_long(&json, "expires_at");
+    let expires_in = opt_number_long(&json, "expires_in");
+    let reported_expiry = if expires_at > 0 {
+        expires_at
+    } else if (1..=604800).contains(&expires_in) {
+        now_secs + expires_in
+    } else {
+        return ReauthenticationRequired;
+    };
+    if reported_expiry <= now_secs || reported_expiry > now_secs + 604800 {
+        return ReauthenticationRequired;
+    }
+    let new_expiry = reported_expiry.min(token_expiry(&renewed_token));
+    let user_email: Option<String> = match obj_get(&user, "email") {
+        Some(JsonValue::Str(s)) if !kotlin_is_blank(s) => Some(s.clone()),
+        _ => None,
+    };
+    let anonymous = opt_boolean(&user, "is_anonymous");
+    Proceed { renewed_token, rotated_refresh, new_expiry, user_email, anonymous }
+}
+
 /// resolveAccessToken. `transport` performs the refresh HTTP call;
 /// Err(()) mirrors IOException (and any unexpected exception) ->
 /// TemporarilyUnavailable.
@@ -222,69 +321,18 @@ pub fn resolve_access_token(
         Ok(r) => r,
         Err(()) => return TemporarilyUnavailable,
     };
-    if !(200..=299).contains(&response.code) {
-        return if matches!(response.code, 400 | 401 | 403) {
-            ReauthenticationRequired
-        } else {
-            TemporarilyUnavailable
+    let (renewed_token, rotated_refresh, new_expiry, new_email, new_mode) =
+        match validate_refresh_response(response.code, response.body.as_deref(), &owner, &refresh_token, now_secs) {
+            RefreshValidation::Proceed { renewed_token, rotated_refresh, new_expiry, user_email, anonymous } => (
+                renewed_token,
+                rotated_refresh.unwrap_or_else(|| refresh_token.clone()),
+                new_expiry,
+                user_email,
+                if anonymous { "ANONYMOUS" } else { "EMAIL" },
+            ),
+            RefreshValidation::ReauthenticationRequired => return ReauthenticationRequired,
+            RefreshValidation::TemporarilyUnavailable => return TemporarilyUnavailable,
         };
-    }
-    let raw = match response.body {
-        Some(b) => b,
-        None => return TemporarilyUnavailable,
-    };
-    if raw.as_bytes().len() > MAX_RESPONSE_BYTES {
-        return TemporarilyUnavailable;
-    }
-    // JSONObject(raw) failure (malformed or non-object) -> catch -> Temp.
-    let json = match JsonParser::new(&raw).parse() {
-        Ok(v @ JsonValue::Object(_)) => v,
-        _ => return TemporarilyUnavailable,
-    };
-    let renewed_token = match obj_get(&json, "access_token") {
-        Some(JsonValue::Str(s)) => s.clone(),
-        _ => return ReauthenticationRequired,
-    };
-    let rotated_refresh = match obj_get(&json, "refresh_token") {
-        None => refresh_token.clone(),
-        Some(JsonValue::Str(s)) => s.clone(),
-        Some(_) => return ReauthenticationRequired,
-    };
-    let user = match obj_get(&json, "user") {
-        Some(v @ JsonValue::Object(_)) => v.clone(),
-        _ => return ReauthenticationRequired,
-    };
-    let uid_ok = matches!(obj_get(&user, "id"), Some(JsonValue::Str(s)) if *s == owner);
-    if !uid_ok
-        || !valid_token_for_owner(&renewed_token, &owner, now_secs)
-        || kotlin_is_blank(&rotated_refresh)
-        || rotated_refresh.chars().map(|c| c.len_utf16()).sum::<usize>() > MAX_TOKEN_CHARS
-        || rotated_refresh.chars().any(|c| c.is_control())
-    {
-        return ReauthenticationRequired;
-    }
-    let expires_at = opt_number_long(&json, "expires_at");
-    let expires_in = opt_number_long(&json, "expires_in");
-    let reported_expiry = if expires_at > 0 {
-        expires_at
-    } else if (1..=604800).contains(&expires_in) {
-        now_secs + expires_in
-    } else {
-        return ReauthenticationRequired;
-    };
-    if reported_expiry <= now_secs || reported_expiry > now_secs + 604800 {
-        return ReauthenticationRequired;
-    }
-    let new_expiry = reported_expiry.min(token_expiry(&renewed_token));
-    let new_email: Option<String> = match obj_get(&user, "email") {
-        Some(JsonValue::Str(s)) if !kotlin_is_blank(s) => Some(s.clone()),
-        _ => None,
-    };
-    let new_mode = if opt_boolean(&user, "is_anonymous") {
-        "ANONYMOUS"
-    } else {
-        "EMAIL"
-    };
     let committed = prefs.with_current_session(&owner, session, |q| {
         if q.access_token() != Some(token.as_str()) || q.refresh_token() != Some(refresh_token.as_str()) {
             return false;
@@ -523,6 +571,104 @@ mod android_b64_lock {
         }
         for input in ["QQ=", "A", "QQ==QQ", "====", "Q=Q=", "QUJDRA="] {
             assert!(b64url_decode(input).is_none(), "{input:?} should be rejected");
+        }
+    }
+    // Focused pins for validate_refresh_response (NEW IMPLEMENTATION,
+    // 2026-11-13). Written for execution on a build host; NOT executed in
+    // the wiring environment. NOW and jwt()/b64url() come from the
+    // executed-JVM lock helpers above (JWT_NEW: sub=owner1, exp=NOW+7200).
+    fn refresh_body(extra: &str) -> String {
+        format!(
+            "{{\"access_token\":\"{JWT_NEW}\",\"expires_at\":{},\"user\":{{\"id\":\"owner1\"{}}}}}",
+            1_700_003_600i64, extra
+        )
+    }
+
+    #[test]
+    fn validate_refresh_keep_old_and_rotation() {
+        // No refresh_token key -> keep old (None), email absent -> None.
+        match validate_refresh_response(200, Some(&refresh_body("")), "owner1", "oldrefresh", NOW) {
+            RefreshValidation::Proceed { renewed_token, rotated_refresh, new_expiry, user_email, anonymous } => {
+                assert_eq!(renewed_token, JWT_NEW);
+                assert_eq!(rotated_refresh, None);
+                // min(reported NOW+3600, jwt exp NOW+7200)
+                assert_eq!(new_expiry, 1_700_003_600);
+                assert_eq!(user_email, None);
+                assert!(!anonymous);
+            }
+            other => panic!("expected Proceed, got {other:?}"),
+        }
+        // Rotation: new refresh returned, expires_in path (no expires_at).
+        let body = format!(
+            "{{\"access_token\":\"{JWT_NEW}\",\"refresh_token\":\"rotated123\",\"expires_in\":3600,\"user\":{{\"id\":\"owner1\",\"email\":\"a@b.c\",\"is_anonymous\":true}}}}"
+        );
+        match validate_refresh_response(200, Some(&body), "owner1", "oldrefresh", NOW) {
+            RefreshValidation::Proceed { rotated_refresh, new_expiry, user_email, anonymous, .. } => {
+                assert_eq!(rotated_refresh.as_deref(), Some("rotated123"));
+                assert_eq!(new_expiry, NOW + 3600);
+                assert_eq!(user_email.as_deref(), Some("a@b.c"));
+                assert!(anonymous);
+            }
+            other => panic!("expected Proceed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_refresh_old_token_still_validated() {
+        // Keep-old case: the OLD refresh token's own blank/ISO-control/
+        // length checks apply (Kotlin checks the effective value regardless
+        // of origin) - this is why old_refresh is an input.
+        let good = refresh_body("");
+        assert_eq!(
+            validate_refresh_response(200, Some(&good), "owner1", "bad\u{7}refresh", NOW),
+            RefreshValidation::ReauthenticationRequired
+        );
+        assert_eq!(
+            validate_refresh_response(200, Some(&good), "owner1", "   ", NOW),
+            RefreshValidation::ReauthenticationRequired
+        );
+        let too_long = "x".repeat(16 * 1024 + 1);
+        assert_eq!(
+            validate_refresh_response(200, Some(&good), "owner1", &too_long, NOW),
+            RefreshValidation::ReauthenticationRequired
+        );
+    }
+
+    #[test]
+    fn validate_refresh_terminal_mapping() {
+        let good = refresh_body("");
+        // Status mapping.
+        assert_eq!(validate_refresh_response(400, Some(&good), "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        assert_eq!(validate_refresh_response(401, None, "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        assert_eq!(validate_refresh_response(403, None, "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        assert_eq!(validate_refresh_response(500, Some(&good), "owner1", "r", NOW), RefreshValidation::TemporarilyUnavailable);
+        assert_eq!(validate_refresh_response(199, Some(&good), "owner1", "r", NOW), RefreshValidation::TemporarilyUnavailable);
+        // Null body and malformed JSON -> TemporarilyUnavailable (the
+        // source's catch-all), NOT ReauthenticationRequired.
+        assert_eq!(validate_refresh_response(200, None, "owner1", "r", NOW), RefreshValidation::TemporarilyUnavailable);
+        assert_eq!(validate_refresh_response(200, Some("{not json"), "owner1", "r", NOW), RefreshValidation::TemporarilyUnavailable);
+        assert_eq!(validate_refresh_response(200, Some("[1,2]"), "owner1", "r", NOW), RefreshValidation::TemporarilyUnavailable);
+        // Shape failures -> ReauthenticationRequired.
+        assert_eq!(validate_refresh_response(200, Some("{}"), "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        // refresh_token present but null -> Reauth (opt as? String fails).
+        let body_null_rt = format!("{{\"access_token\":\"{JWT_NEW}\",\"refresh_token\":null,\"expires_at\":1700003600,\"user\":{{\"id\":\"owner1\"}}}}");
+        assert_eq!(validate_refresh_response(200, Some(&body_null_rt), "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        // Wrong owner in user.id -> Reauth.
+        assert_eq!(validate_refresh_response(200, Some(&good), "someoneelse", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        // Expiry bounds: reported <= now, or > now+604800 -> Reauth.
+        let past = format!("{{\"access_token\":\"{JWT_NEW}\",\"expires_at\":1699999999,\"user\":{{\"id\":\"owner1\"}}}}");
+        assert_eq!(validate_refresh_response(200, Some(&past), "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        let far = format!("{{\"access_token\":\"{JWT_NEW}\",\"expires_at\":1700604801,\"user\":{{\"id\":\"owner1\"}}}}");
+        assert_eq!(validate_refresh_response(200, Some(&far), "owner1", "r", NOW), RefreshValidation::ReauthenticationRequired);
+        // Blank email -> keep old (None); is_anonymous "true" STRING is
+        // coerced true by org.json optBoolean.
+        let coerced = format!("{{\"access_token\":\"{JWT_NEW}\",\"expires_at\":1700003600,\"user\":{{\"id\":\"owner1\",\"email\":\"  \",\"is_anonymous\":\"true\"}}}}");
+        match validate_refresh_response(200, Some(&coerced), "owner1", "r", NOW) {
+            RefreshValidation::Proceed { user_email, anonymous, .. } => {
+                assert_eq!(user_email, None);
+                assert!(anonymous);
+            }
+            other => panic!("expected Proceed, got {other:?}"),
         }
     }
 }

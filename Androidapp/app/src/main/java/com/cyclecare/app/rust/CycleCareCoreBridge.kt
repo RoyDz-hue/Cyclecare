@@ -943,6 +943,75 @@ object CycleCareCoreBridge {
         return valid
     }
 
+    /** Outcome of [sessionRefreshValidation]: VALID carries the extracted
+     * fields; rotatedRefresh/userEmail null mean "keep the current value".
+     * A null FUNCTION return means native unavailable/malformed reply ->
+     * the caller keeps its Kotlin validation, statement for statement. */
+    data class SessionRefreshValidation(
+        val kind: Kind,
+        val accessToken: String?,
+        val rotatedRefresh: String?,
+        val expiry: Long,
+        val userEmail: String?,
+        val anonymous: Boolean,
+    ) { enum class Kind { VALID, REAUTH, UNAVAILABLE } }
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the pure
+     * refresh-response validation segment of
+     * SupabaseSessionManager.resolveAccessToken (the corpus-locked
+     * session_token::validate_refresh_response, shared with the full
+     * port). Decision only: transport, refreshMutex, publication-identity
+     * admission and the compare-and-set commit stay Kotlin-side. The old
+     * refresh token crosses JNI as an input so the keep-old case is
+     * validated by the same implementation that validates a rotation. */
+    fun sessionRefreshValidation(code: Int, body: String?, owner: String, refreshToken: String, nowSecs: Long): SessionRefreshValidation? {
+        val reply = call("session_refresh_validation_v1", JSONObject()
+            .put("code", code)
+            .put("body", body ?: JSONObject.NULL)
+            .put("owner", owner)
+            .put("refreshToken", refreshToken)
+            .put("nowSecs", nowSecs)) ?: return null
+        return decodeSessionRefreshValidation(reply)
+    }
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "verdict" an
+     * exact kind string. A VALID reply must carry a nonempty accessToken,
+     * rotatedRefresh null-or-nonempty, expiry a genuine integer > 0,
+     * userEmail null-or-nonempty, anonymous a genuine Boolean - anything
+     * coerced or defaulted has no source shape and is drift. */
+    internal fun decodeSessionRefreshValidation(reply: JSONObject): SessionRefreshValidation? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return when (ok.opt("verdict")) {
+            "reauth" -> SessionRefreshValidation(SessionRefreshValidation.Kind.REAUTH, null, null, 0L, null, false)
+            "unavailable" -> SessionRefreshValidation(SessionRefreshValidation.Kind.UNAVAILABLE, null, null, 0L, null, false)
+            "valid" -> {
+                val access = ok.opt("accessToken")
+                if (access !is String || access.isEmpty()) return null
+                val rotated = ok.opt("rotatedRefresh")
+                if (rotated !== JSONObject.NULL && (rotated !is String || rotated.isEmpty())) return null
+                val expiry = when (val e = ok.opt("expiry")) {
+                    is Int -> e.toLong()
+                    is Long -> e
+                    else -> return null
+                }
+                if (expiry <= 0L) return null
+                val email = ok.opt("userEmail")
+                if (email !== JSONObject.NULL && (email !is String || email.isEmpty())) return null
+                val anonymous = ok.opt("anonymous")
+                if (anonymous !is Boolean) return null
+                SessionRefreshValidation(
+                    SessionRefreshValidation.Kind.VALID, access,
+                    if (rotated === JSONObject.NULL) null else rotated as String,
+                    expiry,
+                    if (email === JSONObject.NULL) null else email as String,
+                    anonymous)
+            }
+            else -> null
+        }
+    }
+
     /** Reply of [supabaseConfigResolveClientSettings]. */
     data class SupabaseClientSettings(val url: String, val apiKey: String)
 
