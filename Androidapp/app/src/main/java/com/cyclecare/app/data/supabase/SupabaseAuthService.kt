@@ -747,7 +747,13 @@ class SupabaseAuthService(
         // commit point - the same value at the same clock point.
         val rawExpiresAt = when (val e = json.opt("expires_at")) {
             is Number -> e.toLong()
-            is String -> e.toLongOrNull()
+            // AOSP optLong -> JSON.toLong: (long) Double.parseDouble(value)
+            // - the FULL Java grammar (trimmed whitespace, fractions
+            // truncate, exponents and hex floats parse, NaN -> 0,
+            // Infinity/overflow saturate, d/f suffixes parse), NOT
+            // Long.parseLong/toLongOrNull. Only NumberFormatException hits
+            // the default branch (the null marker here).
+            is String -> try { java.lang.Double.parseDouble(e).toLong() } catch (ex: NumberFormatException) { null }
             else -> null
         }
         return com.cyclecare.app.rust.CycleCareCoreBridge.SessionAuthDecision(

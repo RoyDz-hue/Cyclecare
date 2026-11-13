@@ -108,14 +108,158 @@ fn opt_boolean(obj: &JsonValue, key: &str, fallback: bool) -> bool {
     }
 }
 
+/// AOSP org.json JSON.toLong's String branch (android14-release libcore,
+/// org/json/JSON.java): `(long) Double.parseDouble(value)` - the FULL Java
+/// double grammar, NOT Long.parseDouble-free Long.parseLong: String.trim()
+/// (chars <= U+0020) whitespace, optional sign, case-sensitive
+/// NaN/Infinity, decimal floats with optional exponent, hex floats
+/// (0x..p..), and an optional d/f/D/F type suffix; then the JVM
+/// double-to-long cast (NaN -> 0, +/-Infinity and overflow saturate,
+/// truncate toward zero - exactly Rust's float `as` cast). None =
+/// NumberFormatException, i.e. the point where optLong hits its default
+/// branch. Mantissa accumulation is f64 (exact to 2^53); longer literals
+/// are a drift/attack-only edge and saturate on the cast anyway.
+fn aosp_parse_double_to_long(s: &str) -> Option<i64> {
+    let t = s.trim_matches(|c: char| (c as u32) <= 0x20);
+    let (t, neg) = match t.strip_prefix('-') {
+        Some(r) => (r, true),
+        None => (t.strip_prefix('+').unwrap_or(t), false),
+    };
+    if t == "NaN" {
+        return Some(0);
+    }
+    if t == "Infinity" {
+        return Some(if neg { i64::MIN } else { i64::MAX });
+    }
+    let core = match t.strip_suffix(|c| matches!(c, 'd' | 'D' | 'f' | 'F')) {
+        Some(r) => r,
+        None => t,
+    };
+    if core.is_empty() {
+        return None;
+    }
+    let d = if let Some(hex) = core.strip_prefix("0x").or_else(|| core.strip_prefix("0X")) {
+        parse_java_hex_float(hex)?
+    } else {
+        parse_java_decimal_float(core)?
+    };
+    Some((if neg { -d } else { d }) as i64)
+}
+
+/// Java DecimalFloatingPointLiteral (digits before and/or after an optional
+/// dot, optional decimal exponent); validated by hand, then Rust-parsed
+/// (the validated grammar is a subset of Rust's f64 grammar).
+fn parse_java_decimal_float(core: &str) -> Option<f64> {
+    let b = core.as_bytes();
+    let digits = |b: &[u8], mut i: usize| -> usize {
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        i
+    };
+    let mut i = 0;
+    let int_len = digits(b, 0);
+    i = int_len;
+    let mut frac_len = 0usize;
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let start = i;
+        i = digits(b, i);
+        frac_len = i - start;
+    }
+    if int_len == 0 && frac_len == 0 {
+        return None;
+    }
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        i += 1;
+        if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+            i += 1;
+        }
+        let start = i;
+        i = digits(b, i);
+        if i == start {
+            return None;
+        }
+    }
+    if i != b.len() {
+        return None;
+    }
+    core.parse::<f64>().ok()
+}
+
+/// Java HexFloatingPointLiteral body (after 0x): hex mantissa with optional
+/// fraction and a REQUIRED binary (p/P) exponent - bare "0xff" is not a
+/// hex float literal.
+fn parse_java_hex_float(hex: &str) -> Option<f64> {
+    let b = hex.as_bytes();
+    let hexd = |b: &[u8], mut i: usize| -> usize {
+        while i < b.len() && b[i].is_ascii_hexdigit() {
+            i += 1;
+        }
+        i
+    };
+    let mut mantissa = 0f64;
+    let int_end = hexd(b, 0);
+    let int_len = int_end;
+    for c in hex[..int_end].chars() {
+        mantissa = mantissa * 16.0 + c.to_digit(16)? as f64;
+    }
+    let mut i = int_end;
+    let mut frac_len = 0usize;
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let start = i;
+        i = hexd(b, i);
+        frac_len = i - start;
+        for c in hex[start..i].chars() {
+            mantissa = mantissa * 16.0 + c.to_digit(16)? as f64;
+        }
+    }
+    if int_len == 0 && frac_len == 0 {
+        return None;
+    }
+    if i >= b.len() || (b[i] != b'p' && b[i] != b'P') {
+        return None;
+    }
+    i += 1;
+    let exp_neg = if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+        let n = b[i] == b'-';
+        i += 1;
+        n
+    } else {
+        false
+    };
+    let start = i;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == start || i != b.len() {
+        return None;
+    }
+    let exp: Option<i32> = hex[start..i].parse().ok();
+    if mantissa == 0.0 {
+        return Some(0.0);
+    }
+    match exp {
+        // Java's parseDouble accumulates arbitrary exponent digits; beyond
+        // i32 the result is simply Infinity (or 0 for a negative exponent).
+        None => Some(if exp_neg { 0.0 } else { f64::INFINITY }),
+        Some(e) => {
+            let e = if exp_neg { -e } else { e };
+            Some(mantissa * 2f64.powi(e - 4 * frac_len as i32))
+        }
+    }
+}
+
 /// AOSP optLong: Number -> longValue (Double truncated toward zero);
-/// String -> Long.parseLong (no trimming, rejects junk); else fallback.
+/// String -> (long) Double.parseDouble (see aosp_parse_double_to_long -
+/// full Java grammar, junk hits the default); else fallback.
 fn opt_long(obj: &JsonValue, key: &str, fallback: i64) -> i64 {
     match obj_get(obj, key) {
         Some(JsonValue::Int(v)) => *v as i64,
         Some(JsonValue::Long(v)) => *v,
         Some(JsonValue::Double(v)) => v.trunc() as i64,
-        Some(JsonValue::Str(s)) => s.parse::<i64>().unwrap_or(fallback),
+        Some(JsonValue::Str(s)) => aosp_parse_double_to_long(s).unwrap_or(fallback),
         _ => fallback,
     }
 }
@@ -315,13 +459,14 @@ pub struct SessionFields {
 
 /// org.json optLong where hitting the default branch is the signal:
 /// Number -> longValue (Double truncated toward zero), String ->
-/// Long.parseLong (no trimming, rejects junk), anything else -> None.
+/// (long) Double.parseDouble (see aosp_parse_double_to_long - full Java
+/// grammar, junk -> None), anything else -> None.
 fn opt_long_raw(obj: &JsonValue, key: &str) -> Option<i64> {
     match obj_get(obj, key) {
         Some(JsonValue::Int(v)) => Some(*v as i64),
         Some(JsonValue::Long(v)) => Some(*v),
         Some(JsonValue::Double(v)) => Some(*v as i64),
-        Some(JsonValue::Str(s)) => s.parse::<i64>().ok(),
+        Some(JsonValue::Str(s)) => aosp_parse_double_to_long(s),
         _ => None,
     }
 }
@@ -857,6 +1002,30 @@ mod tests {
         let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"junk"}"#).parse().unwrap(), "EMAIL");
         assert_eq!(f.expires_at, None);
         assert_eq!(f.expires_in, 3600);
+        // AOSP optLong's String branch is (long) Double.parseDouble - the
+        // full Java grammar, NOT Long.parseLong: fractions truncate,
+        // whitespace trims, exponents and hex floats parse, NaN casts to 0,
+        // Infinity/overflow saturate, d/f suffixes parse.
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"3600.9"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(3600));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":" 3600 "}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(3600));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"1e3"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(1000));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"NaN"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(0));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"Infinity"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(i64::MAX));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"-Infinity"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(i64::MIN));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1p3"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(8));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"7d"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(7));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0xff"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, None); // hex float REQUIRES a p-exponent
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_in":"1e1"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_in, 10);
         // apply_session_fields: None user_id KEEPS current (no generation
         // bump), None tokens SET null, expiry default uses caller's now.
         let mut prefs = AuthPrefsState { is_secure_storage_available: true, ..Default::default() };

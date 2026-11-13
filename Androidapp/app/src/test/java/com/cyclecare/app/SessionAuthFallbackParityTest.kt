@@ -127,4 +127,25 @@ class SessionAuthFallbackParityTest {
         assertNull(junk.session!!.expiresAt)
         assertEquals(3600L, junk.session!!.expiresIn) // optLong junk -> fallback
     }
+
+    @Test
+    fun expiryStringCoercionIsAospParseDoubleNotParseLong() {
+        // AOSP optLong -> JSON.toLong: (long) Double.parseDouble(value) -
+        // the full Java grammar: fractions truncate, whitespace trims,
+        // exponents and hex floats parse, NaN -> 0, Infinity/overflow
+        // saturate, d/f suffixes parse. Only NumberFormatException reaches
+        // the default branch (the null marker).
+        fun expiresAt(raw: String) = interpret(true, """{"expires_at":"$raw","user":{"id":"u","email_confirmed_at":"x"}}""", "e@x.y").session!!.expiresAt
+        assertEquals(3600L, expiresAt("3600.9"))
+        assertEquals(3600L, expiresAt(" 3600 "))
+        assertEquals(1000L, expiresAt("1e3"))
+        assertEquals(0L, expiresAt("NaN"))
+        assertEquals(Long.MAX_VALUE, expiresAt("Infinity"))
+        assertEquals(Long.MIN_VALUE, expiresAt("-Infinity"))
+        assertEquals(8L, expiresAt("0x1p3"))
+        assertEquals(7L, expiresAt("7d"))
+        assertNull(expiresAt("0xff")) // hex float REQUIRES a p-exponent
+        val expIn = interpret(true, """{"expires_in":"1e1","user":{"id":"u","email_confirmed_at":"x"}}""", "e@x.y").session!!.expiresIn
+        assertEquals(10L, expIn)
+    }
 }
