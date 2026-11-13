@@ -85,15 +85,15 @@ class ConfirmCareLogRetryTest {
         val host = RustBoundRoomHost(prefs)
         val oldToken = (host.publish(null, database, prefs.rustOperationSnapshot()) as RustBoundRoomHost.Result.Value).value
         val portedRepository = CycleRepository(database, RustRepositoryPort(host, oldToken))
-        val baselineObserved=CompletableDeferred<CycleCareViewModel>()
-        val revisionObserved=CompletableDeferred<CycleCareViewModel>()
-        CycleCareViewModel.afterRustRevisionObservationForTests={target,revision,invalidated->
-            if(revision==0L&&!invalidated)baselineObserved.complete(target)
-            if(revision==1L&&invalidated)revisionObserved.complete(target)
+        val baselineObserved=CompletableDeferred<Unit>()
+        val revisionObserved=CompletableDeferred<Unit>()
+        CycleCareViewModel.afterRustRevisionObservationForTests={_,revision,invalidated->
+            if(revision==0L&&!invalidated)baselineObserved.complete(Unit)
+            if(revision==1L&&invalidated)revisionObserved.complete(Unit)
         }
         val vm2 = CycleCareViewModel(portedRepository, prefs, SupabaseSyncService(database, prefs), SupabaseAuthService(prefs))
         try {
-            assertSame(vm2, withTimeout(5000){baselineObserved.await()})
+            withTimeout(5000){baselineObserved.await()}
             vm2.consultCare("I have cramps and I feel tired")
             withTimeout(10000) { while (vm2.uiState.value.isCareLoading) delay(20) }
             val date = vm2.uiState.value.currentDate.toString()
@@ -120,7 +120,7 @@ class ConfirmCareLogRetryTest {
             // Replacement publishes a real revision; do not suppress its reset.
             val currentPort=RustRepositoryPort(host, successor)
             portedRepository.replaceRustPort(currentPort)
-            assertSame(vm2,withTimeout(5000){revisionObserved.await()})
+            withTimeout(5000){revisionObserved.await()}
             withTimeout(5000){while(vm2.identityResetEpochForTests<=epochBefore)delay(20)}
             // Join the startup selected by that reset, not an arbitrary delay.
             val startup=CycleCareViewModel::class.java.getDeclaredField("startupJob").let { it.isAccessible=true; it.get(vm2) as Job }

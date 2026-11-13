@@ -107,9 +107,9 @@ class RemotePricingFallbackParityTest {
         assertNull(twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":"\u00A012.5\u00A0","charge_currency":"USD","charge_amount":1}}]}"""))
         assertNull(twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":"\u008512.5\u0085","charge_currency":"USD","charge_amount":1}}]}"""))
         // Space and control whitespace (<= U+0020) trim and parse.
-        val spaced = twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":" 12.5 ","charge_currency":"USD","charge_amount":1}}]}"")
+        val spaced = twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":" 12.5 ","charge_currency":"USD","charge_amount":1}}]}""")
         assertEquals(12.5, spaced!!["p"]!!.amount, 0.0)
-        val ctrl = twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":"\t12.5\n","charge_currency":"USD","charge_amount":1}}]}"")
+        val ctrl = twin("""{"packages":[{"id":"p","display":{"currency":"UGX","amount":"\t12.5\n","charge_currency":"USD","charge_amount":1}}]}""")
         assertEquals(12.5, ctrl!!["p"]!!.amount, 0.0)
     }
 }
