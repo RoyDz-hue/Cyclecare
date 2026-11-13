@@ -113,7 +113,12 @@ class CycleRepository(database: CycleCareDatabase) {
      * construction so an install landing BEFORE its collector's first
      * emission is still detected (no asynchronous-baseline race). */
     internal fun currentRustPortRevision(): Long = rustPortRevision.value
-    private val activeReadSource:kotlinx.coroutines.flow.Flow<CycleCareDatabase> = kotlinx.coroutines.flow.combine(activeDatabase,rustPortRevision){db,_->db}
+    // RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+    // visibility widened private -> internal so the Stage-C observer-order
+    // witnesses (StageCInstallWitnessTest :231/:273) can collect this flow.
+    // No behavior change: same flow, already exposed indirectly through the
+    // public scopedLogs/allLogs/settingsFlow/onboardingProfileFlow.
+    internal val activeReadSource:kotlinx.coroutines.flow.Flow<CycleCareDatabase> = kotlinx.coroutines.flow.combine(activeDatabase,rustPortRevision){db,_->db}
     private var lifecyclePreferences: AuthPreferences? = null
     private var lifecycleContext: Context? = null
     private var lifecycleIdentity: String? = null

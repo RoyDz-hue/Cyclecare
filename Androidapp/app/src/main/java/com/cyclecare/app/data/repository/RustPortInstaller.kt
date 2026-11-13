@@ -63,6 +63,25 @@ internal class RustPortInstaller private constructor(
     constructor(repository: CycleRepository, host: RustBoundRoomHost, preferences: AuthPreferences) :
         this(repository, host, preferences, preferences.rustOperationSnapshot(), null)
 
+    /** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+     * the Stage-C reentry witnesses (StageCInstallWitnessTest :310) call a
+     * five-argument shape that binds the database at construction and names
+     * the expected captured owner. Semantics: witness capture-at-construction
+     * (an identity move after construction turns the next pass StaleIdentity),
+     * the passed database rides as the resolved database so the no-argument
+     * install() uses it, and the captured owner must equal expectedOwner - a
+     * construction-time fixture guard that fails fast instead of installing
+     * under a mismatched identity. */
+    constructor(
+        repository: CycleRepository,
+        host: RustBoundRoomHost,
+        preferences: AuthPreferences,
+        database: CycleCareDatabase,
+        expectedOwner: String?,
+    ) : this(repository, host, preferences, preferences.rustOperationSnapshot().also {
+        require(it.operation.owner == expectedOwner) { "rust_install_owner_mismatch" }
+    }, database)
+
     /** Production shape: the resolver's verified binding (snapshot captured
      * at resolve time, preopened database carried as one capability). */
     constructor(repository: CycleRepository, host: RustBoundRoomHost, resolution: RustPortInstallResolver.Resolution) :
