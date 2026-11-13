@@ -43,9 +43,10 @@ class DataExportPdfLayoutDecodeTest {
     }
 
     @Test
-    fun emptyOpsDecodes() {
-        val reply = JSONObject("""{"ok":{"version":1,"ops":[]}}""")
-        assertEquals(0, CycleCareCoreBridge.decodeDataExportPdfLayout(reply)!!.size)
+    fun emptyOpsDeclines() {
+        // The real port always emits at least the title draw; an empty
+        // stream is drift and declines to the twin.
+        assertNull(CycleCareCoreBridge.decodeDataExportPdfLayout(JSONObject("""{"ok":{"version":1,"ops":[]}}""")))
     }
 
     @Test

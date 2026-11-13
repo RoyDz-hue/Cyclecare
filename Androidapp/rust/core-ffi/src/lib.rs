@@ -1161,10 +1161,11 @@ fn dispatch(contract: &str, payload: &str) -> String {
             // Paint, and the PDF bytes stay in Kotlin. sync_codec struct
             // fields the layout never reads are defaulted here, not
             // transported. Conservative declines (err -> caller's verbatim
-            // Kotlin twin): a displayed float (bbt/sleep > 0) that is
-            // non-finite or non-integral outside the port's
-            // differential-verified Float.toString range [1e-3, 1e7); any
-            // string whose UTF-16 length exceeds MAX_LINE_CHARS (88) while
+            // Kotlin twin): a displayed float (bbt/sleep > 0) outside the
+            // port's differential-verified Float.toString range
+            // [1e-3, 1e7) (integral magnitudes >= 1e7 print scientific in
+            // Java, uncovered); any string whose UTF-16 length exceeds
+            // MAX_LINE_CHARS (88) while
             // containing non-BMP characters - the port's hard cut decodes
             // such a split pair lossy where Kotlin hands the lone unit to
             // drawText (rendering-only, declined anyway).
@@ -1257,10 +1258,12 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     let bbt = f("bbt_celsius")?;
                     let sleep = f("sleep_hours")?;
                     for (k, v) in [("bbt_celsius", bbt), ("sleep_hours", sleep)] {
-                        if v > 0.0 {
-                            if !v.is_finite() { return Err(format!("{k} non-finite")); }
-                            let integral = (v as f64) == ((v as i64) as f64);
-                            if !integral && !(1e-3..1e7).contains(&(v.abs() as f64)) { return Err(format!("{k} outside verified range")); }
+                        // Displayed iff v > 0 (NaN fails the gate, as in
+                        // Kotlin). Everything displayed must sit in the
+                        // port's verified plain range; integral values
+                        // >= 1e7 would print scientific in Java.
+                        if v > 0.0 && !(1e-3..1e7).contains(&(v.abs() as f64)) {
+                            return Err(format!("{k} outside verified display range"));
                         }
                     }
                     Ok(sc::CycleDayLog {

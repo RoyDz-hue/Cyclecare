@@ -1290,6 +1290,9 @@ object CycleCareCoreBridge {
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         val ops = ok.optJSONArray("ops") ?: return null
+        // The real port always emits at least the title draw; an empty
+        // stream is drift, not a valid layout.
+        if (ops.length() == 0) return null
         val out = ArrayList<PdfDrawOp>(ops.length())
         for (idx in 0 until ops.length()) {
             val op = ops.optJSONObject(idx) ?: return null
