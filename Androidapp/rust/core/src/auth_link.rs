@@ -36,6 +36,7 @@
 
 use crate::auth_errors::{fallback, for_response, AuthOperation};
 use crate::auth_uri::parse_auth_callback_url;
+use crate::kotlin_text::{kotlin_equals_ignore_case, kotlin_is_blank};
 use crate::sync_codec::{aosp_opt_string, json_value_to_string, JsonParser, JsonValue};
 
 pub const AUTH_ACTION_GUEST_LINK: &str = "GUEST_LINK";
@@ -58,21 +59,11 @@ const MSG_VERIFY_EMAIL_FIRST: &str =
     "Please verify your email using the CycleCare link before continuing.";
 const MSG_SECURE_UNAVAILABLE: &str = "Secure credential storage is unavailable on this device. Sign-in, cloud sync, and app lock are disabled until device security is restored.";
 
-/// Kotlin Char.isWhitespace for the chars production links can carry
-/// (ASCII + the Unicode spaces Kotlin counts; per WsProbe learning NBSP,
-/// NNBSP and thin space count as whitespace in Kotlin).
-fn kotlin_is_blank(s: &str) -> bool {
-    s.chars().all(|c| {
-        matches!(
-            c,
-            ' ' | '\t' | '\n' | '\r' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{A0}' | '\u{1680}'
-                | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}'
-                | '\u{3000}'
-        )
-    })
-}
-
-/// Kotlin String.ifBlank { null }.
+/// Kotlin String.ifBlank { null }. The blank predicate is the SHARED
+/// probe-locked kotlin_text::kotlin_is_blank (TrimProbe2's executed set);
+/// this module's older private copy diverged at U+0085 (Kotlin: NOT
+/// whitespace) and U+001C-U+001F (Kotlin: whitespace) and was removed
+/// (one-implementation reconciliation, 2026-11-13).
 fn if_blank(s: String) -> Option<String> {
     if kotlin_is_blank(&s) {
         None
@@ -804,22 +795,6 @@ pub fn interpret_flow_status(
 
 // ---------- wiring seams: auth callback (link/code) interpretation ----------
 
-/// Kotlin Char.equals(ignoreCase): per-char equality, then uppercase-fold,
-/// then lowercase-fold (Kotlin's regionMatches(ignoreCase=true) algorithm).
-/// Rust char case mappings are Unicode-aware like Kotlin's; UTF-16 unit
-/// length vs code-point count can differ only for non-BMP input, which can
-/// never equal an ASCII target anyway.
-fn kotlin_eq_ignore_case(a: &str, b: &str) -> bool {
-    let ca: Vec<char> = a.chars().collect();
-    let cb: Vec<char> = b.chars().collect();
-    ca.len() == cb.len()
-        && ca.iter().zip(cb.iter()).all(|(x, y)| {
-            x == y
-                || x.to_uppercase().eq(y.to_uppercase())
-                || x.to_lowercase().eq(y.to_lowercase())
-        })
-}
-
 /// completeEmailLink's PRE-network parameter interpretation (NEW
 /// IMPLEMENTATION wiring seam, 2026-11-13). NON-CLOCK, no commits: the
 /// source branches on the parsed callback parameter map only. The
@@ -941,7 +916,7 @@ pub fn interpret_cb_link_user(
     }
     let linked_guest = is_pending_guest_email_link && !is_anonymous;
     let password_recovery = link_type
-        .map(|t| kotlin_eq_ignore_case(t, "recovery"))
+        .map(|t| kotlin_equals_ignore_case(t, "recovery"))
         .unwrap_or(false)
         || pending_auth_action == Some(AUTH_ACTION_PASSWORD_RESET);
     let email = if_blank(aosp_opt_string(&user, "email", ""))
@@ -1566,14 +1541,15 @@ mod tests {
     #[test]
     #[test]
     fn interpret_cb_seams_wiring_pins() {
-        // kotlin_eq_ignore_case: Kotlin's ignoreCase does Unicode case
-        // folding (e.g. long s U+017F uppercases to S); plain ASCII too.
-        assert!(kotlin_eq_ignore_case("RECOVERY", "recovery"));
+        // kotlin_equals_ignore_case: Kotlin's ignoreCase folds per char
+        // with Java's SIMPLE mappings (long s U+017F uppercases to S);
+        // plain ASCII too.
+        assert!(kotlin_equals_ignore_case("RECOVERY", "recovery"));
         // U+017F (long s) folds to S, so "recoverſ" is "RECOVERS" - NOT a
         // match (the reviewer caught a false positive expectation here).
-        assert!(!kotlin_eq_ignore_case("recover\u{17f}", "recovery"));
-        assert!(!kotlin_eq_ignore_case("recoverx", "recovery"));
-        assert!(!kotlin_eq_ignore_case("recovery", "recover"));
+        assert!(!kotlin_equals_ignore_case("recover\u{17f}", "recovery"));
+        assert!(!kotlin_equals_ignore_case("recoverx", "recovery"));
+        assert!(!kotlin_equals_ignore_case("recovery", "recover"));
 
         // --- params seam ---
         // A PRESENT but blank error_description does NOT fall through to

@@ -54,6 +54,24 @@ mod tests {
         assert_eq!(kotlin_trim_end("\u{2003}x\u{2003}"), "\u{2003}x");
         assert_eq!(kotlin_trim_start("\u{A0}x\u{A0}"), "x\u{A0}");
     }
+    /// One-implementation reconciliation pins (2026-11-13): auth_link's
+    /// removed private copies disagreed with the probe-locked set at these
+    /// exact codepoints / mappings.
+    #[test]
+    fn reconciled_blank_and_fold_edges() {
+        // auth_link's removed private kotlin_is_blank counted U+0085 as
+        // whitespace and missed U+001C-U+001F; both wrong per TrimProbe2.
+        assert!(!kotlin_is_blank("\u{85}"));
+        assert!(kotlin_is_blank("\u{1C}\u{1F}"));
+        // Java SIMPLE case mappings (Character.toUpperCase/toLowerCase):
+        // U+0130 (dotted capital I) lowercases to plain 'i', so Kotlin's
+        // equals(ignoreCase) matches it to "i"; the removed private copy
+        // used Rust's FULL mappings ("i" + combining dot) and missed it.
+        assert!(kotlin_equals_ignore_case("\u{130}", "i"));
+        // The inc12 recovery pins hold under simple mappings: long s -> S.
+        assert!(kotlin_equals_ignore_case("RECOVERY", "recovery"));
+        assert!(!kotlin_equals_ignore_case("recover\u{17f}", "recovery"));
+    }
 }
 
 use unicode_general_category::{get_general_category, GeneralCategory};
