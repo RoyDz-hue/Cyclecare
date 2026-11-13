@@ -144,11 +144,15 @@ impl<S: CheckoutRequestStore> CheckoutRequestIdManager<S> {
 
 // --- org.json opt semantics -----------------------------------------------
 
-/// org.json.optString(key, ""): "" when absent or JSONObject.NULL; the
-/// string itself when String; String.valueOf(value) otherwise.
-/// org.json JSONObject.optString(key, ""): absent/JSONObject.NULL -> "";
-/// String as-is; Boolean -> toString; Number -> numberToString
-/// (integral doubles strip ".0"); nested JSONObject/JSONArray -> toString.
+/// AOSP android-14.0.0_r50 JSONObject.optString(key, ""):
+/// JSON.toString(opt(name)) ?: "", and JSON.toString is the String itself
+/// for strings, String.valueOf(value) for any other NON-NULL value, null
+/// for Java null. So Double 200.0 -> "200.0" (String.valueOf, NOT
+/// numberToString's stripped "200"), Boolean -> "true"/"false", nested
+/// JSONObject/JSONArray -> their toString. Divergence (outcome-neutral for
+/// capture_status): a JSONObject.NULL field yields the literal "null" via
+/// String.valueOf(JSONObject.NULL) while this helper returns "" - both
+/// match no status vocabulary branch, so the verdict is identical.
 fn opt_string(obj: &JsonValue, key: &str) -> String {
     let v = match obj {
         JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -279,9 +283,12 @@ mod tests {
         }
         assert_eq!(V::capture_status(true, "{\"status\":\"pending\"}"), PS::Ambiguous);
         assert_eq!(V::capture_status(true, "{}"), PS::Ambiguous);
-        // optString coercion of a numeric status; duplicate keys last-wins;
-        // explicit null -> "".
+        // optString coercion of a numeric status (String.valueOf semantics,
+        // so 200.0 renders "200.0"); duplicate keys last-wins; explicit null
+        // -> helper yields "" where AOSP yields literal "null" - both
+        // outcome-neutral here, no branch matches either way.
         assert_eq!(V::capture_status(true, "{\"status\":200}"), PS::Ambiguous);
+        assert_eq!(V::capture_status(true, "{\"status\":200.0}"), PS::Ambiguous);
         assert_eq!(V::capture_status(true, "{\"status\":\"pending\",\"status\":\"refunded\"}"), PS::Refunded);
         assert_eq!(V::capture_status(true, "{\"status\":null}"), PS::Ambiguous);
     }

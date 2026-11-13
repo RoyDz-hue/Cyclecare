@@ -57,7 +57,10 @@ class PaymentCaptureStatusFallbackParityTest {
         assertEquals(PaymentStatus.COMPLETED, twin(true, """{"status":"anything","success":true,"settled":true}"""))
         // optBoolean accepts the STRING "true" (case-insensitive).
         assertEquals(PaymentStatus.COMPLETED, twin(true, """{"status":"success","success":"true"}"""))
-        assertEquals(PaymentStatus.COMPLETED, twin(true, """{"status":"anything","success":"TRUE","settled":1}"""))
+        assertEquals(PaymentStatus.COMPLETED, twin(true, """{"status":"anything","success":"TRUE","settled":"true"}"""))
+        // Numbers are NOT optBoolean-true: JSON.toBoolean(1) is null ->
+        // fallback false (executed-oracle verified), so the combo fails.
+        assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":"anything","success":"TRUE","settled":1}"""))
         // Without success=true there is no COMPLETED.
         assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":"success"}"""))
         assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":"success","success":1}"""))
@@ -75,12 +78,16 @@ class PaymentCaptureStatusFallbackParityTest {
 
     @Test
     fun optStringCoercionsAndDuplicateKeys() {
-        // Numeric status -> org.json optString coercion; integral doubles
-        // strip ".0" (numberToString).
+        // Numeric status -> org.json optString coercion. AOSP android-14
+        // JSON.toString is String.valueOf for non-strings: a Double status
+        // renders "200.0" (NOT numberToString's stripped "200"); either way
+        // no vocabulary branch matches.
         assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":200}"""))
+        assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":200.0}"""))
         // Duplicate key: JSONObject.put is last-wins.
         assertEquals(PaymentStatus.REFUNDED, twin(true, """{"status":"pending","status":"refunded"}"""))
-        // JSONObject.NULL status -> "" -> AMBIGUOUS.
+        // JSONObject.NULL status: String.valueOf(JSONObject.NULL) is the
+        // literal "null", which matches no branch -> AMBIGUOUS.
         assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":null}"""))
         // A nested object status coerces to its toString, never "refunded".
         assertEquals(PaymentStatus.AMBIGUOUS, twin(true, """{"status":{"x":1}}"""))
