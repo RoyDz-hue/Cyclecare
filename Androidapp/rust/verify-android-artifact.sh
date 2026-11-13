@@ -42,7 +42,11 @@ GATE_START="$(cat "$GATE_START_FILE")"
 SO="$ROOT/rust/core-ffi/target/$T/release/libcyclecare_core.so"
 [ -f "$SO" ] || SO="$ROOT/rust/core-ffi/target/$T/release/libcyclecare_core_ffi.so"
 [ -f "$SO" ] || fail "no cdylib artifact for $T (build produced nothing)"
-SO_MTIME=$(stat -f %m "$SO" 2>/dev/null || stat -c %Y "$SO")
+case "$(uname -s)" in
+  Linux)  SO_MTIME=$(stat -c %Y "$SO") ;;
+  Darwin) SO_MTIME=$(stat -f %m "$SO") ;;
+  *) fail "UNSUPPORTED host OS: $(uname -s)" ;;
+esac
 [ "$SO_MTIME" -ge "$GATE_START" ] || \
   fail "artifact predates this run (mtime $SO_MTIME < gate start $GATE_START)"
 echo "OK: artifact fresh for this run (mtime $SO_MTIME >= gate start $GATE_START)"
@@ -84,7 +88,11 @@ done
 
 # Gate 5 - record the exact bytes for the downstream APK gate.
 SHA=$(shasum -a 256 "$SO" | awk '{print $1}')
-SIZE=$(stat -f %z "$SO" 2>/dev/null || stat -c %s "$SO")
+case "$(uname -s)" in
+  Linux)  SIZE=$(stat -c %s "$SO") ;;
+  Darwin) SIZE=$(stat -f %z "$SO") ;;
+  *) fail "UNSUPPORTED host OS: $(uname -s)" ;;
+esac
 echo "$SHA  lib/$ABI/libcyclecare_core.so  bytes=$SIZE  source=$SO" > "$OUT"
 echo "OK: sha256 $SHA ($SIZE bytes) recorded to $OUT"
 echo "ARTIFACT GATE PASS"
