@@ -34,7 +34,14 @@ class CommunityGuidesService(
 ) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    val currentUserId: String? get() = authPreferences.userId?.trim()?.takeIf { it.isNotEmpty() }
+    val currentUserId: String?
+        get() {
+            // Native-first: core community_transport parity port (NEW
+            // IMPLEMENTATION wiring, 2026-11-13). A null reply (native
+            // unavailable/malformed) keeps the Kotlin read below, byte for byte.
+            com.cyclecare.app.rust.CycleCareCoreBridge.communityCurrentUserId(authPreferences.userId)?.let { return it.userId }
+            return authPreferences.userId?.trim()?.takeIf { it.isNotEmpty() }
+        }
 
     // Strict shared parsing: honors offsets and fraction precision, and returns
     // 0 for unparseable input so a malformed message sorts oldest in the
@@ -92,7 +99,7 @@ class CommunityGuidesService(
             .header("apikey", SupabaseConfig.anonKey)
             .header("Authorization", "Bearer ${token.trim()}")
             .header("Accept", "application/json")
-            .url("${SupabaseConfig.restUrl}/chat_topics?select=id,title,description&is_active=eq.true&order=created_at.asc&limit=20")
+            .url(SupabaseConfig.restUrl + (com.cyclecare.app.rust.CycleCareCoreBridge.communityFetchTopicsPath() ?: "/chat_topics?select=id,title,description&is_active=eq.true&order=created_at.asc&limit=20"))
             .get()
             .build()
         val response = try {
@@ -130,21 +137,24 @@ class CommunityGuidesService(
     /** Joins a circle so its messages become visible. Idempotent; failure is non-fatal. */
     suspend fun ensureMembership(serverTopicId: String): Boolean = withContext(Dispatchers.IO) {
         val userId = currentUserId ?: return@withContext false
-        val payload = JSONObject().put("user_id", userId).put("topic_id", serverTopicId)
+        // Native-first request shape (NEW IMPLEMENTATION wiring, 2026-11-13);
+        // null reply keeps the Kotlin payload, byte for byte.
+        val bodyString = com.cyclecare.app.rust.CycleCareCoreBridge.communityEnsureMembershipBody(userId, serverTopicId)
+            ?: JSONObject().put("user_id", userId).put("topic_id", serverTopicId).toString()
         val response = authedRequest {
             url("${SupabaseConfig.restUrl}/chat_memberships")
             header("Prefer", "resolution=ignore-duplicates")
             header("Content-Type", "application/json")
-            post(payload.toString().toRequestBody(jsonMediaType))
+            post(bodyString.toRequestBody(jsonMediaType))
         } ?: return@withContext false
-        response.use { it.isSuccessful || it.code == 409 }
+        response.use { com.cyclecare.app.rust.CycleCareCoreBridge.communityMembershipSuccess(it.code) ?: (it.isSuccessful || it.code == 409) }
     }
 
     /** All messages in a circle (members and Community Guides), oldest first. */
     suspend fun fetchMessages(serverTopicId: String): List<GuidedChatMessage> = withContext(Dispatchers.IO) {
         val selfId = currentUserId
         val response = authedRequest {
-            url("${SupabaseConfig.restUrl}/chat_messages?select=id,user_id,persona_id,sender_alias,content,created_at,is_flagged&topic_id=eq.$serverTopicId&order=created_at.asc&limit=100")
+            url(SupabaseConfig.restUrl + (com.cyclecare.app.rust.CycleCareCoreBridge.communityFetchMessagesPath(serverTopicId) ?: "/chat_messages?select=id,user_id,persona_id,sender_alias,content,created_at,is_flagged&topic_id=eq.$serverTopicId&order=created_at.asc&limit=100"))
             get()
         } ?: return@withContext emptyList()
         response.use {
@@ -183,18 +193,24 @@ class CommunityGuidesService(
     suspend fun postMessage(serverTopicId: String, content: String): GuidedChatMessage? = withContext(Dispatchers.IO) {
         val userId = currentUserId ?: return@withContext null
         val trimmed = content.trim()
-        if (trimmed.isEmpty() || trimmed.length > 500) return@withContext null
+        // Native-first validation (NEW IMPLEMENTATION wiring, 2026-11-13);
+        // null reply keeps the Kotlin check, byte for byte.
+        val contentAllowed = com.cyclecare.app.rust.CycleCareCoreBridge.communityPostContentAllowed(trimmed)
+        if (contentAllowed != null) { if (!contentAllowed) return@withContext null }
+        else if (trimmed.isEmpty() || trimmed.length > 500) return@withContext null
         val alias = softAliasFor(userId)
-        val payload = JSONObject()
+        val postBody = com.cyclecare.app.rust.CycleCareCoreBridge.communityPostMessageBody(serverTopicId, userId, alias, trimmed)
+            ?: JSONObject()
             .put("topic_id", serverTopicId)
             .put("user_id", userId)
             .put("sender_alias", alias)
             .put("content", trimmed)
+            .toString()
         val response = authedRequest {
             url("${SupabaseConfig.restUrl}/chat_messages")
             header("Prefer", "return=representation")
             header("Content-Type", "application/json")
-            post(payload.toString().toRequestBody(jsonMediaType))
+            post(postBody.toRequestBody(jsonMediaType))
         } ?: return@withContext null
         response.use {
             if (!it.isSuccessful) return@withContext null
@@ -218,15 +234,21 @@ class CommunityGuidesService(
 
     /** Flags a message for moderator review. True when the server accepted it. */
     suspend fun flagMessage(remoteMessageId: String): Boolean = withContext(Dispatchers.IO) {
-        val payload = JSONObject().put("p_message_id", remoteMessageId)
+        val flagBody = com.cyclecare.app.rust.CycleCareCoreBridge.communityFlagMessageBody(remoteMessageId)
+            ?: JSONObject().put("p_message_id", remoteMessageId).toString()
         val response = authedRequest {
             url("${SupabaseConfig.restUrl}/rpc/flag_chat_message")
             header("Content-Type", "application/json")
-            post(payload.toString().toRequestBody(jsonMediaType))
+            post(flagBody.toRequestBody(jsonMediaType))
         } ?: return@withContext false
         response.use {
             if (!it.isSuccessful) return@withContext false
-            boundedBody(it)?.trim().equals("true", ignoreCase = true)
+            val raw = boundedBody(it)
+            // Native-first verdict (NEW IMPLEMENTATION wiring, 2026-11-13);
+            // null reply (or null body, which the Kotlin read maps to false)
+            // keeps the Kotlin check, byte for byte.
+            if (raw != null) com.cyclecare.app.rust.CycleCareCoreBridge.communityFlagSuccess(it.code, raw)?.let { return@withContext it }
+            raw?.trim().equals("true", ignoreCase = true)
         }
     }
 
@@ -269,9 +291,12 @@ object CommunityPulsePinger {
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build()
-            val bearer = accessToken?.trim().takeUnless { it.isNullOrEmpty() } ?: SupabaseConfig.anonKey
+            // Native-first bearer selection (NEW IMPLEMENTATION wiring,
+            // 2026-11-13); null reply keeps the Kotlin selection, byte for byte.
+            val bearer = com.cyclecare.app.rust.CycleCareCoreBridge.communityPulseBearer(accessToken, SupabaseConfig.anonKey)
+                ?: (accessToken?.trim().takeUnless { it.isNullOrEmpty() } ?: SupabaseConfig.anonKey)
             val request = Request.Builder()
-                .url("${baseOverride ?: SupabaseConfig.url}/functions/v1/community-pulse")
+                .url((baseOverride ?: SupabaseConfig.url) + (com.cyclecare.app.rust.CycleCareCoreBridge.communityPulsePath() ?: "/functions/v1/community-pulse"))
                 .header("apikey", SupabaseConfig.anonKey)
                 .header("Authorization", "Bearer $bearer")
                 .header("Content-Type", "application/json")

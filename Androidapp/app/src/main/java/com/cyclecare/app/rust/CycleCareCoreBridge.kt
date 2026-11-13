@@ -793,6 +793,94 @@ object CycleCareCoreBridge {
     }.getOrNull()
 
     /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
+    /* NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * community_transport parity port (TransportProbe JVM corpus) for
+     * CommunityGuidesService + CommunityPulsePinger. Request shapes and
+     * verdicts only - all I/O, credentials and timeouts stay Kotlin-side.
+     * Every fn returns null on native unavailable/malformed so the caller
+     * keeps its Kotlin expression, byte for byte. */
+    private fun communityCall(op: String, payload: JSONObject): JSONObject? {
+        payload.put("op", op)
+        return call("community_transport_v1", payload)
+    }
+
+    internal fun communityPath(reply: JSONObject?): String? {
+        val ok = reply?.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val path = ok.opt("path")
+        if (path !is String || !path.startsWith("/")) return null
+        return path
+    }
+
+    internal fun communityBody(reply: JSONObject?): String? {
+        val ok = reply?.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val body = ok.opt("body")
+        if (body !is String) return null
+        return body
+    }
+
+    internal fun communityVerdict(reply: JSONObject?): Boolean? {
+        val ok = reply?.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val verdict = ok.opt("verdict")
+        if (verdict !is Boolean) return null
+        return verdict
+    }
+
+    /** Reply of [communityCurrentUserId]: [userId] null means no signed-in
+     * user; a null FUNCTION return means native unavailable/malformed. */
+    data class CommunityUserId(val userId: String?)
+
+    fun communityCurrentUserId(userId: String?): CommunityUserId? {
+        val reply = communityCall("current_user_id", JSONObject().put("userId", userId ?: JSONObject.NULL)) ?: return null
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val value = ok.opt("value") ?: return null
+        if (value === JSONObject.NULL) return CommunityUserId(null)
+        if (value !is String || value.isEmpty()) return null
+        return CommunityUserId(value)
+    }
+
+    fun communityFetchTopicsPath(): String? = communityPath(communityCall("fetch_topics_path", JSONObject()))
+
+    fun communityFetchMessagesPath(topicId: String): String? =
+        communityPath(communityCall("fetch_messages_path", JSONObject().put("topicId", topicId)))
+
+    fun communityEnsureMembershipBody(userId: String, topicId: String): String? =
+        communityBody(communityCall("ensure_membership_body", JSONObject().put("userId", userId).put("topicId", topicId)))
+
+    fun communityMembershipSuccess(code: Int): Boolean? =
+        communityVerdict(communityCall("membership_success", JSONObject().put("code", code)))
+
+    fun communityPostContentAllowed(trimmed: String): Boolean? =
+        communityVerdict(communityCall("post_content_allowed", JSONObject().put("trimmed", trimmed)))
+
+    fun communityPostMessageBody(topicId: String, userId: String, senderAlias: String, contentTrimmed: String): String? =
+        communityBody(communityCall("post_message_body", JSONObject().put("topicId", topicId).put("userId", userId).put("senderAlias", senderAlias).put("contentTrimmed", contentTrimmed)))
+
+    fun communityFlagMessageBody(remoteMessageId: String): String? =
+        communityBody(communityCall("flag_message_body", JSONObject().put("remoteMessageId", remoteMessageId)))
+
+    fun communityFlagSuccess(code: Int, body: String): Boolean? =
+        communityVerdict(communityCall("flag_success", JSONObject().put("code", code).put("body", body)))
+
+    fun communityPulseBearer(accessToken: String?, anonKey: String): String? {
+        val reply = communityCall("pulse_bearer", JSONObject().put("accessToken", accessToken ?: JSONObject.NULL).put("anonKey", anonKey)) ?: return null
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val value = ok.opt("value")
+        if (value !is String || value.isEmpty()) return null
+        return value
+    }
+
+    fun communityPulsePath(): String? = communityPath(communityCall("pulse_path", JSONObject()))
+
     /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
      * session_token parity port for SupabaseSessionManager.tokenExpiry
      * (SessionTokenParity JVM locks t01-t08). 0 mirrors the source's

@@ -812,6 +812,74 @@ fn dispatch(contract: &str, payload: &str) -> String {
             };
             serde_json::json!({"ok": ok}).to_string()
         })(),
+        "community_transport_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port community_transport (CommunityGuidesService.kt +
+            // CommunityPulsePinger, main@31b88f5 lineage; TransportProbe
+            // JVM corpus). Request SHAPES and verdicts only: no I/O, no
+            // credentials cross (the bearer decision returns which EXISTING
+            // caller-held value to use, never a new secret). Payload content
+            // is corpus-locked; org.json key order is insertion order on
+            // AOSP, matching serde's emission here.
+            use corelib::community_transport as ct;
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            let s = |k: &str| v.get(k).and_then(|x| x.as_str());
+            let opt_s = |k: &str| match v.get(k) {
+                None => None,
+                Some(serde_json::Value::Null) => None,
+                Some(x) => x.as_str(),
+            };
+            let bad = |m: &str| err(m);
+            match op {
+                "current_user_id" => {
+                    let r = ct::current_user_id(opt_s("userId"));
+                    match r { Some(u) => serde_json::json!({"ok":{"version":1,"value":u}}).to_string(), None => serde_json::json!({"ok":{"version":1,"value":null}}).to_string() }
+                }
+                "fetch_topics_path" => serde_json::json!({"ok":{"version":1,"path":ct::fetch_topics_request().path}}).to_string(),
+                "fetch_messages_path" => {
+                    let topic = match s("topicId") { Some(x) => x, None => return bad("topicId missing or not a string") };
+                    serde_json::json!({"ok":{"version":1,"path":ct::fetch_messages_request(topic).path}}).to_string()
+                }
+                "ensure_membership_body" => {
+                    let user = match s("userId") { Some(x) => x, None => return bad("userId missing or not a string") };
+                    let topic = match s("topicId") { Some(x) => x, None => return bad("topicId missing or not a string") };
+                    let r = ct::ensure_membership_request(user, topic);
+                    serde_json::json!({"ok":{"version":1,"body":r.body}}).to_string()
+                }
+                "membership_success" => {
+                    let code = match v.get("code").and_then(|x| x.as_u64()).and_then(|n| u16::try_from(n).ok()) { Some(x) => x, None => return bad("code missing or not a u16") };
+                    serde_json::json!({"ok":{"version":1,"verdict":ct::membership_success(code)}}).to_string()
+                }
+                "post_content_allowed" => {
+                    let trimmed = match s("trimmed") { Some(x) => x, None => return bad("trimmed missing or not a string") };
+                    serde_json::json!({"ok":{"version":1,"verdict":ct::post_content_allowed(trimmed)}}).to_string()
+                }
+                "post_message_body" => {
+                    let topic = match s("topicId") { Some(x) => x, None => return bad("topicId missing or not a string") };
+                    let user = match s("userId") { Some(x) => x, None => return bad("userId missing or not a string") };
+                    let alias = match s("senderAlias") { Some(x) => x, None => return bad("senderAlias missing or not a string") };
+                    let content = match s("contentTrimmed") { Some(x) => x, None => return bad("contentTrimmed missing or not a string") };
+                    let r = ct::post_message_request(topic, user, alias, content);
+                    serde_json::json!({"ok":{"version":1,"body":r.body}}).to_string()
+                }
+                "flag_message_body" => {
+                    let id = match s("remoteMessageId") { Some(x) => x, None => return bad("remoteMessageId missing or not a string") };
+                    let r = ct::flag_message_request(id);
+                    serde_json::json!({"ok":{"version":1,"body":r.body}}).to_string()
+                }
+                "flag_success" => {
+                    let code = match v.get("code").and_then(|x| x.as_u64()).and_then(|n| u16::try_from(n).ok()) { Some(x) => x, None => return bad("code missing or not a u16") };
+                    let body = match s("body") { Some(x) => x, None => return bad("body missing or not a string") };
+                    serde_json::json!({"ok":{"version":1,"verdict":ct::flag_success(code, body)}}).to_string()
+                }
+                "pulse_bearer" => {
+                    let anon = match s("anonKey") { Some(x) => x, None => return bad("anonKey missing or not a string") };
+                    serde_json::json!({"ok":{"version":1,"value":ct::pulse_bearer(opt_s("accessToken"), anon)}}).to_string()
+                }
+                "pulse_path" => serde_json::json!({"ok":{"version":1,"path":ct::pulse_request().path}}).to_string(),
+                _ => err("unknown community_transport op"),
+            }
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry
