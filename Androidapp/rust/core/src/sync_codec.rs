@@ -195,10 +195,18 @@ pub fn aosp_opt_string(obj: &JsonValue, key: &str, default: &str) -> String {
         Some(JsonValue::Null) => "null".to_string(),
         Some(JsonValue::Str(s)) => s.clone(),
         Some(JsonValue::Bool(b)) => b.to_string(),
-        Some(n @ (JsonValue::Int(_) | JsonValue::Long(_) | JsonValue::Double(_))) => {
-            number_to_string(n)
+        // JSON.toString -> String.valueOf: Int/Long via their toString,
+        // Double via DOUBLE.toString (no numberToString Long collapse:
+        // optString("x") on 5.0 is "5.0", not "5").
+        Some(JsonValue::Int(i)) => i.to_string(),
+        Some(JsonValue::Long(l)) => l.to_string(),
+        Some(JsonValue::Double(d)) => java_double_to_string(*d),
+        // String.valueOf(array/object.toString()); toString returns null on
+        // a non-finite Double inside (numberToString's checkDouble), and
+        // String.valueOf(null) is the literal "null".
+        Some(other @ (JsonValue::Array(_) | JsonValue::Object(_))) => {
+            aosp_json_to_string_or_null(other)
         }
-        Some(other) => json_value_to_string(other),
     }
 }
 
@@ -322,14 +330,67 @@ pub struct JsonParser<'a> {
     chars: Vec<char>,
     pos: usize,
     src: &'a str,
+    /// Set when the input carries a construct this port cannot represent
+    /// exactly (a LONE surrogate \u escape, a Java hex-float literal): the
+    /// parsed value is usable for corpus paths, but a production seam that
+    /// surfaces parser results must route the input to the original Kotlin
+    /// path instead (semantic drift would never trigger the decoder
+    /// fallback - this explicit signal does).
+    pub fallback_requested: bool,
 }
 
 impl<'a> JsonParser<'a> {
     pub fn new(src: &'a str) -> Self {
-        JsonParser { chars: src.chars().collect(), pos: 0, src }
+        JsonParser { chars: src.chars().collect(), pos: 0, src, fallback_requested: false }
     }
 
-    /// AOSP JSONTokener.nextValue: the FIRST value only, no trailing-content
+    /// Java Double.valueOf acceptance for a non-integral readLiteral literal.
+/// Covers the exact case-sensitive "NaN"/signed "Infinity" names, ordinary
+/// decimal literals (including overflow to Infinity - Java saturates,
+/// matching Rust's parse), and the d/D (double) and f/F (float, widened)
+/// suffixes. Returns None where Java would reject the literal - it stays
+/// an unquoted string (e.g. Rust-only "inf"/"infinity" spellings).
+fn java_double_literal(literal: &str) -> Option<f64> {
+    if let Ok(d) = literal.parse::<f64>() {
+        let signless = literal.strip_prefix('+').or_else(|| literal.strip_prefix('-')).unwrap_or(literal);
+        let java_special = matches!(signless, "NaN" | "Infinity");
+        if d.is_finite() || java_special || literal.bytes().any(|b| b.is_ascii_digit()) {
+            return Some(d);
+        }
+        return None;
+    }
+    let (body, widened_float) = match literal.as_bytes().last() {
+        Some(b'd') | Some(b'D') => (&literal[..literal.len() - 1], false),
+        Some(b'f') | Some(b'F') => (&literal[..literal.len() - 1], true),
+        _ => return None,
+    };
+    // NaN/Infinity take no suffix; hex literals are the fallback case.
+    let body_signless = body.strip_prefix('+').or_else(|| body.strip_prefix('-')).unwrap_or(body);
+    if body_signless.eq_ignore_ascii_case("nan") || body_signless.eq_ignore_ascii_case("infinity") {
+        return None;
+    }
+    if body_signless.starts_with("0x") || body_signless.starts_with("0X") {
+        return None;
+    }
+    if !body.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if widened_float {
+        // An f-suffixed literal is parsed at FLOAT precision, then widened.
+        body.parse::<f32>().ok().map(|v| v as f64)
+    } else {
+        body.parse::<f64>().ok()
+    }
+}
+
+/// Java hex floating-point shape ("0x1.8p1"): this port cannot evaluate it
+/// exactly, so the parser flags the input for the Kotlin fallback.
+fn looks_like_hex_float(literal: &str) -> bool {
+    let t = literal.strip_prefix('+').or_else(|| literal.strip_prefix('-')).unwrap_or(literal);
+    (t.starts_with("0x") || t.starts_with("0X")) && (t.contains('p') || t.contains('P'))
+}
+
+/// AOSP JSONTokener.nextValue: the FIRST value only, no trailing-content
     /// check (the JSONObject(JSONTokener) ctor does not check one either).
     pub fn parse(&mut self) -> Result<JsonValue, String> {
         let v = self.next_value()?;
@@ -533,11 +594,41 @@ impl<'a> JsonParser<'a> {
                                         .syntax_error(&format!("Invalid escape sequence: {}", hex))
                                 }
                             };
-                            // AOSP emits the raw UTF-16 unit (an unpaired
-                            // surrogate is legal in a Java string); Rust
-                            // chars cannot hold one, so it degrades to
-                            // U+FFFD here (pre-existing, corpus-unlocked).
-                            out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                            if (0xD800..0xDC00).contains(&cp) {
+                                // High surrogate: combine with an immediately
+                                // following \uDC00-\uDFFF escape into the
+                                // astral char (exact: Java's two units ARE
+                                // that char). A lone surrogate cannot live in
+                                // a Rust char - request the Kotlin fallback.
+                                let low = if self.pos + 6 <= self.chars.len()
+                                    && self.chars[self.pos] == '\\'
+                                    && self.chars[self.pos + 1] == 'u'
+                                {
+                                    let low_hex: String =
+                                        self.chars[self.pos + 2..self.pos + 6].iter().collect();
+                                    u32::from_str_radix(&low_hex, 16)
+                                        .ok()
+                                        .filter(|l| (0xDC00..0xE000).contains(l))
+                                } else {
+                                    None
+                                };
+                                match low {
+                                    Some(low) => {
+                                        self.pos += 6;
+                                        let c = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                                        out.push(char::from_u32(c).expect("surrogate pair is a scalar"));
+                                    }
+                                    None => {
+                                        self.fallback_requested = true;
+                                        out.push('\u{FFFD}');
+                                    }
+                                }
+                            } else if (0xDC00..0xE000).contains(&cp) {
+                                self.fallback_requested = true;
+                                out.push('\u{FFFD}');
+                            } else {
+                                out.push(char::from_u32(cp).expect("non-surrogate BMP is a char"));
+                            }
                         }
                         // Covers \/, \\, \", \' and any other escaped char.
                         other => out.push(other),
@@ -592,20 +683,13 @@ impl<'a> JsonParser<'a> {
             }
             // Fall through: integral overflow, exponent form, or unquoted string.
         }
-        if let Ok(d) = literal.parse::<f64>() {
-            // AOSP readLiteral returns Double.valueOf(literal) UNCHECKED;
-            // non-finite rejection is the OBJECT put's checkDouble (arrays
-            // put unchecked). Java's grammar takes the exact "NaN" and
-            // signed "Infinity" literals, while Rust ALSO accepts
-            // "inf"/"infinity" - guard those back to unquoted strings.
-            // (Java hex-float ("0x1.8p1") and d/f-suffixed ("5d") literals
-            // still diverge: Java parses them, this port keeps them
-            // strings - corpus-unlocked exotic, disclosed.)
-            if d.is_finite()
-                || matches!(literal.as_str(), "NaN" | "Infinity" | "-Infinity" | "+Infinity")
-            {
-                return Ok(JsonValue::Double(d));
-            }
+        if let Some(d) = java_double_literal(&literal) {
+            return Ok(JsonValue::Double(d));
+        }
+        if looks_like_hex_float(&literal) {
+            // Java parses hex-float literals ("0x1.8p1"); this port cannot
+            // evaluate one exactly - request the Kotlin fallback.
+            self.fallback_requested = true;
         }
         Ok(JsonValue::Str(literal))
     }

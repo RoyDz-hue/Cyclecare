@@ -141,6 +141,12 @@ pub enum GoogleLinkResponseDecision {
     /// corpus-unlocked divergence, fixed here.)
     ParseThrow(String),
     Url(String),
+    /// The body parses with constructs this port cannot represent exactly
+    /// (lone-surrogate \u escape, Java hex-float literal). Semantic drift
+    /// would never trigger the decoder fallback, so the seam signals it
+    /// explicitly: the FFI arm turns this into a null reply and the bridge
+    /// runs the verbatim Kotlin twin (real org.json) for these inputs.
+    NeedsKotlinFallback,
 }
 
 pub fn interpret_google_link_response(
@@ -153,10 +159,14 @@ pub fn interpret_google_link_response(
             for_response(body, AuthOperation::AccountLink).to_string(),
         );
     }
-    let json = match JsonParser::new(body).parse() {
+    let mut parser = JsonParser::new(body);
+    let json = match parser.parse() {
         Ok(v) => v,
         Err(msg) => return GoogleLinkResponseDecision::ParseThrow(msg),
     };
+    if parser.fallback_requested {
+        return GoogleLinkResponseDecision::NeedsKotlinFallback;
+    }
     let url_raw = match &json {
         JsonValue::Object(_) => aosp_opt_string(&json, "url", ""),
         other => return GoogleLinkResponseDecision::ParseThrow(aosp_type_mismatch(other, "JSONObject")),
@@ -251,6 +261,10 @@ fn create_google_link_url(
         // at the Kotlin call site.)
         GoogleLinkResponseDecision::ParseThrow(m) => Err(m),
         GoogleLinkResponseDecision::Url(u) => Ok(u),
+        // The tree has no Kotlin twin; the corpus harness sees the marker.
+        GoogleLinkResponseDecision::NeedsKotlinFallback => {
+            Err("NeedsKotlinFallback: parser construct requires the Kotlin path".to_string())
+        }
     }
 }
 
@@ -565,6 +579,40 @@ mod tests {
         assert_eq!(
             interpret_google_link_response(true, "{\"url\":>\"x\"}", None),
             GoogleLinkResponseDecision::Url("x".to_string()));
+
+        // Signed NaN names are Java doubles too (Double.parseDouble takes
+        // an optional sign on NaN/Infinity; Double.toString(-NaN) is "NaN").
+        assert_eq!(
+            interpret_google_link_response(true, "{\"x\":+NaN}", None),
+            GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: NaN".to_string()));
+        assert_eq!(
+            interpret_google_link_response(true, "{\"x\":-NaN}", None),
+            GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: NaN".to_string()));
+        // d/f suffixes: "5d" parses as the double 5.0 (Double.toString
+        // "5.0" via optString's String.valueOf); "0.1f" is parsed at FLOAT
+        // precision then widened.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":5d}", None),
+            GoogleLinkResponseDecision::Url("5.0".to_string()));
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":0.1f}", None),
+            GoogleLinkResponseDecision::Url("0.10000000149011612".to_string()));
+        // Overflow numerics saturate to Infinity (Java Double.parseDouble),
+        // so the object put rejects them; Rust-only "inf" stays a string.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"x\":1e999}", None),
+            GoogleLinkResponseDecision::ParseThrow("Forbidden numeric value: Infinity".to_string()));
+        // A surrogate PAIR combines into the exact astral char.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":\"\\uD83D\\uDCA9\"}", None),
+            GoogleLinkResponseDecision::Url("💩".to_string()));
+        // Unrepresentable constructs route to the Kotlin path explicitly.
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":\"\\uD83D\"}", None),
+            GoogleLinkResponseDecision::NeedsKotlinFallback);
+        assert_eq!(
+            interpret_google_link_response(true, "{\"url\":0x1.8p1}", None),
+            GoogleLinkResponseDecision::NeedsKotlinFallback);
         // optString coercion: an explicit null url is the STRING "null" -
         // non-blank, so it IS the resolved url (weird, source-true).
         assert_eq!(

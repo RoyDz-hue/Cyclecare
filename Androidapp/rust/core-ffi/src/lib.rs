@@ -1097,6 +1097,10 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     serde_json::json!({"ok":{"version":1,"verdict":"parse_throw","message":m}}).to_string(),
                 corelib::auth_google::GoogleLinkResponseDecision::Url(u) =>
                     serde_json::json!({"ok":{"version":1,"verdict":"url","url":u}}).to_string(),
+                // Unrepresentable parser constructs: NO verdict - the null
+                // reply runs the verbatim Kotlin twin (real org.json).
+                corelib::auth_google::GoogleLinkResponseDecision::NeedsKotlinFallback =>
+                    return err("parser construct requires the Kotlin fallback path"),
             }
         })(),
         "auth_admin_response_v1" => (|| {
