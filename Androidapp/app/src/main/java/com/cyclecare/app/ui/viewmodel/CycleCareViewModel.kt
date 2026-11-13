@@ -223,6 +223,12 @@ class CycleCareViewModel(
     private var imageJob: kotlinx.coroutines.Job? = null
     private var activeUiOwner = authPreferences.effectiveUserId
     private var activeUiSession = authPreferences.sessionGeneration
+    /** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+     * synchronous construction stamp for the rust-revision observer in init:
+     * an install landing BEFORE the collector's first emission must still
+     * invalidate (StateFlow replays the bumped value to the late collector;
+     * an asynchronous baseline would swallow it). */
+    private var observedRustRevision = repository.currentRustPortRevision()
     private var careRequestGeneration = 0L
     private var pendingQuickLogOwner: String? = null
     private var pendingCareProposal: com.cyclecare.app.domain.ai.ProposedCareLog? = null
@@ -268,6 +274,12 @@ class CycleCareViewModel(
         @Volatile internal var beforeLogEnqueueForTests:(suspend (List<CycleDayLog>)->Unit)?=null
         @Volatile internal var afterLogPaintForTests:((List<CycleDayLog>)->Unit)?=null
         @Volatile internal var holdLogPublicationForTests:((List<CycleDayLog>,()->Unit)->Boolean)?=null
+        /** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+         * fires after each rust-revision observation in the init collector:
+         * (previous stamp, observed revision, whether it invalidated). The
+         * callback runs when the invalidation is QUEUED; the forced reset
+         * itself re-routes through the admission's main scheduling. */
+        @Volatile internal var afterRustRevisionObservationForTests:((Long,Long,Boolean)->Unit)?=null
         @Volatile internal var beforeStartupPublicationForTests:(suspend (CycleCareViewModel)->Unit)?=null
         @Volatile internal var afterStartupPublicationForTests:((CycleCareViewModel)->Unit)?=null
         @Volatile internal var beforeStartupCalculationForTests:((CycleCareViewModel)->Unit)?=null
@@ -342,6 +354,11 @@ class CycleCareViewModel(
     private var localReadEpoch = 0L
     /** Bumped whenever resetIdentityUiIfNeeded actually switches identity. */
     private var identityResetEpoch = 0L
+    /** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+     * read-only test witnesses over existing private lifecycle state. */
+    internal val identityResetEpochForTests: Long get() = identityResetEpoch
+    internal val uiOwnerForTests: String? get() = activeUiOwner
+    internal val uiSessionForTests: Long get() = activeUiSession
 
     /**
      * Immutable scope of ONE start decision. The snapshot, owner/session and repository
@@ -3598,6 +3615,25 @@ class CycleCareViewModel(
             android.util.Log.w("CycleCareLocalRead","admission operation failed",error)
         }?.let{addCloseable(it)}
         authPreferences.publicationAdmission?.onTransition{com.cyclecare.app.security.PublicationOrigin.withOrigin({true}){resetIdentityUiIfNeeded();clearStaleCandidateEditor()}}?.let{addCloseable(it)}
+        // RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+        // composition-driven (MainActivity-path) installs bypass this
+        // ViewModel's admitted install path, so their read-source move is
+        // visible here only as a rustPortRevisions bump. Any bump forces the
+        // same fresh same-owner reload as installRustPortAdmitted: MIN_VALUE
+        // session, then an origin-forced resetIdentityUiIfNeeded (which
+        // re-routes through the admission's main scheduling off-transition).
+        viewModelScope.launch {
+            repository.rustPortRevisions.collect { revision ->
+                val previous = observedRustRevision
+                val didInvalidate = revision != previous
+                observedRustRevision = revision
+                afterRustRevisionObservationForTests?.invoke(previous, revision, didInvalidate)
+                if (didInvalidate) {
+                    activeUiSession = Long.MIN_VALUE
+                    com.cyclecare.app.security.PublicationOrigin.withOrigin({ true }) { resetIdentityUiIfNeeded() }
+                }
+            }
+        }
         startLogObservation()
         SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
 

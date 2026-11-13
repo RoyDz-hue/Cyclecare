@@ -8,6 +8,7 @@ import com.cyclecare.app.data.local.rust.RustBoundRoomHost
 import com.cyclecare.app.data.local.rust.RustRepositoryPort
 import com.cyclecare.app.data.repository.CycleRepository
 import com.cyclecare.app.data.repository.OwnerTransitionException
+import com.cyclecare.app.data.repository.RustPortInstallResolver
 import com.cyclecare.app.data.repository.RustPortInstaller
 import com.cyclecare.app.security.AuthPreferences
 import com.cyclecare.app.security.IdentityPublicationAdmission

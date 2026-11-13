@@ -15,3 +15,10 @@ internal val RUST_FLOAT_METADATA_DRAFT=object:Migration(9,10){
   db.execSQL("CREATE TRIGGER IF NOT EXISTS rust_float_insert AFTER INSERT ON cycle_day_logs BEGIN DELETE FROM rust_float_bits WHERE dateString=NEW.dateString; END")
  }
 }
+
+/** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+ * applies the same draft DDL as RUST_FLOAT_METADATA_DRAFT.migrate, for
+ * fresh-file onCreate callbacks (the Migration only covers 9->10 upgrades).
+ * The Stage-C/D witness fixtures register both so fresh v10 files always
+ * carry the rust_* objects; single source of truth is the migration body. */
+internal fun applyRustMetadataDraft(db:SupportSQLiteDatabase)=RUST_FLOAT_METADATA_DRAFT.migrate(db)

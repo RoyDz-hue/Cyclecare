@@ -194,7 +194,7 @@ class RustPortRecoveryTest {
         )
         release.countDown()
         joiner.join(15_000)
-        assertEquals(Boolean.TRUE, joinResult.get())
+        assertEquals(java.lang.Boolean.TRUE, joinResult.get())
         assertEquals(1, runs.get())
         awaitCondition { !recovery.recoveryInFlight }
     }

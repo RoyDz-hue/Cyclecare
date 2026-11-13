@@ -124,18 +124,14 @@ class StageDFirstInstallUiFreshnessTest {
                             t.name.startsWith("stage-d-freshness-it") ||
                                 stack.any { it.className.contains("cyclecare") }
                         }
-                        .joinToString("
-") { (t, stack) ->
-                            "THREAD ${t.name} [${t.state}]
-  " +
-                                stack.take(12).joinToString("
-  ")
+                        .joinToString("\n") { (t, stack) ->
+                            "THREAD ${t.name} [${t.state}]\n  " +
+                                stack.take(12).joinToString("\n  ")
                         }.ifEmpty { "(no live worker/cyclecare threads)" }
                     future.cancel(true)
                     org.junit.Assert.fail(
                         "$what did not complete within the bounded 30s " +
-                            "(deadline NOT extended). Thread state at timeout:
-$state")
+                            "(deadline NOT extended). Thread state at timeout:\n$state")
                 }
             }
         }

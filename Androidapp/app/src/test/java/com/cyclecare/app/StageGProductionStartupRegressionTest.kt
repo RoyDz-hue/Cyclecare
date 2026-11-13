@@ -16,6 +16,7 @@ import com.cyclecare.app.ui.viewmodel.CycleCareViewModel
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.resetMain
@@ -58,7 +59,7 @@ class StageGProductionStartupRegressionTest {
                 withTimeout(10_000){while(emissions.isEmpty()){if(collector.isCompleted)collector.await();delay(20)}}
                 val row=CycleDayLog(dateString="2026-11-06",bbtCelsius=-0.0f,sleepHours=-0.0f)
                 database.runInTransaction {
-                    runBlocking { database.cycleDayLogDao().insertLog(row) }
+                    runBlocking { database.cycleDayLogDao().insertOrUpdateLog(row) }
                     RustFloatRows.recordAfterDomainWrite(database.openHelper.writableDatabase,row)
                 }
                 database.invalidationTracker.refreshAsync()

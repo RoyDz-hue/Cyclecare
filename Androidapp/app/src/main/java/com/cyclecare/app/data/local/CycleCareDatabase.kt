@@ -18,6 +18,10 @@ import java.util.concurrent.ConcurrentHashMap
 )
 abstract class CycleCareDatabase : RoomDatabase() {
     abstract fun cycleDao(): CycleDayLogDao
+    /** RECONSTRUCTION (2026-11-13, labeled NEW WORK, not recovered bytes):
+     * name-aligned accessor the Stage-G witness suite calls; same DAO as
+     * [cycleDao], no second source of truth. */
+    fun cycleDayLogDao(): CycleDayLogDao = cycleDao()
     abstract fun onboardingDao(): OnboardingProfileDao
     abstract fun healthSyncDao(): HealthSyncLocalDao
 
