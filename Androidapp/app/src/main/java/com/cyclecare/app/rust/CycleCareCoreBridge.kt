@@ -1327,31 +1327,29 @@ object CycleCareCoreBridge {
                 val frequencies = floats("frequencies") ?: return null
                 val amplitudes = floats("amplitudes") ?: return null
                 val durationMs = plan.opt("duration_ms") as? Int ?: return null
-                // Shape the synthesis contract actually supports: playChord
-                // indexes amplitudes by frequencies.indices and the real
-                // port never emits an empty table.
-                if (frequencies.isEmpty() || frequencies.size != amplitudes.size) return null
-                if (!supportedDurationMs(durationMs)) return null
+                // The port's actual chord contract: exactly the interaction
+                // table (3 frequencies, 3 amplitudes, 260ms). Frequency and
+                // amplitude VALUES are unrestricted; anything else declines.
+                if (frequencies.size != 3 || amplitudes.size != 3) return null
+                if (durationMs != 260) return null
                 SoundPlayPlan(isChord = true, frequencies = frequencies, amplitudes = amplitudes, noteSpacingMs = 0, durationMs = durationMs)
             }
             "arpeggio" -> {
                 val notes = floats("notes_hz") ?: return null
                 val spacingMs = plan.opt("note_spacing_ms") as? Int ?: return null
                 val totalMs = plan.opt("total_duration_ms") as? Int ?: return null
-                if (notes.isEmpty()) return null
-                if (spacingMs < 1) return null
-                if (!supportedDurationMs(totalMs)) return null
+                // The port's actual arpeggio contracts: the acquired table
+                // (4 notes, 65ms spacing, 420ms total) or the chime table
+                // (3 notes, 55ms spacing, 300ms total). Note VALUES are
+                // unrestricted; anything else declines.
+                val supported = (notes.size == 4 && spacingMs == 65 && totalMs == 420) ||
+                    (notes.size == 3 && spacingMs == 55 && totalMs == 300)
+                if (!supported) return null
                 SoundPlayPlan(isChord = false, frequencies = notes, amplitudes = FloatArray(0), noteSpacingMs = spacingMs, durationMs = totalMs)
             }
             else -> null
         }
     }
-
-    /** A duration the synthesis contract supports: positive, and
-     * SAMPLE_RATE(24000) * durationMs cannot overflow the Kotlin Int
-     * numSamples computation in playChord/playArpeggio. */
-    private fun supportedDurationMs(durationMs: Int): Boolean =
-        durationMs >= 1 && durationMs <= Int.MAX_VALUE / 24_000
 
     const val PDF_PAINT_TITLE = 0
     const val PDF_PAINT_SECTION = 1
