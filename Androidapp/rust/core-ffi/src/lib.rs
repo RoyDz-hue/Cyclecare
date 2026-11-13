@@ -952,6 +952,31 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown community_parse op"),
             }
         })(),
+        "pricing_parse_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port currency_locale::parse_pricing
+            // (RemoteLocalPricing.parse, main@31b88f5 lineage; PricingParity
+            // JVM probe corpus). Response interpretation only: no I/O, no
+            // prefs, no clock. Amounts are validated finite and > 0 by the
+            // port, so the JSON reply never carries NaN/Infinity.
+            let raw = match v.get("raw") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("raw not a string or null") },
+            };
+            match corelib::currency_locale::parse_pricing(raw) {
+                Some(map) => {
+                    let mut out = serde_json::Map::new();
+                    for (id, p) in &map {
+                        out.insert(id.clone(), serde_json::json!({
+                            "currency": p.currency, "amount": p.amount, "approx": p.approx,
+                            "chargeCurrency": p.charge_currency, "chargeAmount": p.charge_amount,
+                        }));
+                    }
+                    serde_json::json!({"ok":{"version":1,"packages":serde_json::Value::Object(out)}}).to_string()
+                }
+                None => serde_json::json!({"ok":{"version":1,"packages":null}}).to_string(),
+            }
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry

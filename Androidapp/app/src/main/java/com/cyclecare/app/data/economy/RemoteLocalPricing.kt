@@ -54,6 +54,17 @@ object RemoteLocalPricing {
 
     /** Parses the get_public_pricing response. Returns null when malformed. */
     fun parse(raw: String?): Map<String, LocalizedPrice>? {
+        // Native-first (NEW IMPLEMENTATION wiring, 2026-11-13): the
+        // currency_locale::parse_pricing parity port over pricing_parse_v1.
+        // A null reply (native unavailable/declined/parse failure) keeps the
+        // verbatim Kotlin parse below, byte for byte.
+        com.cyclecare.app.rust.CycleCareCoreBridge.remotePricingParse(raw)?.let { return it }
+        return kotlinParsePricing(raw)
+    }
+
+    /** Verbatim pre-wiring parse (org.json, AOSP). Reached when the native
+     * parse declines or fails. */
+    private fun kotlinParsePricing(raw: String?): Map<String, LocalizedPrice>? {
         if (raw.isNullOrBlank()) return null
         return try {
             val root = JSONObject(raw)

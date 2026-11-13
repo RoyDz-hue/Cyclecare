@@ -996,6 +996,38 @@ object CycleCareCoreBridge {
     }
 
     /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * currency_locale::parse_pricing parity port (RemoteLocalPricing.parse;
+     * PricingParity JVM-locked). null = native unavailable/declined/parse
+     * failure -> the caller runs its verbatim Kotlin parse. */
+    fun remotePricingParse(raw: String?): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
+        val reply = call("pricing_parse_v1", JSONObject()
+            .put("raw", raw ?: JSONObject.NULL)) ?: return null
+        return decodeRemotePricingParse(reply)
+    }
+
+    internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        if (ok.isNull("packages")) return null // native parse failed -> Kotlin parse decides
+        val packages = ok.optJSONObject("packages") ?: return null
+        val out = HashMap<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>(packages.length())
+        for (id in packages.keys()) {
+            val row = packages.optJSONObject(id) ?: return null
+            val currency = row.opt("currency") as? String ?: return null
+            val amount = row.opt("amount")
+            if (amount !is Int && amount !is Long && amount !is Double) return null
+            val approx = row.opt("approx") as? Boolean ?: return null
+            val chargeCurrency = row.opt("chargeCurrency") as? String ?: return null
+            val chargeAmount = row.opt("chargeAmount")
+            if (chargeAmount !is Int && chargeAmount !is Long && chargeAmount !is Double) return null
+            out[id] = com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice(
+                currency, (amount as Number).toDouble(), approx, chargeCurrency, (chargeAmount as Number).toDouble())
+        }
+        return out
+    }
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
      * session_token parity port for SupabaseSessionManager.tokenExpiry
      * (SessionTokenParity JVM locks t01-t08). 0 mirrors the source's
      * catch-all. null = native unavailable/malformed -> caller keeps the
