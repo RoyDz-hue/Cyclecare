@@ -1055,6 +1055,102 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let value = match bigdecimal::BigDecimal::from_str(value) { Ok(b) => b, Err(_) => return err("value not a decimal string") };
             serde_json::json!({"ok":{"version":1,"formatted":corelib::coin_format::format(&value)}}).to_string()
         })(),
+        "data_export_json_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port data_export_json::build_data_export_json
+            // (CycleCareViewModel.buildDataExportJson, main@31b88f5 lineage;
+            // 62-case AOSP org.json differential corpus
+            // export_json_corpus.rs). Pure serialization: no I/O; the clock
+            // value arrives caller-captured (the read stays in Kotlin at
+            // its original execution point). Conservative declines (err ->
+            // caller's verbatim Kotlin twin): any non-finite float (the
+            // twin throws org.json's JSONException, as the source did),
+            // any non-integral float outside the port's Java-verified
+            // presentation range [1e-3, 1e7), and any non-ASCII date
+            // string (the port's byte-order sort is only pinned to match
+            // Kotlin's UTF-16 sortedBy for ASCII dates).
+            use corelib::data_export_json as de;
+            fn s(obj: &serde_json::Value, k: &str) -> Result<String, String> {
+                obj.get(k).and_then(|x| x.as_str()).map(|x| x.to_string()).ok_or_else(|| format!("{k} missing or not a string"))
+            }
+            fn i(obj: &serde_json::Value, k: &str) -> Result<i32, String> {
+                obj.get(k).and_then(|x| x.as_i64()).and_then(|x| i32::try_from(x).ok()).ok_or_else(|| format!("{k} missing or not an int32"))
+            }
+            fn b(obj: &serde_json::Value, k: &str) -> Result<bool, String> {
+                obj.get(k).and_then(|x| x.as_bool()).ok_or_else(|| format!("{k} missing or not a bool"))
+            }
+            fn f32_verified(obj: &serde_json::Value, k: &str) -> Result<f32, String> {
+                let d = obj.get(k).and_then(|x| x.as_f64()).ok_or_else(|| format!("{k} missing or not a number"))?;
+                let v = d as f32; // exact: the caller widened a Float
+                if !v.is_finite() { return Err(format!("{k} non-finite")); }
+                let integral = (v as f64) == ((v as i64) as f64);
+                let a = v.abs();
+                if !integral && a != 0.0 && !(1e-3..1e7).contains(&(a as f32)) { return Err(format!("{k} outside verified range")); }
+                Ok(v)
+            }
+            let settings_v = match v.get("settings") { Some(x) => x, None => return err("settings missing") };
+            let settings = match (|| {
+                Ok(de::ExportSettings {
+                    selected_goals_csv: s(settings_v, "selected_goals_csv")?,
+                    last_period_start_date: s(settings_v, "last_period_start_date")?,
+                    average_cycle_length: i(settings_v, "average_cycle_length")?,
+                    period_duration: i(settings_v, "period_duration")?,
+                    remind_period: b(settings_v, "remind_period")?,
+                    remind_fertile: b(settings_v, "remind_fertile")?,
+                    remind_daily_log: b(settings_v, "remind_daily_log")?,
+                    is_discreet_notification_mode: b(settings_v, "is_discreet_notification_mode")?,
+                })
+            })() { Ok(x) => x, Err(e) => return err(&e) };
+            let profile_v = match v.get("profile") { Some(x) => x, None => return err("profile missing") };
+            let profile = if profile_v.is_null() { None } else {
+                match (|| {
+                    Ok(de::ExportProfile {
+                        selected_goals_csv: s(profile_v, "selected_goals_csv")?,
+                        last_period_date_string: s(profile_v, "last_period_date_string")?,
+                        last_period_end_date_string: s(profile_v, "last_period_end_date_string")?,
+                        approximate_period_choice: s(profile_v, "approximate_period_choice")?,
+                        cycle_length_option: s(profile_v, "cycle_length_option")?,
+                        cycle_length_days: i(profile_v, "cycle_length_days")?,
+                        period_duration_days: i(profile_v, "period_duration_days")?,
+                        remind_fertile_window: b(profile_v, "remind_fertile_window")?,
+                        typical_symptoms_csv: s(profile_v, "typical_symptoms_csv")?,
+                        typical_energy: s(profile_v, "typical_energy")?,
+                        typical_sleep_quality: s(profile_v, "typical_sleep_quality")?,
+                    })
+                })() { Ok(x) => Some(x), Err(e) => return err(&e) }
+            };
+            let logs_v = match v.get("logs").and_then(|x| x.as_array()) { Some(x) => x, None => return err("logs missing or not an array") };
+            let mut logs = Vec::with_capacity(logs_v.len());
+            for lv in logs_v {
+                let log = match (|| {
+                    let date_string = s(lv, "date_string")?;
+                    if !date_string.is_ascii() { return Err("date_string not ASCII".to_string()); }
+                    Ok(de::ExportLog {
+                        date_string,
+                        flow_level: s(lv, "flow_level")?,
+                        energy_level: s(lv, "energy_level")?,
+                        mood_level: s(lv, "mood_level")?,
+                        symptoms_csv: s(lv, "symptoms_csv")?,
+                        vaginal_health_csv: s(lv, "vaginal_health_csv")?,
+                        urinary_health_csv: s(lv, "urinary_health_csv")?,
+                        cervical_mucus: s(lv, "cervical_mucus")?,
+                        ovulation_test: s(lv, "ovulation_test")?,
+                        bbt_celsius: f32_verified(lv, "bbt_celsius")?,
+                        sleep_hours: f32_verified(lv, "sleep_hours")?,
+                        sleep_quality: s(lv, "sleep_quality")?,
+                        water_glasses: i(lv, "water_glasses")?,
+                        notes: s(lv, "notes")?,
+                        pain_intensity: i(lv, "pain_intensity")?,
+                    })
+                })() { Ok(x) => x, Err(e) => return err(&e) };
+                logs.push(log);
+            }
+            let epoch_ms = match v.get("epoch_ms").and_then(|x| x.as_i64()) { Some(x) => x, None => return err("epoch_ms missing or not an integer") };
+            match de::build_data_export_json(&settings, profile.as_ref(), &logs, epoch_ms) {
+                Ok(json) => serde_json::json!({"ok":{"version":1,"json":json}}).to_string(),
+                Err(_) => err("export failed"), // unreachable after the pre-checks; declines to the twin
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService

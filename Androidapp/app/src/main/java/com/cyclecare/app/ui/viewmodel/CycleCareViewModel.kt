@@ -3372,10 +3372,36 @@ class CycleCareViewModel(
         _uiState.value = _uiState.value.copy(showOnboarding = true)
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first via data_export_json_v1.
+     * The source reads _uiState.value, logsMap.value and
+     * System.currentTimeMillis() once each; each is captured once here in
+     * the source's original read order (state, state, clock) and the
+     * captures are handed to both routes (single-capture). The clock read
+     * stays in Kotlin at this original execution point; only its value
+     * crosses JNI. A null reply runs the verbatim pre-wiring assembly, kept
+     * as the private twin [kotlinBuildDataExportJson].
+     */
     fun buildDataExportJson(): String {
         val current = _uiState.value
-        val settings = current.settings
-        val profile = current.onboardingProfile
+        val sortedLogs = logsMap.value.values.sortedBy { it.dateString }
+        val epochMs = System.currentTimeMillis()
+        return com.cyclecare.app.rust.CycleCareCoreBridge.dataExportJson(
+            current.settings, current.onboardingProfile, sortedLogs, epochMs,
+        ) ?: kotlinBuildDataExportJson(current.settings, current.onboardingProfile, sortedLogs, epochMs)
+    }
+
+    /**
+     * Verbatim pre-wiring body of [buildDataExportJson], operating on the
+     * caller's single captures. A NaN/Infinity float field throws org.json's
+     * JSONException here, exactly as the source did before wiring.
+     */
+    private fun kotlinBuildDataExportJson(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        profile: com.cyclecare.app.data.local.OnboardingProfile?,
+        sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        epochMs: Long,
+    ): String {
         val settingsJson = org.json.JSONObject().apply {
             put("selected_goals", settings.selectedGoalsCsv)
             put("last_period_start_date", settings.lastPeriodStartDate)
@@ -3402,7 +3428,7 @@ class CycleCareViewModel(
             }
         } ?: org.json.JSONObject()
         val logsJson = org.json.JSONArray().apply {
-            logsMap.value.values.sortedBy { it.dateString }.forEach { log ->
+            sortedLogs.forEach { log ->
                 put(org.json.JSONObject().apply {
                     put("date", log.dateString)
                     put("flow", log.flowLevel)
@@ -3425,7 +3451,7 @@ class CycleCareViewModel(
         return org.json.JSONObject().apply {
             put("format", "CycleCare personal data export")
             put("format_version", 1)
-            put("exported_at_epoch_ms", System.currentTimeMillis())
+            put("exported_at_epoch_ms", epochMs)
             put("cycle_settings", settingsJson)
             put("onboarding_profile", profileJson)
             put("daily_logs", logsJson)

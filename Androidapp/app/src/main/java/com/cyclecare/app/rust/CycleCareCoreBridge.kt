@@ -1163,6 +1163,83 @@ object CycleCareCoreBridge {
         return ok.opt("formatted") as? String
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first personal data export
+     * assembly (data_export_json_v1). Pure serialization: the settings,
+     * profile, already-sorted log list, and the caller-captured epoch
+     * millis cross JNI in one payload; only the assembled JSON string
+     * returns. The clock read and all state reads stay in the caller at
+     * their original execution points. Float fields cross as their exact
+     * Double widenings (every Float value is an exact Double, and the
+     * native side narrows back exactly). A null reply (native absent,
+     * {"error"}, a strict-decode decline, or the port's own conservative
+     * decline - non-finite float, a non-integral float outside its
+     * Java-verified presentation range, or a non-ASCII date string) means
+     * the caller runs its verbatim Kotlin twin.
+     */
+    fun dataExportJson(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        profile: com.cyclecare.app.data.local.OnboardingProfile?,
+        sortedLogs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        epochMs: Long,
+    ): String? {
+        val settingsJson = JSONObject()
+            .put("selected_goals_csv", settings.selectedGoalsCsv)
+            .put("last_period_start_date", settings.lastPeriodStartDate)
+            .put("average_cycle_length", settings.averageCycleLength)
+            .put("period_duration", settings.periodDuration)
+            .put("remind_period", settings.remindPeriod)
+            .put("remind_fertile", settings.remindFertile)
+            .put("remind_daily_log", settings.remindDailyLog)
+            .put("is_discreet_notification_mode", settings.isDiscreetNotificationMode)
+        val profileJson = profile?.let {
+            JSONObject()
+                .put("selected_goals_csv", it.selectedGoalsCsv)
+                .put("last_period_date_string", it.lastPeriodDateString)
+                .put("last_period_end_date_string", it.lastPeriodEndDateString)
+                .put("approximate_period_choice", it.approximatePeriodChoice)
+                .put("cycle_length_option", it.cycleLengthOption)
+                .put("cycle_length_days", it.cycleLengthDays)
+                .put("period_duration_days", it.periodDurationDays)
+                .put("remind_fertile_window", it.remindFertileWindow)
+                .put("typical_symptoms_csv", it.typicalSymptomsCsv)
+                .put("typical_energy", it.typicalEnergy)
+                .put("typical_sleep_quality", it.typicalSleepQuality)
+        } ?: JSONObject.NULL
+        val logsJson = JSONArray()
+        sortedLogs.forEach { log ->
+            logsJson.put(JSONObject()
+                .put("date_string", log.dateString)
+                .put("flow_level", log.flowLevel)
+                .put("energy_level", log.energyLevel)
+                .put("mood_level", log.moodLevel)
+                .put("symptoms_csv", log.symptomsCsv)
+                .put("vaginal_health_csv", log.vaginalHealthCsv)
+                .put("urinary_health_csv", log.urinaryHealthCsv)
+                .put("cervical_mucus", log.cervicalMucus)
+                .put("ovulation_test", log.ovulationTest)
+                .put("bbt_celsius", log.bbtCelsius.toDouble())
+                .put("sleep_hours", log.sleepHours.toDouble())
+                .put("sleep_quality", log.sleepQuality)
+                .put("water_glasses", log.waterGlasses)
+                .put("notes", log.notes)
+                .put("pain_intensity", log.painIntensity))
+        }
+        val reply = call("data_export_json_v1", JSONObject()
+            .put("settings", settingsJson)
+            .put("profile", profileJson)
+            .put("logs", logsJson)
+            .put("epoch_ms", epochMs)) ?: return null
+        return decodeDataExportJson(reply)
+    }
+
+    internal fun decodeDataExportJson(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok.opt("json") as? String
+    }
+
     /** The six validated gateway fields plus the normalized source label. */
     data class GatewayCareFields(
         val summary: String,
