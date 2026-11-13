@@ -900,19 +900,18 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let now_secs = match v.get("nowSecs").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("nowSecs missing or not an integer") };
             serde_json::json!({"ok":{"version":1,"valid":corelib::session_token::valid_token_for_owner(token, owner, now_secs)}}).to_string()
         })(),
-        "session_refresh_validation_v1" => (|| {
-            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the PURE
-            // refresh-response validation segment of resolveAccessToken
-            // (SupabaseSessionManager.kt, SessionTokenParity JVM locks
-            // s01-s23 lineage). Decision only: transport, refreshMutex,
-            // publication-identity admission and the compare-and-set commit
-            // all stay Kotlin-side. SECRETS NOTE: the old refresh token
-            // crosses JNI here (input "refreshToken") so the keep-old case
-            // can be validated with the SAME implementation the source
-            // applies to a rotation; the renewed access token and any
-            // rotated refresh token cross back in the reply. Same
+        "session_refresh_shape_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13, reviewer-corrected): JNI
+            // wiring of the NON-CLOCK shape segment of resolveAccessToken's
+            // refresh-response handling (session_token::refresh_response_shape,
+            // SessionTokenParity JVM locks s01-s23 lineage). Every
+            // clock-governed decision (validTokenForOwner, the effective-
+            // refresh checks, the reportedExpiry bounds) stays at the
+            // original Kotlin execution points. SECRETS: NO existing token
+            // crosses IN (code/body/owner only); the renewed access token
+            // and any rotated refresh token cross OUT in the reply - same
             // no-logging/no-persistence/no-egress accounting as the other
-            // session_token ops.
+            // session_token ops, no zeroization guarantee.
             let code = match v.get("code").and_then(|x| x.as_i64()).and_then(|n| i32::try_from(n).ok()) { Some(x) => x, None => return err("code missing or not an i32") };
             let body = match v.get("body") {
                 None => None,
@@ -920,14 +919,12 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("body not a string or null") },
             };
             let owner = match v.get("owner").and_then(|x| x.as_str()) { Some(s) => s, None => return err("owner missing or not a string") };
-            let old_refresh = match v.get("refreshToken").and_then(|x| x.as_str()) { Some(s) => s, None => return err("refreshToken missing or not a string") };
-            let now_secs = match v.get("nowSecs").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("nowSecs missing or not an integer") };
-            match corelib::session_token::validate_refresh_response(code, body, owner, old_refresh, now_secs) {
-                corelib::session_token::RefreshValidation::Proceed { renewed_token, rotated_refresh, new_expiry, user_email, anonymous } =>
-                    serde_json::json!({"ok":{"version":1,"verdict":"valid","accessToken":renewed_token,"rotatedRefresh":rotated_refresh,"expiry":new_expiry,"userEmail":user_email,"anonymous":anonymous}}).to_string(),
-                corelib::session_token::RefreshValidation::ReauthenticationRequired =>
+            match corelib::session_token::refresh_response_shape(code, body, owner) {
+                corelib::session_token::RefreshShape::Shape(f) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"shape","accessToken":f.renewed_token,"rotatedRefresh":f.rotated_refresh,"expiresAt":f.expires_at,"expiresIn":f.expires_in,"userEmail":f.user_email,"anonymous":f.anonymous}}).to_string(),
+                corelib::session_token::RefreshShape::ReauthenticationRequired =>
                     serde_json::json!({"ok":{"version":1,"verdict":"reauth"}}).to_string(),
-                corelib::session_token::RefreshValidation::TemporarilyUnavailable =>
+                corelib::session_token::RefreshShape::TemporarilyUnavailable =>
                     serde_json::json!({"ok":{"version":1,"verdict":"unavailable"}}).to_string(),
             }
         })(),

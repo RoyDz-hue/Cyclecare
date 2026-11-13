@@ -89,44 +89,39 @@ object SupabaseSessionManager {
                 val response = refreshTransport.execute(refreshToken)
                 currentCoroutineContext().ensureActive()
                 if(!originCurrent())return@withLock AccessTokenResolution.TemporarilyUnavailable
-                // Native-first validation (NEW IMPLEMENTATION wiring,
-                // 2026-11-13): the PURE decision segment only - transport,
-                // refreshMutex, publication-identity admission and the
-                // compare-and-set commit below stay Kotlin-side. nowSecs is
-                // captured at block entry for the native path; the Kotlin
-                // fallback reads the clock at its original mid-block
-                // position (same instant to second granularity; only a
-                // token whose exp equals a crossed second boundary could
-                // shift, behavior class unchanged). A null native reply
-                // keeps the verbatim Kotlin block, statement for statement.
-                val refreshValidation = com.cyclecare.app.rust.CycleCareCoreBridge.sessionRefreshValidation(
-                    response.code, response.body, owner, refreshToken, System.currentTimeMillis() / 1000)?.let {
-                    when (it.kind) {
-                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.VALID ->
-                            RefreshValidation.Proceed(
-                                it.accessToken ?: return@withLock AccessTokenResolution.TemporarilyUnavailable,
-                                it.rotatedRefresh ?: refreshToken, it.expiry, it.userEmail, it.anonymous)
-                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.REAUTH ->
-                            RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-                        com.cyclecare.app.rust.CycleCareCoreBridge.SessionRefreshValidation.Kind.UNAVAILABLE ->
-                            RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
-                    }
-                } ?: validateRefreshResponseKotlin(response.code, response.body, owner, refreshToken)
-                val renewedToken: String
-                val rotatedRefresh: String
-                val newExpiry: Long
-                val refreshedEmail: String?
-                val refreshedAnonymous: Boolean
-                when (refreshValidation) {
-                    is RefreshValidation.Terminal -> return@withLock refreshValidation.resolution
-                    is RefreshValidation.Proceed -> {
-                        renewedToken = refreshValidation.renewedToken
-                        rotatedRefresh = refreshValidation.rotatedRefresh
-                        newExpiry = refreshValidation.newExpiry
-                        refreshedEmail = refreshValidation.userEmail
-                        refreshedAnonymous = refreshValidation.anonymous
-                    }
+                // Native-first SHAPE handling (NEW IMPLEMENTATION wiring,
+                // 2026-11-13, reviewer-corrected): native owns ONLY the
+                // non-clock segment (status mapping, body bounds, parse,
+                // access/refresh/user shape, owner match, raw field
+                // extraction). Every clock-governed decision below stays at
+                // its ORIGINAL execution point: validTokenForOwner's own
+                // clock read, the effective-refresh checks in their
+                // original combined-condition position (the owner clause
+                // moved into the shape stage; the remaining chain is the
+                // source's, verbatim), the `val now` read, and the
+                // reportedExpiry bounds. A null native reply keeps the
+                // verbatim Kotlin shape handling.
+                val shape = when (val rs = com.cyclecare.app.rust.CycleCareCoreBridge.sessionRefreshShape(
+                    response.code, response.body, owner) ?: refreshShapeKotlin(response.code, response.body, owner)) {
+                    is RefreshShape.Terminal -> return@withLock rs.resolution
+                    is RefreshShape.Shape -> rs
                 }
+                val renewedToken = shape.renewedToken
+                val rotatedRefresh = shape.rotatedRefresh ?: refreshToken
+                if (!validTokenForOwner(renewedToken, owner) ||
+                    rotatedRefresh.isBlank() || rotatedRefresh.length > MAX_TOKEN_CHARS || rotatedRefresh.any { it.isISOControl() }) {
+                    return@withLock AccessTokenResolution.ReauthenticationRequired
+                }
+                val now = System.currentTimeMillis() / 1000
+                val expiresAt = shape.expiresAt
+                val expiresIn = shape.expiresIn
+                val reportedExpiry = when {
+                    expiresAt > 0L -> expiresAt
+                    expiresIn in 1..604800L -> now + expiresIn
+                    else -> return@withLock AccessTokenResolution.ReauthenticationRequired
+                }
+                if (reportedExpiry <= now || reportedExpiry > now + 604800L) return@withLock AccessTokenResolution.ReauthenticationRequired
+                val newExpiry = minOf(reportedExpiry, tokenExpiry(renewedToken))
                 // Admission precedes the prefs monitor. All setters execute in one
                 // guarded transition, never waiting for admission while holding prefs.
                 var committed=false
@@ -137,8 +132,8 @@ object SupabaseSessionManager {
                     preferences.accessToken = renewedToken
                     preferences.refreshToken = rotatedRefresh
                     preferences.sessionExpiresAtSeconds = newExpiry
-                    preferences.userEmail = refreshedEmail ?: preferences.userEmail
-                    preferences.accountMode = if (refreshedAnonymous) "ANONYMOUS" else "EMAIL"
+                    preferences.userEmail = shape.userEmail ?: preferences.userEmail
+                    preferences.accountMode = if (shape.anonymous) "ANONYMOUS" else "EMAIL"
                     true
                     } == true
                 }
@@ -152,62 +147,49 @@ object SupabaseSessionManager {
         }
     }
 
-    /** Result of the refresh-response validation segment: Proceed carries
-     * the validated fields for the guarded commit (rotatedRefresh is the
-     * EFFECTIVE refresh token - the old one when the response did not
-     * rotate; userEmail null = keep the stored value); Terminal maps the
-     * source's early returns. */
-    private sealed interface RefreshValidation {
-        data class Proceed(
+    /** Result of the NON-CLOCK refresh-shape segment: Shape carries the
+     * extracted fields (rotatedRefresh null = keep the old token;
+     * userEmail null = keep the stored value; expiresAt/expiresIn raw,
+     * 0 = absent); Terminal maps the source's early returns. */
+    private sealed interface RefreshShape {
+        data class Shape(
             val renewedToken: String,
-            val rotatedRefresh: String,
-            val newExpiry: Long,
+            val rotatedRefresh: String?,
+            val expiresAt: Long,
+            val expiresIn: Long,
             val userEmail: String?,
             val anonymous: Boolean,
-        ) : RefreshValidation
-        data class Terminal(val resolution: AccessTokenResolution) : RefreshValidation
+        ) : RefreshShape
+        data class Terminal(val resolution: AccessTokenResolution) : RefreshShape
     }
 
-    /** Verbatim Kotlin fallback of the native refresh-response validation
-     * (NEW IMPLEMENTATION wiring, 2026-11-13): the original resolveAccessToken
-     * statements, with each return@withLock mapped to Terminal and the
-     * JSONObject(raw) parse failure - which the original code reached its
-     * outer catch (_: Exception) for - mapped to the SAME
-     * TemporarilyUnavailable outcome it produced there. validTokenForOwner
-     * and tokenExpiry keep their own (native-first) catch-alls and cannot
-     * throw from here, so no reachable exception path is altered. */
-    private fun validateRefreshResponseKotlin(code: Int, body: String?, owner: String, refreshToken: String): RefreshValidation {
+    /** Verbatim Kotlin fallback of the native refresh-shape segment
+     * (NEW IMPLEMENTATION wiring, 2026-11-13): the original statements,
+     * with each return@withLock mapped to Terminal and the JSONObject(raw)
+     * parse failure - which the original code reached its outer
+     * catch (_: Exception) for - mapped to the SAME TemporarilyUnavailable
+     * outcome it produced there. Clock-governed checks were never part of
+     * this segment: they execute at the call site in both paths. */
+    private fun refreshShapeKotlin(code: Int, body: String?, owner: String): RefreshShape {
         if (code !in 200..299) {
-            return RefreshValidation.Terminal(if (code in setOf(400, 401, 403)) AccessTokenResolution.ReauthenticationRequired
+            return RefreshShape.Terminal(if (code in setOf(400, 401, 403)) AccessTokenResolution.ReauthenticationRequired
                 else AccessTokenResolution.TemporarilyUnavailable)
         }
-        val raw = body ?: return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
-        if (raw.toByteArray(Charsets.UTF_8).size > MAX_RESPONSE_BYTES) return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable)
-        val json = try { JSONObject(raw) } catch (e: Exception) { return RefreshValidation.Terminal(AccessTokenResolution.TemporarilyUnavailable) }
-        val renewedToken = json.opt("access_token") as? String ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        val rotatedRefresh = if (!json.has("refresh_token")) refreshToken else
-            json.opt("refresh_token") as? String ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        val user = json.optJSONObject("user") ?: return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        if (user.opt("id") != owner || !validTokenForOwner(renewedToken, owner) ||
-            rotatedRefresh.isBlank() || rotatedRefresh.length > MAX_TOKEN_CHARS || rotatedRefresh.any { it.isISOControl() }) {
-            return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        }
-        val now = System.currentTimeMillis() / 1000
-        val expiresAt = (json.opt("expires_at") as? Number)?.toLong() ?: 0L
-        val expiresIn = (json.opt("expires_in") as? Number)?.toLong() ?: 0L
-        val reportedExpiry = when {
-            expiresAt > 0L -> expiresAt
-            expiresIn in 1..604800L -> now + expiresIn
-            else -> return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        }
-        if (reportedExpiry <= now || reportedExpiry > now + 604800L) return RefreshValidation.Terminal(AccessTokenResolution.ReauthenticationRequired)
-        val newExpiry = minOf(reportedExpiry, tokenExpiry(renewedToken))
-        return RefreshValidation.Proceed(renewedToken, rotatedRefresh, newExpiry,
+        val raw = body ?: return RefreshShape.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+        if (raw.toByteArray(Charsets.UTF_8).size > MAX_RESPONSE_BYTES) return RefreshShape.Terminal(AccessTokenResolution.TemporarilyUnavailable)
+        val json = try { JSONObject(raw) } catch (e: Exception) { return RefreshShape.Terminal(AccessTokenResolution.TemporarilyUnavailable) }
+        val renewedToken = json.opt("access_token") as? String ?: return RefreshShape.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        val rotatedRefresh = if (!json.has("refresh_token")) null else
+            json.opt("refresh_token") as? String ?: return RefreshShape.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        val user = json.optJSONObject("user") ?: return RefreshShape.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        if (user.opt("id") != owner) return RefreshShape.Terminal(AccessTokenResolution.ReauthenticationRequired)
+        return RefreshShape.Shape(renewedToken, rotatedRefresh,
+            (json.opt("expires_at") as? Number)?.toLong() ?: 0L,
+            (json.opt("expires_in") as? Number)?.toLong() ?: 0L,
             (user.opt("email") as? String)?.ifBlank { null },
             user.optBoolean("is_anonymous", false))
     }
 
-    /** Structural consistency only: authenticity is established by the fixed authenticated server, not by this parser. */
     private fun validTokenForOwner(token: String, owner: String): Boolean {
         // Native-first: core session_token parity port of this exact check
         // (NEW IMPLEMENTATION wiring, 2026-11-13). A null reply (native

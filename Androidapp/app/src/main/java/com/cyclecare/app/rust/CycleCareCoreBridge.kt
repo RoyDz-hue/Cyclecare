@@ -943,68 +943,78 @@ object CycleCareCoreBridge {
         return valid
     }
 
-    /** Outcome of [sessionRefreshValidation]: VALID carries the extracted
-     * fields; rotatedRefresh/userEmail null mean "keep the current value".
-     * A null FUNCTION return means native unavailable/malformed reply ->
-     * the caller keeps its Kotlin validation, statement for statement. */
-    data class SessionRefreshValidation(
+    /** Reply of [sessionRefreshShape]: SHAPE carries the extracted fields;
+     * rotatedRefresh/userEmail null mean "keep the current value";
+     * expiresAt/expiresIn are the RAW source fields (0 = absent, bounds
+     * NOT applied natively). A null FUNCTION return means native
+     * unavailable/malformed reply -> the caller keeps its Kotlin shape
+     * handling, statement for statement. */
+    data class SessionRefreshShape(
         val kind: Kind,
         val accessToken: String?,
         val rotatedRefresh: String?,
-        val expiry: Long,
+        val expiresAt: Long,
+        val expiresIn: Long,
         val userEmail: String?,
         val anonymous: Boolean,
-    ) { enum class Kind { VALID, REAUTH, UNAVAILABLE } }
+    ) { enum class Kind { SHAPE, REAUTH, UNAVAILABLE } }
 
-    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the pure
-     * refresh-response validation segment of
-     * SupabaseSessionManager.resolveAccessToken (the corpus-locked
-     * session_token::validate_refresh_response, shared with the full
-     * port). Decision only: transport, refreshMutex, publication-identity
-     * admission and the compare-and-set commit stay Kotlin-side. The old
-     * refresh token crosses JNI as an input so the keep-old case is
-     * validated by the same implementation that validates a rotation. */
-    fun sessionRefreshValidation(code: Int, body: String?, owner: String, refreshToken: String, nowSecs: Long): SessionRefreshValidation? {
-        val reply = call("session_refresh_validation_v1", JSONObject()
+    /** NEW IMPLEMENTATION (2026-11-13, reviewer-corrected): native wiring
+     * of the NON-CLOCK shape segment of
+     * SupabaseSessionManager.resolveAccessToken's refresh-response handling
+     * (session_token::refresh_response_shape, corpus-locked, shared with
+     * the full port - one parser, one implementation). Every clock-governed
+     * decision (validTokenForOwner, the effective-refresh checks, the
+     * reportedExpiry bounds) stays at the original Kotlin execution points
+     * in the caller. No existing token crosses IN; the renewed access
+     * token and any rotated refresh token cross OUT. */
+    fun sessionRefreshShape(code: Int, body: String?, owner: String): SessionRefreshShape? {
+        val reply = call("session_refresh_shape_v1", JSONObject()
             .put("code", code)
             .put("body", body ?: JSONObject.NULL)
-            .put("owner", owner)
-            .put("refreshToken", refreshToken)
-            .put("nowSecs", nowSecs)) ?: return null
-        return decodeSessionRefreshValidation(reply)
+            .put("owner", owner)) ?: return null
+        return decodeSessionRefreshShape(reply)
     }
 
     /** Strict decode: "ok" a real object, "version" exactly 1, "verdict" an
-     * exact kind string. A VALID reply must carry a nonempty accessToken,
-     * rotatedRefresh null-or-nonempty, expiry a genuine integer > 0,
-     * userEmail null-or-nonempty, anonymous a genuine Boolean - anything
-     * coerced or defaulted has no source shape and is drift. */
-    internal fun decodeSessionRefreshValidation(reply: JSONObject): SessionRefreshValidation? {
+     * exact kind string. A SHAPE reply must carry accessToken as a genuine
+     * string (EMPTY INCLUDED - the source accepts it at this stage and the
+     * original validTokenForOwner check rejects it at its own point),
+     * rotatedRefresh null-or-string, userEmail null-or-NONEMPTY (the port
+     * maps blank to the keep-old marker, so an empty email is drift),
+     * expiresAt/expiresIn genuine integers (any value - negatives have a
+     * source shape), and
+     * anonymous a genuine Boolean. Anything coerced or defaulted is drift. */
+    internal fun decodeSessionRefreshShape(reply: JSONObject): SessionRefreshShape? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         return when (ok.opt("verdict")) {
-            "reauth" -> SessionRefreshValidation(SessionRefreshValidation.Kind.REAUTH, null, null, 0L, null, false)
-            "unavailable" -> SessionRefreshValidation(SessionRefreshValidation.Kind.UNAVAILABLE, null, null, 0L, null, false)
-            "valid" -> {
+            "reauth" -> SessionRefreshShape(SessionRefreshShape.Kind.REAUTH, null, null, 0L, 0L, null, false)
+            "unavailable" -> SessionRefreshShape(SessionRefreshShape.Kind.UNAVAILABLE, null, null, 0L, 0L, null, false)
+            "shape" -> {
                 val access = ok.opt("accessToken")
-                if (access !is String || access.isEmpty()) return null
+                if (access !is String) return null
                 val rotated = ok.opt("rotatedRefresh")
-                if (rotated !== JSONObject.NULL && (rotated !is String || rotated.isEmpty())) return null
-                val expiry = when (val e = ok.opt("expiry")) {
+                if (rotated !== JSONObject.NULL && rotated !is String) return null
+                val expiresAt = when (val e = ok.opt("expiresAt")) {
                     is Int -> e.toLong()
                     is Long -> e
                     else -> return null
                 }
-                if (expiry <= 0L) return null
+                val expiresIn = when (val e = ok.opt("expiresIn")) {
+                    is Int -> e.toLong()
+                    is Long -> e
+                    else -> return null
+                }
                 val email = ok.opt("userEmail")
                 if (email !== JSONObject.NULL && (email !is String || email.isEmpty())) return null
                 val anonymous = ok.opt("anonymous")
                 if (anonymous !is Boolean) return null
-                SessionRefreshValidation(
-                    SessionRefreshValidation.Kind.VALID, access,
+                SessionRefreshShape(
+                    SessionRefreshShape.Kind.SHAPE, access,
                     if (rotated === JSONObject.NULL) null else rotated as String,
-                    expiry,
+                    expiresAt, expiresIn,
                     if (email === JSONObject.NULL) null else email as String,
                     anonymous)
             }
