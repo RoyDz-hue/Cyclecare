@@ -147,5 +147,12 @@ class SessionAuthFallbackParityTest {
         assertNull(expiresAt("0xff")) // hex float REQUIRES a p-exponent
         val expIn = interpret(true, """{"expires_in":"1e1","user":{"id":"u","email_confirmed_at":"x"}}""", "e@x.y").session!!.expiresIn
         assertEquals(10L, expIn)
+        // Hex conversion regression (reviewer): extreme exponents and
+        // round-half-even must match the JDK exactly (the twin uses real
+        // Double.parseDouble, so these pin the CONTRACT the native side
+        // must satisfy).
+        assertEquals(0L, expiresAt("0x1.0p-2147483647"))
+        assertEquals(9007199254740992L, expiresAt("0x1fffffffffffff.8p0"))
+        assertEquals(Long.MAX_VALUE, expiresAt("0x1p1024"))
     }
 }

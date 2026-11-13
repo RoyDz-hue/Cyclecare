@@ -187,9 +187,37 @@ fn parse_java_decimal_float(core: &str) -> Option<f64> {
     core.parse::<f64>().ok()
 }
 
+/// Exact power-of-two scaling with i64 exponent arithmetic (the JVM
+/// double-to-long cast makes any subnormal-or-smaller result collapse to
+/// 0, so clamping far outside the f64 range is exact for every
+/// cast-visible outcome).
+fn scale_pow2(mant: f64, e: i64) -> f64 {
+    if mant == 0.0 {
+        return 0.0;
+    }
+    if e > 1100 {
+        return f64::INFINITY;
+    }
+    if e < -1200 {
+        return 0.0;
+    }
+    mant * 2f64.powi(e as i32)
+}
+
 /// Java HexFloatingPointLiteral body (after 0x): hex mantissa with optional
 /// fraction and a REQUIRED binary (p/P) exponent - bare "0xff" is not a
-/// hex float literal.
+/// hex float literal. EXACT correctly-rounded conversion: the mantissa is
+/// kept as its first <=64 significant bits in a u64 window plus a sticky
+/// flag, the exponent is combined in i64 (a p-exponent of -2147483647 with
+/// a fraction UNDERFLOWED the previous i32 combination and wrapped to
+/// Infinity - regression-pinned), and the mantissa is rounded to 53 bits
+/// with round-half-to-even on exact guard/sticky bits, then scaled by an
+/// exact power of two. For a mantissa of <=53 significant bits the scaling
+/// multiply is the single, correctly-rounded rounding of the true value
+/// (normals AND subnormals). For longer mantissas the one theoretical
+/// double-rounding band is deep-subnormal, where every result has
+/// |v| < 1 and the JVM (long) cast maps it to 0 regardless - so no
+/// cast-visible divergence from Double.parseDouble remains.
 fn parse_java_hex_float(hex: &str) -> Option<f64> {
     let b = hex.as_bytes();
     let hexd = |b: &[u8], mut i: usize| -> usize {
@@ -198,22 +226,45 @@ fn parse_java_hex_float(hex: &str) -> Option<f64> {
         }
         i
     };
-    let mut mantissa = 0f64;
+    // Collect significant bits (MSB first) from int+frac digit runs.
+    let mut window: u64 = 0; // first min(L,64) significant bits
+    let mut bits: i64 = 0; // L: significant bit count
+    let mut sticky = false; // any dropped 1 bit beyond the window
+    let mut seen = false;
+    let mut absorb = |digits: &str, window: &mut u64, bits: &mut i64, sticky: &mut bool, seen: &mut bool| {
+        for c in digits.chars() {
+            let d = c.to_digit(16).unwrap_or(0);
+            for shift in [3i8, 2, 1, 0] {
+                let bit = (d >> shift) & 1;
+                if !*seen {
+                    if bit == 1 {
+                        *seen = true;
+                        *window = 1;
+                        *bits = 1;
+                    }
+                    continue;
+                }
+                if *bits < 64 {
+                    *window = (*window << 1) | bit as u64;
+                    *bits += 1;
+                } else {
+                    *sticky |= bit == 1;
+                    *bits += 1;
+                }
+            }
+        }
+    };
     let int_end = hexd(b, 0);
     let int_len = int_end;
-    for c in hex[..int_end].chars() {
-        mantissa = mantissa * 16.0 + c.to_digit(16)? as f64;
-    }
+    absorb(&hex[..int_end], &mut window, &mut bits, &mut sticky, &mut seen);
     let mut i = int_end;
-    let mut frac_len = 0usize;
+    let mut frac_len: i64 = 0;
     if i < b.len() && b[i] == b'.' {
         i += 1;
         let start = i;
         i = hexd(b, i);
-        frac_len = i - start;
-        for c in hex[start..i].chars() {
-            mantissa = mantissa * 16.0 + c.to_digit(16)? as f64;
-        }
+        frac_len = (i - start) as i64;
+        absorb(&hex[start..i], &mut window, &mut bits, &mut sticky, &mut seen);
     }
     if int_len == 0 && frac_len == 0 {
         return None;
@@ -236,9 +287,42 @@ fn parse_java_hex_float(hex: &str) -> Option<f64> {
     if i == start || i != b.len() {
         return None;
     }
-    let exp: i32 = hex[start..i].parse().ok()?;
-    let exp = if exp_neg { -exp } else { exp };
-    Some(mantissa * 2f64.powi(exp - 4 * frac_len as i32))
+    // Java accumulates arbitrary exponent digits; beyond i64 the result is
+    // simply Infinity/0 (the mantissa is nonzero at this point iff seen).
+    let p_exp: i64 = match hex[start..i].parse() {
+        Ok(v) => if exp_neg { -v } else { v },
+        Err(_) => {
+            return Some(if !seen || exp_neg { 0.0 } else { f64::INFINITY });
+        }
+    };
+    if !seen {
+        return Some(0.0); // all-zero mantissa: 0x0p-anything == 0
+    }
+    // True value: window-represented mantissa M (L significant bits) x
+    // 2^K, K in i64 - no wrap possible.
+    let k = p_exp - 4 * frac_len;
+    let (rounded, e) = if bits <= 53 {
+        (window, k)
+    } else {
+        // Round M to 53 bits, round-half-to-even, on exact guard/sticky.
+        let sh = bits - 54; // value bits below the top 54
+        let dropped = if bits > 64 { bits - 64 } else { 0 }; // bits outside the window
+        let w = window >> (sh - dropped); // top 54 significant bits
+        let guard = (w & 1) == 1;
+        let below = sh - dropped - 1; // window bits below the guard bit
+        let sticky = sticky || (below >= 0 && (window & ((1u64 << below) - 1)) != 0);
+        let mut r = w >> 1; // 53 bits
+        let mut e = k + sh + 1;
+        if guard && (sticky || (r & 1) == 1) {
+            r += 1;
+            if r == (1u64 << 53) {
+                r >>= 1;
+                e += 1;
+            }
+        }
+        (r, e)
+    };
+    Some(scale_pow2(rounded as f64, e))
 }
 
 /// AOSP optLong: Number -> longValue (Double truncated toward zero);
@@ -1186,6 +1270,29 @@ mod tests {
         assert_eq!(f.expires_at, None); // hex float REQUIRES a p-exponent
         let f = extract_session_fields(&JsonParser::new(r#"{"expires_in":"1e1"}"#).parse().unwrap(), "EMAIL");
         assert_eq!(f.expires_in, 10);
+        // Hex conversion exactness (reviewer corrections): the exponent is
+        // combined in i64 - "0x1.0p-2147483647" underflows to 0 (an i32
+        // combination WRAPPED to Infinity/Long.MAX here); mantissas beyond
+        // 53 bits round half-to-even on exact guard/sticky (truncating
+        // accumulation would give 9007199254740991 below).
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1.0p-2147483647"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(0));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1p-2147483647"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(0));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1fffffffffffff.8p0"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(9007199254740992)); // round-half-even up, not truncation
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1fffffffffffff.8000000001p0"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(9007199254740992)); // sticky round up
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x.8p1"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(1));
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1.23456789abcdef0123456789p10"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(1165)); // >64-bit mantissa, sticky only
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1p1024"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(i64::MAX)); // Infinity saturates
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x0p999999999999999999999"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(0)); // zero mantissa, huge exponent
+        let f = extract_session_fields(&JsonParser::new(r#"{"expires_at":"0x1p999999999999999999999"}"#).parse().unwrap(), "EMAIL");
+        assert_eq!(f.expires_at, Some(i64::MAX)); // exponent beyond i64
         // apply_session_fields: None user_id KEEPS current (no generation
         // bump), None tokens SET null, expiry default uses caller's now.
         let mut prefs = AuthPrefsState { is_secure_storage_available: true, ..Default::default() };
