@@ -1327,17 +1327,31 @@ object CycleCareCoreBridge {
                 val frequencies = floats("frequencies") ?: return null
                 val amplitudes = floats("amplitudes") ?: return null
                 val durationMs = plan.opt("duration_ms") as? Int ?: return null
+                // Shape the synthesis contract actually supports: playChord
+                // indexes amplitudes by frequencies.indices and the real
+                // port never emits an empty table.
+                if (frequencies.isEmpty() || frequencies.size != amplitudes.size) return null
+                if (!supportedDurationMs(durationMs)) return null
                 SoundPlayPlan(isChord = true, frequencies = frequencies, amplitudes = amplitudes, noteSpacingMs = 0, durationMs = durationMs)
             }
             "arpeggio" -> {
                 val notes = floats("notes_hz") ?: return null
                 val spacingMs = plan.opt("note_spacing_ms") as? Int ?: return null
                 val totalMs = plan.opt("total_duration_ms") as? Int ?: return null
+                if (notes.isEmpty()) return null
+                if (spacingMs < 1) return null
+                if (!supportedDurationMs(totalMs)) return null
                 SoundPlayPlan(isChord = false, frequencies = notes, amplitudes = FloatArray(0), noteSpacingMs = spacingMs, durationMs = totalMs)
             }
             else -> null
         }
     }
+
+    /** A duration the synthesis contract supports: positive, and
+     * SAMPLE_RATE(24000) * durationMs cannot overflow the Kotlin Int
+     * numSamples computation in playChord/playArpeggio. */
+    private fun supportedDurationMs(durationMs: Int): Boolean =
+        durationMs >= 1 && durationMs <= Int.MAX_VALUE / 24_000
 
     const val PDF_PAINT_TITLE = 0
     const val PDF_PAINT_SECTION = 1

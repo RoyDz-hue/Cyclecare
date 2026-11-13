@@ -46,6 +46,14 @@ class SoundFeedbackDecodeTest {
     }
 
     @Test
+    fun boundaryDurationAccepted() {
+        // 89478 = Int.MAX_VALUE / 24000: the largest duration whose
+        // numSamples computation cannot overflow.
+        val reply = JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[528.0],"amplitudes":[0.2],"duration_ms":89478}}}""")
+        assertEquals(89478, CycleCareCoreBridge.decodeSoundFeedbackPlan(reply)!!.durationMs)
+    }
+
+    @Test
     fun noPlanVerdictDeclines() {
         // The disabled verdict declines: the twin's identical gate yields
         // the same early return (the inc22 decline-then-twin semantics).
@@ -65,6 +73,18 @@ class SoundFeedbackDecodeTest {
         assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[528.0],"duration_ms":260}}}""")))
         // missing spacing for arpeggio
         assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":[528.0],"total_duration_ms":300}}}""")))
+        // impossible shapes: empty tables, chord freq/amp mismatch
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[],"amplitudes":[],"duration_ms":260}}}""")))
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":[],"note_spacing_ms":55,"total_duration_ms":300}}}""")))
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[528.0,660.0],"amplitudes":[0.2],"duration_ms":260}}}""")))
+        // unsupported durations: zero, negative, and Int-overflowing
+        // (SAMPLE_RATE 24000 * durationMs must not overflow the numSamples
+        // computation -> bound 89478, not an invented product limit)
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[528.0],"amplitudes":[0.2],"duration_ms":0}}}""")))
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"chord","frequencies":[528.0],"amplitudes":[0.2],"duration_ms":-5}}}""")))
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":[528.0],"note_spacing_ms":55,"total_duration_ms":89479}}}""")))
+        // unsupported spacing
+        assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":1,"plan":{"kind":"arpeggio","notes_hz":[528.0],"note_spacing_ms":0,"total_duration_ms":300}}}""")))
         // version drift
         assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":2,"plan":{"kind":"chord","frequencies":[],"amplitudes":[],"duration_ms":1}}}""")))
         assertNull(CycleCareCoreBridge.decodeSoundFeedbackPlan(JSONObject("""{"ok":{"version":"1","plan":null}}""")))
