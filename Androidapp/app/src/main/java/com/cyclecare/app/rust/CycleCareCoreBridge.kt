@@ -835,9 +835,15 @@ object CycleCareCoreBridge {
      * user; a null FUNCTION return means native unavailable/malformed. */
     data class CommunityUserId(val userId: String?)
 
-    fun communityCurrentUserId(userId: String?): CommunityUserId? {
-        val reply = communityCall("current_user_id", JSONObject().put("userId", userId ?: JSONObject.NULL)) ?: return null
-        val ok = reply.optJSONObject("ok") ?: return null
+    fun communityCurrentUserId(userId: String?): CommunityUserId? =
+        decodeCommunityUserIdValue(communityCall("current_user_id", JSONObject().put("userId", userId ?: JSONObject.NULL)))
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "value" either
+     * JSON null (no signed-in user - the port's None) or a NONEMPTY string
+     * (the port never emits an empty id: it maps blank to None, so an empty
+     * string here is drift and is rejected, not coerced). */
+    internal fun decodeCommunityUserIdValue(reply: JSONObject?): CommunityUserId? {
+        val ok = reply?.optJSONObject("ok") ?: return null
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         val value = ok.opt("value") ?: return null
@@ -869,9 +875,15 @@ object CycleCareCoreBridge {
     fun communityFlagSuccess(code: Int, body: String): Boolean? =
         communityVerdict(communityCall("flag_success", JSONObject().put("code", code).put("body", body)))
 
-    fun communityPulseBearer(accessToken: String?, anonKey: String): String? {
-        val reply = communityCall("pulse_bearer", JSONObject().put("accessToken", accessToken ?: JSONObject.NULL).put("anonKey", anonKey)) ?: return null
-        val ok = reply.optJSONObject("ok") ?: return null
+    fun communityPulseBearer(accessToken: String?, anonKey: String): String? =
+        decodeCommunityPulseBearerValue(communityCall("pulse_bearer", JSONObject().put("accessToken", accessToken ?: JSONObject.NULL).put("anonKey", anonKey)))
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "value" a
+     * NONEMPTY string (the port always returns a nonempty bearer - a blank
+     * token maps to the anon key - so null, empty, or wrong-typed values
+     * are drift and are rejected, not coerced). */
+    internal fun decodeCommunityPulseBearerValue(reply: JSONObject?): String? {
+        val ok = reply?.optJSONObject("ok") ?: return null
         val version = ok.opt("version")
         if (version !is Int || version != 1) return null
         val value = ok.opt("value")

@@ -157,8 +157,14 @@ pub fn flag_message_request(remote_message_id: &str) -> TransportRequest {
 }
 
 /// flagMessage result: isSuccessful && body.trim().equals("true", IGNORE CASE).
+/// The trim is KOTLIN trim (kotlin_trim, probe-locked set), NOT Rust
+/// str::trim: Rust trims U+0085 NEL which Kotlin keeps (native would have
+/// accepted "true\u{85}" where Kotlin rejects), and Kotlin trims
+/// U+001C..U+001F which Rust keeps. eq_ignore_ascii_case suffices for the
+/// ASCII literal "true": Kotlin ignoreCase has no non-ASCII equivalences
+/// for t/r/u/e.
 pub fn flag_success(status_code: u16, body: &str) -> bool {
-    (200..300).contains(&status_code) && body.trim().eq_ignore_ascii_case("true")
+    (200..300).contains(&status_code) && crate::kotlin_text::kotlin_trim(body).eq_ignore_ascii_case("true")
 }
 
 /// CommunityPulsePinger bearer: accessToken?.trim().takeUnless{isNullOrEmpty}
@@ -209,5 +215,69 @@ pub fn fetch_messages_request_encoded(topic_id: &str) -> TransportRequest {
         ),
         headers: vec![],
         body: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Focused regression pins for the Kotlin-semantics edges of this port
+    //! (NEW IMPLEMENTATION, 2026-11-13). Written for execution on a build
+    //! host; not executed in the wiring environment. Semantics anchor:
+    //! kotlin_text::kotlin_trim (probe-locked on the JVM): Kotlin trims
+    //! U+0009-000D, U+001C-001F, U+0020, U+00A0, U+1680, U+2000-200A,
+    //! U+2028, U+2029, U+202F, U+205F, U+3000; it does NOT trim U+0085.
+    use super::*;
+
+    #[test]
+    fn flag_success_trim_parity() {
+        assert!(flag_success(200, "true"));
+        assert!(flag_success(200, " TRUE \n\t"));
+        // U+0085 NEL: Rust str::trim would strip it (accept); Kotlin trim
+        // keeps it, so the Kotlin source REJECTS. The port must reject.
+        assert!(!flag_success(200, "\u{85}true"));
+        assert!(!flag_success(200, "true\u{85}"));
+        assert!(!flag_success(200, "\u{85}true\u{85}"));
+        // U+001C..U+001F: Kotlin trim strips these (accept); Rust str::trim
+        // would keep them (reject). The port must accept.
+        assert!(flag_success(200, "\u{1C}true\u{1F}"));
+        // NBSP and friends: both trim sets agree these trim.
+        assert!(flag_success(200, "\u{A0}true\u{A0}"));
+        assert!(flag_success(200, "\u{3000}TRUE\u{3000}"));
+    }
+
+    #[test]
+    fn flag_success_status_and_shape() {
+        assert!(!flag_success(199, "true"));
+        assert!(flag_success(204, "true"));
+        assert!(flag_success(299, "true"));
+        assert!(!flag_success(300, "true"));
+        assert!(!flag_success(200, "truex"));
+        assert!(!flag_success(200, ""));
+        assert!(!flag_success(200, "tru"));
+    }
+
+    #[test]
+    fn current_user_id_null_and_empty() {
+        assert_eq!(current_user_id(None), None);
+        assert_eq!(current_user_id(Some("")), None);
+        assert_eq!(current_user_id(Some("   ")), None);
+        // Whitespace-only in BOTH trim sets still collapses to empty.
+        assert_eq!(current_user_id(Some("\u{A0}\u{3000}")), None);
+        // NEL survives Kotlin trim, so it is a NONEMPTY user id - the
+        // Kotlin source would emit it verbatim; the port must too.
+        assert_eq!(current_user_id(Some("\u{85}")), Some("\u{85}".to_string()));
+        assert_eq!(current_user_id(Some("  u1 \u{A0}")), Some("u1".to_string()));
+    }
+
+    #[test]
+    fn pulse_bearer_null_and_empty() {
+        assert_eq!(pulse_bearer(None, "anon"), "anon");
+        assert_eq!(pulse_bearer(Some(""), "anon"), "anon");
+        assert_eq!(pulse_bearer(Some("   "), "anon"), "anon");
+        assert_eq!(pulse_bearer(Some("\u{A0}"), "anon"), "anon");
+        // NEL survives Kotlin trim and is nonempty, so the source's
+        // takeUnless{isNullOrEmpty} KEEPS it as the bearer; the port must.
+        assert_eq!(pulse_bearer(Some("\u{85}"), "anon"), "\u{85}");
+        assert_eq!(pulse_bearer(Some(" tok "), "anon"), "tok");
     }
 }

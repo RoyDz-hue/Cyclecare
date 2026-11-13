@@ -68,4 +68,43 @@ class CommunityTransportDecodeTest {
         // optBoolean would coerce this into a request/accept verdict.
         assertNull(CycleCareCoreBridge.communityVerdict(JSONObject("""{"ok":{"version":1,"verdict":"true"}}""")))
     }
+    @Test
+    fun userIdNullValueMeansNoSignedInUser() {
+        // The port maps a blank/absent id to None -> JSON null; that reply
+        // is a VALID answer, not drift.
+        val decoded = CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":1,"value":null}}"""))
+        assertNull(decoded!!.userId)
+    }
+
+    @Test
+    fun userIdEmptyAndWrongTypeRejected() {
+        // The port never emits an empty id (blank -> None), so "" is drift;
+        // optString-style coercion would have turned 42 into "42".
+        assertNull(CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":1,"value":""}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":1,"value":42}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":2,"value":null}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":1}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityUserIdValue(null))
+    }
+
+    @Test
+    fun userIdNonemptyAccepted() {
+        assertEquals("u1", CycleCareCoreBridge.decodeCommunityUserIdValue(JSONObject("""{"ok":{"version":1,"value":"u1"}}"""))!!.userId)
+    }
+
+    @Test
+    fun pulseBearerNullEmptyAndWrongTypeRejected() {
+        // The port always answers with a nonempty bearer (blank token maps
+        // to the anon key), so null/"" /non-string replies are drift.
+        assertNull(CycleCareCoreBridge.decodeCommunityPulseBearerValue(JSONObject("""{"ok":{"version":1,"value":null}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityPulseBearerValue(JSONObject("""{"ok":{"version":1,"value":""}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityPulseBearerValue(JSONObject("""{"ok":{"version":1,"value":42}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityPulseBearerValue(JSONObject("""{"ok":{"version":2,"value":"tok"}}""")))
+        assertNull(CycleCareCoreBridge.decodeCommunityPulseBearerValue(null))
+    }
+
+    @Test
+    fun pulseBearerNonemptyAccepted() {
+        assertEquals("tok", CycleCareCoreBridge.decodeCommunityPulseBearerValue(JSONObject("""{"ok":{"version":1,"value":"tok"}}""")))
+    }
 }
