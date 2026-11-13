@@ -308,4 +308,59 @@ class SyncWorkerProcessHandleWitnessTest {
         assertEquals(0, row.attempts)
         assertEquals(0L, row.nextAttemptAt)
     }
+
+    @Test fun originPathIdentityFlipMidAttemptBreaksPreservingPending() {
+        // Mid-attempt IDENTITY flip (owner drift during the transport await,
+        // origin/port path): the post-ACK current() check at
+        // SupabaseSyncService.kt:156 fires BEFORE any effect dispatch, so the
+        // loop breaks silently - no exception, no effect, no retry row, and
+        // the pending outbox row is fully preserved for the new owner scope.
+        // An identity flip never reaches the stale channel on this seam.
+        val db = open()
+        val prefs = syncPrefs()
+        val host = RustBoundRoomHost(prefs)
+        val token = (host.publish(null, db, prefs.rustOperationSnapshot()) as RustBoundRoomHost.Result.Value).value
+        val repo = CycleRepository(db, RustRepositoryPort(host, token))
+        val service = SupabaseSyncService(db, prefs)
+        bindThroughProcessHandle(service, repo)
+        val id = identity(prefs)
+        val entry = seedPending(db, prefs, "2026-10-07")
+        val fake = FakeTransport(onApply = { op ->
+            prefs.userId = "owner-b"
+            validAck(op)
+        })
+        val applied = runBlocking { service.executeV3OutboxAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, db, service.captureSyncApplyBinding(db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)) }
+        assertEquals(0, applied)
+        val dao = db.healthSyncDao()
+        runBlocking {
+            assertEquals(0L, dao.revision(owner, "2026-10-07")!!.serverRevision)
+            assertTrue(dao.pending(owner).any { it.operationId == entry.operationId && it.attempts == 0 && it.nextAttemptAt == 0L })
+        }
+    }
+
+    @Test fun legacyPathIdentityFlipMidAttemptBreaksPreservingPending() {
+        // Same identity flip on the legacy (null-origin) path: the same
+        // post-ACK current() break applies - silent, zero effects, pending
+        // preserved, no retry row.
+        val db = open()
+        val prefs = syncPrefs()
+        val repo = CycleRepository(db) // no port: legacy admission authority
+        val service = SupabaseSyncService(db, prefs)
+        bindThroughProcessHandle(service, repo)
+        val id = identity(prefs)
+        val entry = seedPending(db, prefs, "2026-10-07")
+        val origin = service.captureSyncApplyBinding(db, owner, id.session, id.localConsentGeneration, id.serverConsentGeneration!!)
+        assertNull(origin)
+        val fake = FakeTransport(onApply = { op ->
+            prefs.userId = "owner-b"
+            validAck(op)
+        })
+        val applied = runBlocking { service.executeV3OutboxAttempt(fake, "tok", owner, id.session, id.localConsentGeneration, server, db, origin) }
+        assertEquals(0, applied)
+        val dao = db.healthSyncDao()
+        runBlocking {
+            assertEquals(0L, dao.revision(owner, "2026-10-07")!!.serverRevision)
+            assertTrue(dao.pending(owner).any { it.operationId == entry.operationId && it.attempts == 0 && it.nextAttemptAt == 0L })
+        }
+    }
 }
