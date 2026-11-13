@@ -137,6 +137,168 @@ object CycleCareCoreBridge {
         return NonsafetyDecision(branch, null)
     }
 
+    /** Read-only doctor prompts. No notes, settings, owner or credentials cross JNI.
+     * JVM keeps its exact trim/titlecase primitives; Rust owns the summary algorithm.
+     * Lone UTF16 surrogates cannot round-trip Rust strings, so keep the Kotlin path.
+     */
+    internal fun doctorSummary(
+        logs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        displayLabel: (String) -> String
+    ): List<String>? = runCatching {
+        fun wireSafe(s: String): Boolean {
+            var i = 0
+            while (i < s.length) {
+                val c = s[i++]
+                if (c.isHighSurrogate()) {
+                    if (i == s.length || !s[i++].isLowSurrogate()) return false
+                } else if (c.isLowSurrogate()) return false
+            }
+            return true
+        }
+        val entries = JSONArray()
+        for (log in logs) {
+            if (!wireSafe(log.dateString) || !wireSafe(log.flowLevel) || !wireSafe(log.symptomsCsv)) return null
+            val symptoms = JSONArray()
+            log.symptomsCsv.split(',').map(String::trim).filter(String::isNotBlank).forEach { key ->
+                val label = displayLabel(key)
+                if (!wireSafe(label)) return null
+                symptoms.put(JSONObject().put("key", key).put("label", label))
+            }
+            entries.put(JSONObject().put("date", log.dateString).put("flow", log.flowLevel)
+                .put("pain", log.painIntensity).put("symptoms", symptoms))
+        }
+        val reply = call("doctor_summary_v1", JSONObject().put("logs", entries)) ?: return null
+        decodeDoctorSummaryReply(reply)
+    }.getOrNull()
+
+    internal fun decodeDoctorSummaryReply(reply: JSONObject): List<String>? {
+        if (reply.keys().asSequence().toSet() != setOf("ok")) return null
+        val ok = reply.opt("ok") as? JSONObject ?: return null
+        if (ok.keys().asSequence().toSet() != setOf("version", "questions")) return null
+        if (ok.opt("version") !is Int || ok.opt("version") != 1) return null
+        val questions = ok.opt("questions") as? JSONArray ?: return null
+        if (questions.length() > 5) return null
+        val result = (0 until questions.length()).map { questions.opt(it) as? String ?: return null }
+        if (result.any { it.isEmpty() } || result.distinct().size != result.size) return null
+        return result
+    }
+
+    /** Local baseline evidence only. Full Java date semantics live in Rust; JVM
+     * retains its uppercase flow primitive. Date grammar is ASCII, so malformed
+     * UTF16 dates are invalid in both parsers, never user-facing text output.
+     */
+    internal fun fullBaseline(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        logs: List<com.cyclecare.app.data.local.CycleDayLog>
+    ): com.cyclecare.app.domain.pattern.BaselineMetrics? = runCatching {
+        // Avoid unpaired UTF16 serialization even though these dates would be invalid.
+        if (logs.any { l -> l.dateString.any { it.isSurrogate() } }) return null
+        val entries = JSONArray()
+        logs.forEach { log -> entries.put(JSONObject().put("date", log.dateString)
+            .put("bleeding", log.flowLevel.uppercase() in setOf("LIGHT", "MODERATE", "HEAVY", "UNUSUALLY_HEAVY"))) }
+        val reply = call("baseline_full_v1", JSONObject().put("average", settings.averageCycleLength)
+            .put("duration", settings.periodDuration).put("logs", entries)) ?: return null
+        decodeFullBaseline(reply, logs.size)
+    }.getOrNull()
+
+    internal fun decodeFullBaseline(reply: JSONObject, logCount: Int): com.cyclecare.app.domain.pattern.BaselineMetrics? = runCatching {
+        require(reply.keys().asSequence().toSet() == setOf("ok"))
+        val ok = reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet() == setOf("version", "metrics"))
+        require(ok.opt("version") is Int && ok.opt("version") == 1)
+        val m = ok.opt("metrics") as? JSONObject ?: return null
+        require(m.keys().asSequence().toSet() == setOf("averageCycleLength", "medianCycleLength", "minCycleLength",
+            "maxCycleLength", "variabilityDays", "isRegular", "totalLoggedDays", "observedCycleIntervals"))
+        fun int(k: String): Int = m.opt(k) as? Int ?: throw IllegalArgumentException(k)
+        val raw = m.opt("averageCycleLength")
+        require(raw is Number && raw.toDouble().isFinite())
+        val regular = m.opt("isRegular") as? Boolean ?: return null
+        val average = raw.toDouble(); val median=int("medianCycleLength"); val min=int("minCycleLength")
+        val max=int("maxCycleLength"); val variability=int("variabilityDays"); val total=int("totalLoggedDays"); val intervals=int("observedCycleIntervals")
+        require(total in 0..logCount && intervals >= 0 && intervals <= (total-1).coerceAtLeast(0))
+        require(min in 1..120 && max in min..120 && median in min..max && average in min.toDouble()..max.toDouble())
+        require(variability in 0..120)
+        if (intervals == 0) require(min in 21..45 && min == max && median == min && average == min.toDouble() && variability == 0 && !regular)
+        if (regular) require(intervals >= 2 && min >= 21 && max <= 45 && max-min <= 7)
+        com.cyclecare.app.domain.pattern.BaselineMetrics(average,median,min,max,variability,regular,total,intervals)
+    }.getOrNull()
+
+    /** Synchronous phase snapshot, no identity, records or clock read. */
+    internal fun fullPhase(
+        date: java.time.LocalDate,
+        settings: com.cyclecare.app.data.local.CycleSettings
+    ): com.cyclecare.app.data.model.CyclePhase? = runCatching {
+        if (settings.lastPeriodStartDate.any { it.isSurrogate() }) return null
+        val reply=call("phase_full_v1",JSONObject().put("date",date.toString())
+            .put("anchor",settings.lastPeriodStartDate).put("average",settings.averageCycleLength)
+            .put("duration",settings.periodDuration).put("luteal",settings.lutealPhaseDays)) ?: return null
+        decodeFullPhase(reply)
+    }.getOrNull()
+
+    internal fun decodeFullPhase(reply: JSONObject): com.cyclecare.app.data.model.CyclePhase? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","phase"))
+        require(ok.opt("version") is Int && ok.opt("version")==1)
+        val phase=ok.opt("phase") as? String ?: return null
+        com.cyclecare.app.data.model.CyclePhase.valueOf(phase)
+    }.getOrNull()
+
+    /** Full observation assembly in Rust, JVM supplies exact Unicode label primitives.
+     * No notes, credentials, owner or unrelated profile fields cross the local JNI boundary.
+     */
+    internal fun learnedObservations(
+        settings: com.cyclecare.app.data.local.CycleSettings,
+        logs: List<com.cyclecare.app.data.local.CycleDayLog>,
+        profile: com.cyclecare.app.data.local.OnboardingProfile?,
+        label: (String)->String
+    ): List<com.cyclecare.app.data.model.LearnedObservation>? = runCatching {
+        fun safe(s:String):Boolean {
+            var i=0
+            while (i<s.length) {val c=s[i++];if(c.isHighSurrogate()) {
+                if(i==s.length || !s[i++].isLowSurrogate())return false
+            } else if(c.isLowSurrogate())return false}
+            return true
+        }
+        fun symptoms(csv:String):JSONArray? {
+            if(!safe(csv))return null
+            val out=JSONArray()
+            for(key in csv.split(',').map(String::trim).filter(String::isNotBlank)) {
+                val display=label(key);if(!safe(display))return null
+                out.put(JSONObject().put("key",key).put("label",display))
+            }
+            return out
+        }
+        if(!safe(settings.lastPeriodStartDate))return null
+        val setup=symptoms(profile?.typicalSymptomsCsv.orEmpty()) ?: return null
+        val entries=JSONArray()
+        for(log in logs) {
+            if(!safe(log.dateString))return null
+            entries.put(JSONObject().put("date",log.dateString).put("symptoms",symptoms(log.symptomsCsv) ?: return null))
+        }
+        val reply=call("learned_full_v1",JSONObject().put("completed",settings.isOnboardingCompleted || profile?.isCompleted==true)
+            .put("average",settings.averageCycleLength).put("duration",settings.periodDuration).put("luteal",settings.lutealPhaseDays)
+            .put("anchor",settings.lastPeriodStartDate).put("setup",setup).put("logs",entries)) ?: return null
+        decodeLearnedObservations(reply)
+    }.getOrNull()
+
+    internal fun decodeLearnedObservations(reply:JSONObject):List<com.cyclecare.app.data.model.LearnedObservation>? = runCatching {
+        require(reply.keys().asSequence().toSet()==setOf("ok"))
+        val ok=reply.opt("ok") as? JSONObject ?: return null
+        require(ok.keys().asSequence().toSet()==setOf("version","observations"))
+        require(ok.opt("version") is Int && ok.opt("version")==1)
+        val items=ok.opt("observations") as? JSONArray ?: return null
+        require(items.length() in 1..11)
+        val result=(0 until items.length()).map { i ->
+            val o=items.opt(i) as? JSONObject ?: return null
+            require(o.keys().asSequence().toSet()==setOf("id","category","headline","description","confidence"))
+            fun text(k:String):String {val s=o.opt(k) as? String ?: throw IllegalArgumentException(k);require(s.isNotEmpty());return s}
+            com.cyclecare.app.data.model.LearnedObservation(text("id"),text("category"),text("headline"),text("description"),text("confidence"))
+        }
+        require(result.map {it.id}.distinct().size==result.size)
+        result
+    }.getOrNull()
+
     /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
     fun call(contract: String, payload: JSONObject): JSONObject? {
         if (ensureLoaded() != NativeState.LOADED) return null

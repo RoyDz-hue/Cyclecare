@@ -1,0 +1,4 @@
+Embedded xmltree parser controls (all run): POS good (decoy runner name on activity element ignored);
+NEG runner-on-instrumentation-wrong FAIL; NEG targetPackage-wrong FAIL; NEG two instrumentation elements FAIL;
+NEG zero instrumentation elements FAIL. Stub aapt2 rejects old positional xmltree syntax (AOSP --file contract).
+Local aapt2 is a format-true stub; real aapt2 runs on the runner. Hash pins verified against REAL maven APKs.

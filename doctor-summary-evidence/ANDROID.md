@@ -1,0 +1,9 @@
+# Fresh Android native candidate, local static qualification
+
+The doctor-summary contract has a fresh `aarch64-linux-android` build using the existing workflow pins Rust 1.99.1, NDK 28.2.13676358, API 24. The build script now accepts only explicitly mapped Linux x86_64 and macOS arm64 Rust hosts and still checks exact Rust release/host before compilation. NDK host tools and Android target linkers are selected explicitly. Android 16KB linker flags remain in the existing target config.
+
+Raw and packaged ELF gates check exact AArch64/ELF64/DYN, every LOAD alignment 0x4000, and all three JNI exports. Packaged bytes must equal the raw verified artifact or an exactly reproduced NDK strip transform. No previous Android native or host Linux artifact is substituted. Build staging was cleared before copying the fresh Android artifact. Debug app/test artifacts have source snapshots and full binary/DEX hashes. Their signatures use only the pre-existing disposable Android debug certificate. No key was created, moved or exported.
+
+`DoctorSummaryAndroidNativeTest` contains three synthetic direct-contract/shared-caller/fallback witnesses. The full debug test APK has 33 structurally verified runtime-visible JUnit identities (previous 30 plus these three). These Android tests were compiled and packaged, NOT executed. Static ELF 16KB alignment and zip alignment do not prove runtime behavior on a 16KB Android device.
+
+Current qualification is local Android cross-compilation + debug artifact static inspection, alongside the separately qualified Linux host parity. There is no new Test Lab matrix, emulator/device execution, phone installation, production sign-in/data use, release key action or distribution. Debug is not minified release. Mandatory obfuscated signed full release checks and fresh Android runtime qualification remain outstanding. Historical workflow name-status allowlists are not asserted current or launch-ready by this local packet.

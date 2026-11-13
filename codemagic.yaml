@@ -348,3 +348,929 @@ workflows:
       - Androidapp/app/build/intermediates/optimized_processed_res/**/optimize.ap_
       - build-logs/*.log
       - build-logs/*.txt
+  cyclecare-stage-f-instrumented-build:
+    name: Stage-F instrumented-test build + inventory (PROPOSED; evidence build, not for merge; no device/runtime)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact throwaway-branch tip commit, supplied after push at manual build start
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        NDK_PIN: "28.2.13676358"
+        RUST_PIN: "1.99.1"
+        ORCHESTRATOR_PIN: "1.6.1"
+        TEST_SERVICES_PIN: "1.6.0"
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.cargo/registry
+    scripts:
+      - name: Pin evidence context (fail closed; assertions before any repo writes)
+        script: |
+          set -euo pipefail
+          PRELOG="$HOME/stage-f-preflight.log"
+          {
+          test -n "${EXPECTED_SOURCE_SHA:-}" || { echo "EXPECTED_SOURCE_SHA input empty - supply the exact branch tip SHA at build start"; exit 1; }
+          HEADSHA=$(git rev-parse HEAD)
+          echo "expected: ${EXPECTED_SOURCE_SHA}"
+          echo "actual:   $HEADSHA"
+          test "$HEADSHA" = "$EXPECTED_SOURCE_SHA" || { echo "SHA MISMATCH"; exit 1; }
+          BASE="b6dfd24aad02a7a6a5a16f9c82a3364726bab27c"
+          git cat-file -e "${BASE}^{commit}" || { echo "base commit ${BASE} missing from clone"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "DIRTY TREE:"; git status --porcelain; exit 1; }
+          git diff --name-status "$BASE" "$HEADSHA" | LC_ALL=C sort > /tmp/stage-f-actual-name-status.txt
+          diff stage-e-evidence/expected-name-status.txt /tmp/stage-f-actual-name-status.txt || { echo "DIFF SCOPE MISMATCH (allowed: stage-d 31 + stage-e 7 + stage-f reviewed set only)"; exit 1; }
+          echo "--- Stage-D manifest content pin (repinned for 3 reviewed files) ---"
+          echo "STAGEDMANIFESTHASH  stage-d-test-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "--- Stage-D verifier attestation (pinned bytes of verify_test_xml.py) ---"
+          echo "81ef926c12e35df852656bc67a58687d174416acb30d22cdfaaedaf81ee13841  stage-d-test-evidence/verify_test_xml.py" | shasum -a 256 -c -
+          echo "--- Stage-E path-set + manifest (repinned build.gradle.kts only) ---"
+          echo "9bbb4160d4fbbf4418757e1712ca71f42cd8aa0efd2781ad1c2518a47fcab6bc  stage-e-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-e-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-e-manifest-paths.txt
+          diff stage-e-evidence/expected-manifest-paths.txt /tmp/stage-e-manifest-paths.txt || { echo "STAGE-E MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-e-evidence/expected-sha256.txt
+          echo "--- Stage-F manifest: exact path set, then hashes (4 reviewed androidTest sources) ---"
+          echo "STAGEFPATHSHASH  stage-f-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-f-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-f-manifest-paths.txt
+          diff stage-f-evidence/expected-manifest-paths.txt /tmp/stage-f-manifest-paths.txt || { echo "STAGE-F MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-f-evidence/expected-sha256.txt
+          echo "PIN OK"
+          } 2>&1 | tee "$PRELOG"
+          mkdir -p build-logs && cp "$PRELOG" build-logs/pin.log
+      - name: JDK 17 pin (explicit binary; exact version assert, not ambient java)
+        script: |
+          set -euo pipefail
+          {
+          /usr/libexec/java_home -V 2>&1 || true
+          JH=$(/usr/libexec/java_home -v 17) || { echo "NO JDK 17 ON RUNNER"; exit 1; }
+          export JAVA_HOME="$JH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          test -x "$JAVA_HOME/bin/java" || { echo "selected JAVA_HOME has no java binary"; exit 1; }
+          JV=$("$JAVA_HOME/bin/java" -version 2>&1)
+          echo "$JV"
+          grep -q '"17\.' <<< "$JV" || { echo "selected java binary is NOT version 17"; exit 1; }
+          } 2>&1 | tee build-logs/jdk-precheck.log
+      - name: SDK platform + NDK pin inventory (documented image, no installs)
+        script: |
+          set -euo pipefail
+          {
+          ls /usr/local/share/android-sdk/platforms/ || { echo "NO SDK PLATFORMS ON RUNNER"; exit 1; }
+          test -d /usr/local/share/android-sdk/platforms/android-36.1 || { echo "compileSdk 36 minor 1 platform (android-36.1, documented image spec) ABSENT - image drifted"; exit 1; }
+          ls /usr/local/share/android-sdk/ndk/ || { echo "NO NDK DIR ON RUNNER"; exit 1; }
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          test -d "$ANDROID_NDK_HOME" || { echo "PINNED NDK ${NDK_PIN} ABSENT - image drifted from documented spec"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" || { echo "NDK darwin prebuilt tools missing"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip" || { echo "NDK llvm-strip missing (needed by strip-reproduction gate)"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" --version | head -2
+          } 2>&1 | tee build-logs/ndk-precheck.log
+      - name: Pinned Rust toolchain install + Android target (checksum-verified, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          RUSTUP_INIT_SHA256="63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f"
+          INSTALLER="/tmp/rustup-init-aarch64-apple-darwin"
+          curl -sSf --max-time 120 -o "$INSTALLER" "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init"
+          echo "$RUSTUP_INIT_SHA256  $INSTALLER" | shasum -a 256 -c - || { echo "RUSTUP-INIT CHECKSUM MISMATCH"; exit 1; }
+          FOUT="$(file "$INSTALLER")"
+          grep -q "Mach-O 64-bit" <<< "$FOUT" || { echo "RUSTUP-INIT NOT MACH-O"; exit 1; }
+          grep -q "arm64" <<< "$FOUT" || { echo "RUSTUP-INIT NOT ARM64"; exit 1; }
+          chmod +x "$INSTALLER"
+          "$INSTALLER" -y --no-modify-path --profile minimal --default-toolchain "$RUST_PIN"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-linux-android --toolchain "$RUST_PIN"
+          rustup show active-toolchain
+          rustup target list --installed
+          } 2>&1 | tee build-logs/rust-toolchain-install.log
+      - name: Build Android ARM artifact from clean source (fresh provenance, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          mkdir -p build-logs
+          date +%s > build-logs/.gate-start
+          rm -rf Androidapp/rust/core-ffi/target/aarch64-linux-android
+          rm -rf Androidapp/rust/core-jni/jniLibs
+          bash Androidapp/rust/build-android.sh aarch64-linux-android "$RUST_PIN"
+          } 2>&1 | tee build-logs/rust-android-build.log
+      - name: Artifact gate (ELF header, alignment, exports, freshness, hash)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          bash Androidapp/rust/verify-android-artifact.sh aarch64-linux-android "$ANDROID_NDK_HOME" build-logs/android-so-sha256.txt
+          cat build-logs/android-so-sha256.txt
+          } 2>&1 | tee build-logs/artifact-gate.log
+      - name: Runner-local Gradle heap (repo file untouched)
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gradle"
+          printf 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\n' > "$HOME/.gradle/gradle.properties"
+          cat "$HOME/.gradle/gradle.properties"
+      - name: assembleDebug + assembleDebugAndroidTest (same tip; unsigned-by-us; runner auto debug keystore)
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon
+          cd ..
+          test -f Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so || { echo "packaged jniLibs artifact missing after packageRustCore"; exit 1; }
+          LEFTOVER=$(find Androidapp/rust/core-jni/jniLibs -mindepth 1 ! -path '*arm64-v8a*' -print -quit)
+          test -z "$LEFTOVER" || { echo "unexpected non-arm64-v8a entries in jniLibs:"; find Androidapp/rust/core-jni/jniLibs -mindepth 1; exit 1; }
+          echo "jniLibs: only arm64-v8a present"
+          } 2>&1 | tee build-logs/apk-build.log
+      - name: APK composition gate (app APK: exactly one; final-ELF validation + provenance + DEX)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 || { echo "expected exactly ONE debug APK, found ${#APKS[@]}"; exit 1; }
+          echo "APK=${APKS[0]}"
+          bash Androidapp/rust/verify-apk-rust-content.sh "${APKS[0]}" build-logs/android-so-sha256.txt "$ANDROID_NDK_HOME" build-logs/apk-sha256.txt
+          cat build-logs/apk-sha256.txt
+          } 2>&1 | tee build-logs/apk-gate.log
+      - name: Test APK gate (exactly one; identity + core lib presence + hash)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK, found ${#TAPKS[@]}"; ls -la Androidapp/app/build/outputs/apk/androidTest/debug/ 2>/dev/null || true; exit 1; }
+          echo "TEST_APK=${TAPKS[0]}"
+          python3 - "${TAPKS[0]}" << 'PYGATE'
+          import zipfile, hashlib, sys
+          p = sys.argv[1]
+          z = zipfile.ZipFile(p)
+          names = z.namelist()
+          print("entries:", len(names))
+          # Test APK must NOT package the production core lib (instrumentation
+          # loads it from the APP APK); flag if present so the fact is recorded.
+          core = [n for n in names if n.endswith('libcyclecare_core.so')]
+          print("core lib entries in test APK:", core)
+          h = hashlib.sha256(open(p,'rb').read()).hexdigest()
+          open('build-logs/test-apk-sha256.txt','w').write(f"{h}  {p}  bytes={len(open(p,'rb').read())}\n")
+          print(h)
+          PYGATE
+          cat build-logs/test-apk-sha256.txt
+          } 2>&1 | tee build-logs/test-apk-gate.log
+      - name: Dependency resolution inventory (orchestrator + test-services exact pins resolved)
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          ./gradlew :app:dependencies --configuration debugAndroidTestRuntimeClasspath --no-daemon > /tmp/deps.txt 2>&1 || { cat /tmp/deps.txt; exit 1; }
+          cd ..
+          grep -E "androidx.test:orchestrator|androidx.test.services:test-services" /tmp/deps.txt || { echo "orchestrator/test-services NOT in resolved graph"; exit 1; }
+          grep -q "androidx.test:orchestrator:${ORCHESTRATOR_PIN}" /tmp/deps.txt || { echo "orchestrator resolved version != ${ORCHESTRATOR_PIN}"; grep "orchestrator" /tmp/deps.txt; exit 1; }
+          grep -q "androidx.test.services:test-services:${TEST_SERVICES_PIN}" /tmp/deps.txt || { echo "test-services resolved version != ${TEST_SERVICES_PIN}"; grep "test-services" /tmp/deps.txt; exit 1; }
+          cp /tmp/deps.txt build-logs/dependency-resolution.txt
+          echo "RESOLVED orchestrator=${ORCHESTRATOR_PIN} test-services=${TEST_SERVICES_PIN}"
+          } 2>&1 | tee build-logs/dependency-resolution.log
+      - name: Generated Room output inventory (actual generator products compiled, hashed)
+        script: |
+          set -euo pipefail
+          {
+          GEN=$(find Androidapp/app/build/generated -name 'V9FixtureAnchorDatabase_Impl*' -o -name 'CycleCareDatabase_Impl*' 2>/dev/null | LC_ALL=C sort)
+          test -n "$GEN" || { echo "NO generated Room impl files found - KSP output missing"; find Androidapp/app/build/generated -maxdepth 3 -type d | head -20; exit 1; }
+          echo "$GEN"
+          echo "$GEN" | tr ' ' '\n' | while read -r f; do shasum -a 256 "$f"; done
+          echo "$GEN" | tr ' ' '\n' | while read -r f; do shasum -a 256 "$f"; done > build-logs/room-generated-sha256.txt
+          } 2>&1 | tee build-logs/room-generated.log
+      - name: Exact 10-test identity inventory (DEX class/method evidence)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          DEXDUMP=$(ls /usr/local/share/android-sdk/build-tools/*/dexdump | head -1)
+          test -x "$DEXDUMP" || { echo "dexdump missing"; exit 1; }
+          TAPK=$(echo Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          "$DEXDUMP" "$TAPK" > /tmp/testdex.txt 2>/dev/null || { echo "dexdump failed"; exit 1; }
+          for M in \
+            'Lcom/cyclecare/app/data/local/EncryptedDatabaseInstrumentedTest;' \
+            'Lcom/cyclecare/app/data/local/V9FixtureAnchorDatabase;' \
+            'Lcom/cyclecare/app/data/local/V9FixtureProcessRestartInstrumentedTest;' \
+            'Lcom/cyclecare/app/rust/NativeCoreInstrumentedTest;' ; do
+            grep -q "Class definition.*$M\|Class descriptor.*$M" /tmp/testdex.txt || { echo "MISSING test class $M"; exit 1; }
+            echo "OK: $M"
+          done
+          for M in \
+            encryptedRoundTripThroughProductionFactory \
+            wrongPassphraseIsRefusedAndFileUnharmed \
+            durableReopenAfterCloseWithStoredWrappedPassphrase \
+            storedFileIsNotPlaintextSqlite \
+            testKeyMaterialIsSyntheticAndStableWithinRun \
+            nativeLibraryLoadsOnDevice \
+            devicePageSizeIs16384 \
+            warmUpAndPlannedRoundtripValidates \
+            a_seedEncryptedV9Fixture \
+            b_verifyUpgradeAcrossProcessRestart ; do
+            grep -q "$M" /tmp/testdex.txt || { echo "MISSING test method $M"; exit 1; }
+          done
+          echo "EXACT 10 TEST IDENTITIES PRESENT"
+          } 2>&1 | tee build-logs/test-inventory.log
+      - name: Merged manifest inventory (app + test: providers, initializers, permissions, packages, certs)
+        script: |
+          set -euo pipefail
+          {
+          APPMAN=$(find Androidapp/app/build/intermediates/merged_manifest* Androidapp/app/build/intermediates/packaged_manifests 2>/dev/null -path '*debug*' -name AndroidManifest.xml ! -path '*androidTest*' | head -1)
+          TESTMAN=$(find Androidapp/app/build/intermediates/merged_manifest* Androidapp/app/build/intermediates/packaged_manifests 2>/dev/null -path '*androidTest*' -name AndroidManifest.xml | head -1)
+          test -n "$APPMAN" || { echo "app merged manifest not found"; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*manifest*'; exit 1; }
+          test -n "$TESTMAN" || { echo "test merged manifest not found"; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*manifest*'; exit 1; }
+          cp "$APPMAN" build-logs/merged-manifest-app.xml
+          cp "$TESTMAN" build-logs/merged-manifest-test.xml
+          shasum -a 256 build-logs/merged-manifest-app.xml build-logs/merged-manifest-test.xml | tee build-logs/merged-manifest-sha256.txt
+          echo "--- app manifest: package + providers + initializers + permissions ---"
+          grep -o 'package="[^"]*"' build-logs/merged-manifest-app.xml | head -1
+          grep -o 'android:name="[^"]*Initializer"' build-logs/merged-manifest-app.xml || true
+          grep -o 'android:name="[^"]*Provider"' build-logs/merged-manifest-app.xml || true
+          grep -c 'uses-permission' build-logs/merged-manifest-app.xml || true
+          echo "--- test manifest: package + targetPackage + instrumentation ---"
+          grep -o 'package="[^"]*"' build-logs/merged-manifest-test.xml | head -1
+          grep -o 'targetPackage="[^"]*"' build-logs/merged-manifest-test.xml || true
+          grep -o 'android:name="[^"]*"' build-logs/merged-manifest-test.xml | grep -i 'orchestrator\|runner\|services' || true
+          AAPT=$(ls /usr/local/share/android-sdk/build-tools/*/aapt2 | head -1)
+          APK=$(echo Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPK=$(echo Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          "$AAPT" dump badging "$APK" | head -3
+          "$AAPT" dump badging "$TAPK" | head -3
+          } 2>&1 | tee build-logs/merged-manifest-inventory.log
+      - name: APK cert evidence (runner auto debug keystore; both APKs)
+        script: |
+          set -euo pipefail
+          {
+          APKSIGNER=$(ls /usr/local/share/android-sdk/build-tools/*/apksigner | head -1)
+          test -x "$APKSIGNER" || { echo "apksigner missing"; exit 1; }
+          APK=$(echo Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPK=$(echo Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          "$APKSIGNER" verify --print-certs "$APK"
+          "$APKSIGNER" verify --print-certs "$TAPK"
+          } 2>&1 | tee build-logs/apk-certs.log
+    artifacts:
+      - build-logs/*.log
+      - build-logs/*.txt
+      - build-logs/merged-manifest-*.xml
+      - Androidapp/app/build/outputs/apk/debug/*.apk
+      - Androidapp/app/build/outputs/apk/androidTest/debug/*.apk
+  cyclecare-stage-f-instrumented-build:
+    name: Stage-F instrumented-test build + inventory (PROPOSED; evidence build, not for merge; no device/runtime)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact throwaway-branch tip commit, supplied after push at manual build start
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        NDK_PIN: "28.2.13676358"
+        RUST_PIN: "1.99.1"
+        ORCHESTRATOR_PIN: "1.6.1"
+        TEST_SERVICES_PIN: "1.6.0"
+        RUNNER_PIN: "1.6.2"
+        JUNIT4_PIN: "4.13.2"
+        EXT_JUNIT_PIN: "1.3.0"
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.cargo/registry
+    scripts:
+      - name: Pin evidence context (fail closed; assertions before any repo writes)
+        script: |
+          set -euo pipefail
+          PRELOG="$HOME/stage-f-preflight.log"
+          {
+          test -n "${EXPECTED_SOURCE_SHA:-}" || { echo "EXPECTED_SOURCE_SHA input empty - supply the exact branch tip SHA at build start"; exit 1; }
+          HEADSHA=$(git rev-parse HEAD)
+          echo "expected: ${EXPECTED_SOURCE_SHA}"
+          echo "actual:   $HEADSHA"
+          test "$HEADSHA" = "$EXPECTED_SOURCE_SHA" || { echo "SHA MISMATCH"; exit 1; }
+          BASE="b6dfd24aad02a7a6a5a16f9c82a3364726bab27c"
+          git cat-file -e "${BASE}^{commit}" || { echo "base commit ${BASE} missing from clone"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "DIRTY TREE:"; git status --porcelain; exit 1; }
+          git diff --name-status "$BASE" "$HEADSHA" | LC_ALL=C sort > /tmp/stage-f-actual-name-status.txt
+          diff stage-e-evidence/expected-name-status.txt /tmp/stage-f-actual-name-status.txt || { echo "DIFF SCOPE MISMATCH (allowed: stage-d 31 + stage-e 7 + stage-f reviewed set only)"; exit 1; }
+          echo "--- Stage-D: manifest content pin, then ALL entry hashes, verifier attestation separate ---"
+          echo "STAGEDMANIFESTHASH  stage-d-test-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          shasum -a 256 -c stage-d-test-evidence/expected-sha256.txt
+          echo "81ef926c12e35df852656bc67a58687d174416acb30d22cdfaaedaf81ee13841  stage-d-test-evidence/verify_test_xml.py" | shasum -a 256 -c -
+          echo "--- Stage-E: manifest content pin, path-set pin, path diff, entry hashes ---"
+          echo "653f1cd84eb8187721d18ce6c17a222cbeca841a82ad52e33d2e86c177b685a3  stage-e-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "9bbb4160d4fbbf4418757e1712ca71f42cd8aa0efd2781ad1c2518a47fcab6bc  stage-e-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-e-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-e-manifest-paths.txt
+          diff stage-e-evidence/expected-manifest-paths.txt /tmp/stage-e-manifest-paths.txt || { echo "STAGE-E MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-e-evidence/expected-sha256.txt
+          echo "--- Stage-F: manifest content pin, path-set pin, path diff, entry hashes (4 androidTest + DatabaseKeyManager + 2 gate scripts + test inventory) ---"
+          echo "STAGEFMANIFESTHASH  stage-f-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "STAGEFPATHSHASH  stage-f-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-f-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-f-manifest-paths.txt
+          diff stage-f-evidence/expected-manifest-paths.txt /tmp/stage-f-manifest-paths.txt || { echo "STAGE-F MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-f-evidence/expected-sha256.txt
+          echo "PIN OK"
+          } 2>&1 | tee "$PRELOG"
+          mkdir -p build-logs && cp "$PRELOG" build-logs/pin.log
+      - name: JDK 17 pin (explicit binary; exact version assert, not ambient java)
+        script: |
+          set -euo pipefail
+          {
+          /usr/libexec/java_home -V 2>&1 || true
+          JH=$(/usr/libexec/java_home -v 17) || { echo "NO JDK 17 ON RUNNER"; exit 1; }
+          export JAVA_HOME="$JH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          test -x "$JAVA_HOME/bin/java" || { echo "selected JAVA_HOME has no java binary"; exit 1; }
+          "$JAVA_HOME/bin/java" -version > /tmp/jversion.txt 2>&1
+          cat /tmp/jversion.txt
+          grep -q '"17\.' /tmp/jversion.txt || { echo "selected java binary is NOT version 17"; exit 1; }
+          } 2>&1 | tee build-logs/jdk-precheck.log
+      - name: SDK platform + NDK pin inventory (documented image, no installs)
+        script: |
+          set -euo pipefail
+          {
+          ls /usr/local/share/android-sdk/platforms/ || { echo "NO SDK PLATFORMS ON RUNNER"; exit 1; }
+          test -d /usr/local/share/android-sdk/platforms/android-36.1 || { echo "compileSdk 36 minor 1 platform (android-36.1, documented image spec) ABSENT - image drifted"; exit 1; }
+          ls /usr/local/share/android-sdk/ndk/ || { echo "NO NDK DIR ON RUNNER"; exit 1; }
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          test -d "$ANDROID_NDK_HOME" || { echo "PINNED NDK ${NDK_PIN} ABSENT - image drifted from documented spec"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" || { echo "NDK darwin prebuilt tools missing"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip" || { echo "NDK llvm-strip missing (needed by strip-reproduction gate)"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" --version > /tmp/readelf-version.txt 2>&1
+          sed -n '1,2p' /tmp/readelf-version.txt
+          } 2>&1 | tee build-logs/ndk-precheck.log
+      - name: Pinned Rust toolchain install + Android target (checksum-verified, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          RUSTUP_INIT_SHA256="63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f"
+          INSTALLER="/tmp/rustup-init-aarch64-apple-darwin"
+          curl -sSf --max-time 120 -o "$INSTALLER" "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init"
+          echo "$RUSTUP_INIT_SHA256  $INSTALLER" | shasum -a 256 -c - || { echo "RUSTUP-INIT CHECKSUM MISMATCH"; exit 1; }
+          FOUT="$(file "$INSTALLER")"
+          grep -q "Mach-O 64-bit" <<< "$FOUT" || { echo "RUSTUP-INIT NOT MACH-O"; exit 1; }
+          grep -q "arm64" <<< "$FOUT" || { echo "RUSTUP-INIT NOT ARM64"; exit 1; }
+          chmod +x "$INSTALLER"
+          "$INSTALLER" -y --no-modify-path --profile minimal --default-toolchain "$RUST_PIN"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-linux-android --toolchain "$RUST_PIN"
+          rustup show active-toolchain
+          rustup target list --installed
+          } 2>&1 | tee build-logs/rust-toolchain-install.log
+      - name: Build Android ARM artifact from clean source (fresh provenance, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          mkdir -p build-logs
+          date +%s > build-logs/.gate-start
+          rm -rf Androidapp/rust/core-ffi/target/aarch64-linux-android
+          rm -rf Androidapp/rust/core-jni/jniLibs
+          bash Androidapp/rust/build-android.sh aarch64-linux-android "$RUST_PIN"
+          } 2>&1 | tee build-logs/rust-android-build.log
+      - name: Artifact gate (ELF header, alignment, exports, freshness, hash)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          bash Androidapp/rust/verify-android-artifact.sh aarch64-linux-android "$ANDROID_NDK_HOME" build-logs/android-so-sha256.txt
+          cat build-logs/android-so-sha256.txt
+          } 2>&1 | tee build-logs/artifact-gate.log
+      - name: Runner-local Gradle heap (repo file untouched)
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gradle"
+          printf 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\n' > "$HOME/.gradle/gradle.properties"
+          cat "$HOME/.gradle/gradle.properties"
+      - name: assembleDebug + assembleDebugAndroidTest (same tip; unsigned-by-us; runner auto debug keystore)
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon
+          cd ..
+          test -f Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so || { echo "packaged jniLibs artifact missing after packageRustCore"; exit 1; }
+          LEFTOVER=$(find Androidapp/rust/core-jni/jniLibs -mindepth 1 ! -path '*arm64-v8a*' -print -quit)
+          test -z "$LEFTOVER" || { echo "unexpected non-arm64-v8a entries in jniLibs:"; find Androidapp/rust/core-jni/jniLibs -mindepth 1; exit 1; }
+          echo "jniLibs: only arm64-v8a present"
+          } 2>&1 | tee build-logs/apk-build.log
+      - name: 'APK composition gate (app APK: exactly one; final-ELF validation + provenance + DEX)'
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 || { echo "expected exactly ONE debug APK, found ${#APKS[@]}"; exit 1; }
+          echo "APK=${APKS[0]}"
+          bash Androidapp/rust/verify-apk-rust-content.sh "${APKS[0]}" build-logs/android-so-sha256.txt "$ANDROID_NDK_HOME" build-logs/apk-sha256.txt
+          cat build-logs/apk-sha256.txt
+          } 2>&1 | tee build-logs/apk-gate.log
+      - name: 'Test APK gate (exactly one; core lib ABSENT fail-closed; embedded orchestrator APK exact)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK, found ${#TAPKS[@]}"; exit 1; }
+          TAPK="${TAPKS[0]}"
+          echo "TEST_APK=$TAPK"
+          unzip -l "$TAPK" > build-logs/test-apk-filelist.txt
+          if grep -q 'libcyclecare_core' build-logs/test-apk-filelist.txt; then echo "TEST APK MUST NOT package the core lib (instrumentation loads it from the APP APK)"; exit 1; fi
+          echo "core lib absent from test APK: OK"
+          mapfile -t EMB < <(awk '$NF ~ /\.apk$/ {print $NF}' build-logs/test-apk-filelist.txt | LC_ALL=C sort)
+          test "${#EMB[@]}" -eq 1 || { echo "expected exactly ONE embedded androidTestUtil APK (orchestrator), found ${#EMB[@]}:"; printf '%s\n' "${EMB[@]:-none}"; exit 1; }
+          echo "embedded util APK entry: ${EMB[0]}"
+          rm -rf /tmp/embedded-util && mkdir -p /tmp/embedded-util
+          unzip -o -j "$TAPK" "${EMB[0]}" -d /tmp/embedded-util > /dev/null
+          cp "/tmp/embedded-util/$(basename "${EMB[0]}")" build-logs/embedded-orchestrator.apk
+          shasum -a 256 build-logs/embedded-orchestrator.apk | tee build-logs/embedded-orchestrator-sha256.txt
+          mapfile -t BT < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/aapt2' | LC_ALL=C sort)
+          test "${#BT[@]}" -ge 1 || { echo "no aapt2 in SDK build-tools"; exit 1; }
+          AAPT="${BT[$((${#BT[@]}-1))]}"
+          "$AAPT" dump badging build-logs/embedded-orchestrator.apk > build-logs/embedded-orchestrator-badging.txt 2>&1 || { echo "embedded util APK not parseable by aapt2"; exit 1; }
+          grep -q "package: name='androidx.test.orchestrator'" build-logs/embedded-orchestrator-badging.txt || { echo "embedded APK is NOT androidx.test.orchestrator"; sed -n '1,3p' build-logs/embedded-orchestrator-badging.txt; exit 1; }
+          grep -q "versionName='${ORCHESTRATOR_PIN}'" build-logs/embedded-orchestrator-badging.txt || { echo "embedded orchestrator versionName != ${ORCHESTRATOR_PIN}"; exit 1; }
+          echo "embedded orchestrator: package + versionName ${ORCHESTRATOR_PIN} OK"
+          shasum -a 256 "$TAPK" | tee build-logs/test-apk-sha256.txt
+          } 2>&1 | tee build-logs/test-apk-gate.log
+      - name: 'Dependency resolution inventory (actual androidTestUtil + runtime graphs; selected versions, no divergence)'
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          ./gradlew :app:dependencies --no-daemon > ../build-logs/dependencies-full.txt 2>&1 || { echo "dependencies report task FAILED"; tail -50 ../build-logs/dependencies-full.txt || true; exit 1; }
+          cd ..
+          python3 stage-f-evidence/dep_graph_check.py build-logs/dependencies-full.txt \
+            --util "androidx.test:orchestrator=${ORCHESTRATOR_PIN}" \
+            --runtime-strict "androidx.test:runner=${RUNNER_PIN}" \
+            --runtime-strict "androidx.test.services:test-services=${TEST_SERVICES_PIN}" \
+            --runtime "junit:junit=${JUNIT4_PIN}" \
+            --runtime "androidx.test.ext:junit=${EXT_JUNIT_PIN}"
+          } 2>&1 | tee build-logs/dependency-resolution.log
+      - name: 'Generated Room output inventory (BOTH impls required, intended source sets, files copied + hashed)'
+        script: |
+          set -euo pipefail
+          {
+          mapfile -t V9 < <(find Androidapp/app/build/generated -path '*ksp*ndroidTest*' -name 'V9FixtureAnchorDatabase_Impl.kt' 2>/dev/null | LC_ALL=C sort)
+          mapfile -t PROD < <(find Androidapp/app/build/generated -path '*ksp*' -name 'CycleCareDatabase_Impl.kt' ! -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          test "${#V9[@]}" -eq 1 || { echo "expected exactly ONE V9FixtureAnchorDatabase_Impl.kt under androidTest ksp output, found ${#V9[@]}:"; printf '%s\n' "${V9[@]:-none}"; find Androidapp/app/build/generated -name '*_Impl*' 2>/dev/null; exit 1; }
+          test "${#PROD[@]}" -eq 1 || { echo "expected exactly ONE CycleCareDatabase_Impl.kt under main ksp output, found ${#PROD[@]}:"; printf '%s\n' "${PROD[@]:-none}"; find Androidapp/app/build/generated -name '*_Impl*' 2>/dev/null; exit 1; }
+          echo "V9 impl:   ${V9[0]}"
+          echo "prod impl: ${PROD[0]}"
+          mkdir -p build-logs/room-generated
+          cp "${V9[0]}" build-logs/room-generated/V9FixtureAnchorDatabase_Impl.kt
+          cp "${PROD[0]}" build-logs/room-generated/CycleCareDatabase_Impl.kt
+          shasum -a 256 build-logs/room-generated/V9FixtureAnchorDatabase_Impl.kt build-logs/room-generated/CycleCareDatabase_Impl.kt | tee build-logs/room-generated-sha256.txt
+          echo "BOTH generated impls present in intended source sets, copied + hashed"
+          } 2>&1 | tee build-logs/room-generated.log
+      - name: 'Exact test identity inventory (structural DEX parse, ALL classes*.dex, pinned 10-set)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK"; exit 1; }
+          python3 stage-f-evidence/dex_test_inventory.py "${TAPKS[0]}" stage-f-evidence/expected-test-inventory.txt build-logs/test-inventory.txt
+          } 2>&1 | tee build-logs/test-inventory.log
+      - name: 'Anchor class gate (V9FixtureAnchorDatabase compiled into test APK; non-test class, separate gate)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK"; exit 1; }
+          python3 stage-f-evidence/dex_test_inventory.py "${TAPKS[0]}" /dev/null build-logs/anchor-gate.txt \
+            --anchor-only --require-class 'Lcom/cyclecare/app/data/local/V9FixtureAnchorDatabase;'
+          } 2>&1 | tee build-logs/anchor-gate.log
+      - name: 'Merged manifest inventory (both: exact package/targetPackage/runner asserts; providers/initializers recorded)'
+        script: |
+          set -euo pipefail
+          {
+          mapfile -t APPMAN < <(find Androidapp/app/build/intermediates/merged_manifests -name 'AndroidManifest.xml' -path '*debug*' ! -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          mapfile -t TESTMAN < <(find Androidapp/app/build/intermediates/merged_manifests -name 'AndroidManifest.xml' -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          test "${#APPMAN[@]}" -eq 1 || { echo "app merged manifest candidates != 1 (${#APPMAN[@]}):"; printf '%s\n' "${APPMAN[@]:-none}"; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*anifest*'; exit 1; }
+          test "${#TESTMAN[@]}" -eq 1 || { echo "test merged manifest candidates != 1 (${#TESTMAN[@]}):"; printf '%s\n' "${TESTMAN[@]:-none}"; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*anifest*'; exit 1; }
+          cp "${APPMAN[0]}" build-logs/merged-manifest-app.xml
+          cp "${TESTMAN[0]}" build-logs/merged-manifest-test.xml
+          shasum -a 256 build-logs/merged-manifest-app.xml build-logs/merged-manifest-test.xml | tee build-logs/merged-manifest-sha256.txt
+          grep -q 'package="com.cyclecare.app.debug"' build-logs/merged-manifest-app.xml || { echo "app merged manifest package != com.cyclecare.app.debug"; exit 1; }
+          grep -q 'package="com.cyclecare.app.debug.test"' build-logs/merged-manifest-test.xml || { echo "test merged manifest package != com.cyclecare.app.debug.test"; exit 1; }
+          grep -q 'targetPackage="com.cyclecare.app.debug"' build-logs/merged-manifest-test.xml || { echo "test instrumentation targetPackage != com.cyclecare.app.debug"; exit 1; }
+          grep -q 'android:name="androidx.test.runner.AndroidJUnitRunner"' build-logs/merged-manifest-test.xml || { echo "test instrumentation runner != androidx.test.runner.AndroidJUnitRunner"; exit 1; }
+          echo "EXACT package/targetPackage/runner asserts OK"
+          echo "--- app manifest: providers + initializers + permission count (recorded) ---"
+          grep -o 'android:name="[^"]*Initializer"' build-logs/merged-manifest-app.xml > build-logs/app-manifest-initializers.txt || true
+          grep -o 'android:name="[^"]*Provider"' build-logs/merged-manifest-app.xml > build-logs/app-manifest-providers.txt || true
+          grep -c 'uses-permission' build-logs/merged-manifest-app.xml > build-logs/app-manifest-permission-count.txt || true
+          cat build-logs/app-manifest-initializers.txt build-logs/app-manifest-providers.txt build-logs/app-manifest-permission-count.txt
+          mapfile -t BT < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/aapt2' | LC_ALL=C sort)
+          test "${#BT[@]}" -ge 1 || { echo "no aapt2 in SDK build-tools"; exit 1; }
+          AAPT="${BT[$((${#BT[@]}-1))]}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 && test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly one app + one test APK for badging"; exit 1; }
+          "$AAPT" dump badging "${APKS[0]}" > build-logs/app-apk-badging.txt 2>&1 || { echo "app APK badging failed"; exit 1; }
+          "$AAPT" dump badging "${TAPKS[0]}" > build-logs/test-apk-badging.txt 2>&1 || { echo "test APK badging failed"; exit 1; }
+          grep -q "package: name='com.cyclecare.app.debug'" build-logs/app-apk-badging.txt || { echo "app APK badging package mismatch"; exit 1; }
+          grep -q "package: name='com.cyclecare.app.debug.test'" build-logs/test-apk-badging.txt || { echo "test APK badging package mismatch"; exit 1; }
+          echo "full badging saved for both APKs; package cross-check OK"
+          } 2>&1 | tee build-logs/merged-manifest-inventory.log
+      - name: 'APK cert evidence + SAME-CERT assert (app vs test, fail closed; runner auto debug keystore)'
+        script: |
+          set -euo pipefail
+          {
+          mapfile -t SG < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/apksigner' | LC_ALL=C sort)
+          test "${#SG[@]}" -ge 1 || { echo "no apksigner in SDK build-tools"; exit 1; }
+          APKSIGNER="${SG[$((${#SG[@]}-1))]}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 && test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly one app + one test APK for cert verify"; exit 1; }
+          "$APKSIGNER" verify --print-certs "${APKS[0]}" > build-logs/app-apk-certs.txt 2>&1 || { echo "app APK cert verification failed"; exit 1; }
+          "$APKSIGNER" verify --print-certs "${TAPKS[0]}" > build-logs/test-apk-certs.txt 2>&1 || { echo "test APK cert verification failed"; exit 1; }
+          AC=$(grep 'certificate SHA-256' build-logs/app-apk-certs.txt)
+          TC=$(grep 'certificate SHA-256' build-logs/test-apk-certs.txt)
+          test -n "$AC" && test -n "$TC" || { echo "cert SHA-256 digest line missing"; exit 1; }
+          test "$AC" = "$TC" || { echo "APP AND TEST APK SIGNED WITH DIFFERENT CERTS:"; echo "app:  $AC"; echo "test: $TC"; exit 1; }
+          echo "same-cert assert OK: $AC"
+          } 2>&1 | tee build-logs/apk-certs.log
+    artifacts:
+      - build-logs/*.log
+      - build-logs/*.txt
+      - build-logs/merged-manifest-*.xml
+      - build-logs/room-generated/*
+      - build-logs/embedded-orchestrator.apk
+      - Androidapp/app/build/outputs/apk/debug/*.apk
+      - Androidapp/app/build/outputs/apk/androidTest/debug/*.apk
+  cyclecare-stage-f-instrumented-build:
+    name: Stage-F instrumented-test build + inventory (PROPOSED; evidence build, not for merge; no device/runtime)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact throwaway-branch tip commit, supplied after push at manual build start
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        NDK_PIN: "28.2.13676358"
+        RUST_PIN: "1.99.1"
+        ORCHESTRATOR_PIN: "1.6.1"
+        ORCHESTRATOR_APK_SHA256: "0a8aa1f18da0613d863be7be26e2a5c8de2f6892660b86577848a122ff7df6c5"
+        TEST_SERVICES_PIN: "1.6.0"
+        RUNNER_PIN: "1.6.2"
+        JUNIT4_PIN: "4.13.2"
+        EXT_JUNIT_PIN: "1.3.0"
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.cargo/registry
+    scripts:
+      - name: Pin evidence context (fail closed; assertions before any repo writes)
+        script: |
+          set -euo pipefail
+          PRELOG="$HOME/stage-f-preflight.log"
+          {
+          bash --version | sed -n '1p'
+          test -n "${EXPECTED_SOURCE_SHA:-}" || { echo "EXPECTED_SOURCE_SHA input empty - supply the exact branch tip SHA at build start"; exit 1; }
+          HEADSHA=$(git rev-parse HEAD)
+          echo "expected: ${EXPECTED_SOURCE_SHA}"
+          echo "actual:   $HEADSHA"
+          test "$HEADSHA" = "$EXPECTED_SOURCE_SHA" || { echo "SHA MISMATCH"; exit 1; }
+          BASE="b6dfd24aad02a7a6a5a16f9c82a3364726bab27c"
+          git cat-file -e "${BASE}^{commit}" || { echo "base commit ${BASE} missing from clone"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "DIRTY TREE:"; git status --porcelain; exit 1; }
+          git diff --name-status "$BASE" "$HEADSHA" | LC_ALL=C sort > /tmp/stage-f-actual-name-status.txt
+          diff stage-e-evidence/expected-name-status.txt /tmp/stage-f-actual-name-status.txt || { echo "DIFF SCOPE MISMATCH (allowed: stage-d 31 + stage-e 7 + stage-f reviewed set only)"; exit 1; }
+          echo "--- Stage-D: manifest content pin, then ALL entry hashes, verifier attestation separate ---"
+          echo "STAGEDMANIFESTHASH  stage-d-test-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          shasum -a 256 -c stage-d-test-evidence/expected-sha256.txt
+          echo "81ef926c12e35df852656bc67a58687d174416acb30d22cdfaaedaf81ee13841  stage-d-test-evidence/verify_test_xml.py" | shasum -a 256 -c -
+          echo "--- Stage-E: manifest content pin, path-set pin, path diff, entry hashes ---"
+          echo "653f1cd84eb8187721d18ce6c17a222cbeca841a82ad52e33d2e86c177b685a3  stage-e-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "9bbb4160d4fbbf4418757e1712ca71f42cd8aa0efd2781ad1c2518a47fcab6bc  stage-e-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-e-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-e-manifest-paths.txt
+          diff stage-e-evidence/expected-manifest-paths.txt /tmp/stage-e-manifest-paths.txt || { echo "STAGE-E MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-e-evidence/expected-sha256.txt
+          echo "--- Stage-F: manifest content pin, path-set pin, path diff, entry hashes (4 androidTest + DatabaseKeyManager + 2 gate scripts + 18-identity inventory) ---"
+          echo "STAGEFMANIFESTHASH  stage-f-evidence/expected-sha256.txt" | shasum -a 256 -c -
+          echo "STAGEFPATHSHASH  stage-f-evidence/expected-manifest-paths.txt" | shasum -a 256 -c -
+          awk '{print $2}' stage-f-evidence/expected-sha256.txt | LC_ALL=C sort > /tmp/stage-f-manifest-paths.txt
+          diff stage-f-evidence/expected-manifest-paths.txt /tmp/stage-f-manifest-paths.txt || { echo "STAGE-F MANIFEST PATH SET MISMATCH"; exit 1; }
+          shasum -a 256 -c stage-f-evidence/expected-sha256.txt
+          echo "PIN OK"
+          } 2>&1 | tee "$PRELOG"
+          mkdir -p build-logs && cp "$PRELOG" build-logs/pin.log
+      - name: JDK 17 pin (explicit binary; exact version assert, not ambient java)
+        script: |
+          set -euo pipefail
+          {
+          /usr/libexec/java_home -V 2>&1 || true
+          JH=$(/usr/libexec/java_home -v 17) || { echo "NO JDK 17 ON RUNNER"; exit 1; }
+          export JAVA_HOME="$JH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          test -x "$JAVA_HOME/bin/java" || { echo "selected JAVA_HOME has no java binary"; exit 1; }
+          "$JAVA_HOME/bin/java" -version > /tmp/jversion.txt 2>&1
+          cat /tmp/jversion.txt
+          grep -q '"17\.' /tmp/jversion.txt || { echo "selected java binary is NOT version 17"; exit 1; }
+          } 2>&1 | tee build-logs/jdk-precheck.log
+      - name: SDK platform + NDK pin inventory (documented image, no installs)
+        script: |
+          set -euo pipefail
+          {
+          ls /usr/local/share/android-sdk/platforms/ || { echo "NO SDK PLATFORMS ON RUNNER"; exit 1; }
+          test -d /usr/local/share/android-sdk/platforms/android-36.1 || { echo "compileSdk 36 minor 1 platform (android-36.1, documented image spec) ABSENT - image drifted"; exit 1; }
+          ls /usr/local/share/android-sdk/ndk/ || { echo "NO NDK DIR ON RUNNER"; exit 1; }
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          test -d "$ANDROID_NDK_HOME" || { echo "PINNED NDK ${NDK_PIN} ABSENT - image drifted from documented spec"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" || { echo "NDK darwin prebuilt tools missing"; exit 1; }
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip" || { echo "NDK llvm-strip missing (needed by strip-reproduction gate)"; exit 1; }
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" --version > /tmp/readelf-version.txt 2>&1
+          sed -n '1,2p' /tmp/readelf-version.txt
+          } 2>&1 | tee build-logs/ndk-precheck.log
+      - name: Pinned Rust toolchain install + Android target (checksum-verified, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          RUSTUP_INIT_SHA256="63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f"
+          INSTALLER="/tmp/rustup-init-aarch64-apple-darwin"
+          curl -sSf --max-time 120 -o "$INSTALLER" "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init"
+          echo "$RUSTUP_INIT_SHA256  $INSTALLER" | shasum -a 256 -c - || { echo "RUSTUP-INIT CHECKSUM MISMATCH"; exit 1; }
+          FOUT="$(file "$INSTALLER")"
+          grep -q "Mach-O 64-bit" <<< "$FOUT" || { echo "RUSTUP-INIT NOT MACH-O"; exit 1; }
+          grep -q "arm64" <<< "$FOUT" || { echo "RUSTUP-INIT NOT ARM64"; exit 1; }
+          chmod +x "$INSTALLER"
+          "$INSTALLER" -y --no-modify-path --profile minimal --default-toolchain "$RUST_PIN"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-linux-android --toolchain "$RUST_PIN"
+          rustup show active-toolchain
+          rustup target list --installed
+          } 2>&1 | tee build-logs/rust-toolchain-install.log
+      - name: Build Android ARM artifact from clean source (fresh provenance, fail closed)
+        script: |
+          set -euo pipefail
+          {
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          mkdir -p build-logs
+          date +%s > build-logs/.gate-start
+          rm -rf Androidapp/rust/core-ffi/target/aarch64-linux-android
+          rm -rf Androidapp/rust/core-jni/jniLibs
+          bash Androidapp/rust/build-android.sh aarch64-linux-android "$RUST_PIN"
+          } 2>&1 | tee build-logs/rust-android-build.log
+      - name: Artifact gate (ELF header, alignment, exports, freshness, hash)
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          bash Androidapp/rust/verify-android-artifact.sh aarch64-linux-android "$ANDROID_NDK_HOME" build-logs/android-so-sha256.txt
+          cat build-logs/android-so-sha256.txt
+          } 2>&1 | tee build-logs/artifact-gate.log
+      - name: Runner-local Gradle heap (repo file untouched)
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gradle"
+          printf 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\n' > "$HOME/.gradle/gradle.properties"
+          cat "$HOME/.gradle/gradle.properties"
+      - name: assembleDebug + assembleDebugAndroidTest (same tip; unsigned-by-us; runner auto debug keystore)
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon
+          cd ..
+          test -f Androidapp/rust/core-jni/jniLibs/arm64-v8a/libcyclecare_core.so || { echo "packaged jniLibs artifact missing after packageRustCore"; exit 1; }
+          LEFTOVER=$(find Androidapp/rust/core-jni/jniLibs -mindepth 1 ! -path '*arm64-v8a*' -print -quit)
+          test -z "$LEFTOVER" || { echo "unexpected non-arm64-v8a entries in jniLibs:"; find Androidapp/rust/core-jni/jniLibs -mindepth 1; exit 1; }
+          echo "jniLibs: only arm64-v8a present"
+          } 2>&1 | tee build-logs/apk-build.log
+      - name: 'APK composition gate (app APK: exactly one; final-ELF validation + provenance + DEX)'
+        script: |
+          set -euo pipefail
+          {
+          export ANDROID_NDK_HOME="/usr/local/share/android-sdk/ndk/${NDK_PIN}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 || { echo "expected exactly ONE debug APK, found ${#APKS[@]}"; exit 1; }
+          echo "APK=${APKS[0]}"
+          bash Androidapp/rust/verify-apk-rust-content.sh "${APKS[0]}" build-logs/android-so-sha256.txt "$ANDROID_NDK_HOME" build-logs/apk-sha256.txt
+          cat build-logs/apk-sha256.txt
+          } 2>&1 | tee build-logs/apk-gate.log
+      - name: 'Test APK gate (exactly one; core lib ABSENT fail-closed)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK, found ${#TAPKS[@]}"; exit 1; }
+          TAPK="${TAPKS[0]}"
+          echo "TEST_APK=$TAPK"
+          unzip -l "$TAPK" > build-logs/test-apk-filelist.txt
+          if grep -q 'libcyclecare_core' build-logs/test-apk-filelist.txt; then echo "TEST APK MUST NOT package the core lib (instrumentation loads it from the APP APK)"; exit 1; fi
+          echo "core lib absent from test APK: OK"
+          shasum -a 256 "$TAPK" | tee build-logs/test-apk-sha256.txt
+          } 2>&1 | tee build-logs/test-apk-gate.log
+      - name: 'Utility artifact gate (actual androidTestUtil resolution via runner-local init script; orchestrator APK exact hash + badging)'
+        script: |
+          set -euo pipefail
+          {
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/stagef-util.gradle" << 'STAGEF_INIT_EOF'
+          allprojects { p ->
+            p.plugins.withId('com.android.application') {
+              p.tasks.register('stageFExportAndroidTestUtil') {
+                doLast {
+                  def all = p.configurations.findAll { it.name.toLowerCase().contains('androidtestutil') }
+                  all.each { println "UTIL-CANDIDATE name=${it.name} canBeResolved=${it.canBeResolved}" }
+                  def resolvable = all.findAll { it.canBeResolved }
+                  if (resolvable.size() != 1) {
+                    throw new GradleException("expected exactly ONE resolvable androidTestUtil configuration, found ${resolvable.size()}: ${resolvable*.name} (all candidates: ${all*.name})")
+                  }
+                  def cfg = resolvable[0]
+                  if (!cfg.name.toLowerCase().startsWith('debug')) {
+                    throw new GradleException("resolvable androidTestUtil configuration '${cfg.name}' is not the debug variant scope")
+                  }
+                  println "UTIL-SELECTED ${cfg.name}"
+                  def dest = p.layout.buildDirectory.dir('stagef/androidTestUtil').get().asFile
+                  dest.mkdirs()
+                  cfg.resolvedConfiguration.lenientConfiguration.artifacts.each { a ->
+                    println "UTIL-ARTIFACT ${a.id.componentIdentifier.displayName} type=${a.type} file=${a.file.name}"
+                  }
+                  cfg.files.each { f ->
+                    println "UTIL-FILE ${f.name}"
+                    p.copy { from f; into dest }
+                  }
+                }
+              }
+            }
+          }
+STAGEF_INIT_EOF
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          ./gradlew :app:stageFExportAndroidTestUtil --no-daemon
+          cd ..
+          UTILOUT=Androidapp/app/build/stagef/androidTestUtil
+          test -d "$UTILOUT" || { echo "utility export dir missing"; exit 1; }
+          UTILAPKS=()
+          while IFS= read -r line; do UTILAPKS+=("$line"); done < <(find "$UTILOUT" -name '*.apk' | LC_ALL=C sort)
+          test "${#UTILAPKS[@]}" -eq 1 || { echo "expected exactly ONE utility APK (orchestrator), found ${#UTILAPKS[@]}:"; if test "${#UTILAPKS[@]}" -gt 0; then printf '%s\n' "${UTILAPKS[@]}"; fi; exit 1; }
+          cp "${UTILAPKS[0]}" build-logs/utility-orchestrator.apk
+          echo "${ORCHESTRATOR_APK_SHA256}  build-logs/utility-orchestrator.apk" | shasum -a 256 -c - || { echo "RESOLVED ORCHESTRATOR APK != pinned maven artifact ${ORCHESTRATOR_APK_SHA256}"; exit 1; }
+          BT=()
+          while IFS= read -r line; do BT+=("$line"); done < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/aapt2' | LC_ALL=C sort)
+          test "${#BT[@]}" -ge 1 || { echo "no aapt2 in SDK build-tools"; exit 1; }
+          AAPT="${BT[$((${#BT[@]}-1))]}"
+          "$AAPT" dump badging build-logs/utility-orchestrator.apk > build-logs/utility-orchestrator-badging.txt 2>&1 || { echo "utility APK not parseable by aapt2"; exit 1; }
+          grep -q "package: name='androidx.test.orchestrator'" build-logs/utility-orchestrator-badging.txt || { echo "utility APK is NOT androidx.test.orchestrator"; sed -n '1,3p' build-logs/utility-orchestrator-badging.txt; exit 1; }
+          grep -q "versionName='${ORCHESTRATOR_PIN}'" build-logs/utility-orchestrator-badging.txt || { echo "utility orchestrator versionName != ${ORCHESTRATOR_PIN}"; exit 1; }
+          echo "utility orchestrator APK: hash pin + package + versionName ${ORCHESTRATOR_PIN} OK"
+          } 2>&1 | tee build-logs/utility-artifact-gate.log
+      - name: 'Dependency resolution inventory (actual runtime graph; strict declared pins; transitives recorded)'
+        script: |
+          set -euo pipefail
+          {
+          export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+          cd Androidapp
+          ./gradlew :app:dependencies --no-daemon > ../build-logs/dependencies-full.txt 2>&1 || { echo "dependencies report task FAILED"; tail -50 ../build-logs/dependencies-full.txt || true; exit 1; }
+          cd ..
+          python3 stage-f-evidence/dep_graph_check.py build-logs/dependencies-full.txt \
+            --runtime-strict "androidx.test:runner=${RUNNER_PIN}" \
+            --runtime-strict "androidx.test.ext:junit=${EXT_JUNIT_PIN}" \
+            --runtime-strict "junit:junit=${JUNIT4_PIN}"
+          } 2>&1 | tee build-logs/dependency-resolution.log
+      - name: 'Generated Room output inventory (BOTH impls required, intended source sets, files copied + hashed)'
+        script: |
+          set -euo pipefail
+          {
+          find Androidapp/app/build/generated -maxdepth 4 -type d 2>/dev/null | LC_ALL=C sort > build-logs/generated-tree.txt || true
+          cat build-logs/generated-tree.txt
+          V9=()
+          while IFS= read -r line; do V9+=("$line"); done < <(find Androidapp/app/build/generated -path '*ksp*ndroidTest*' -name 'V9FixtureAnchorDatabase_Impl.kt' 2>/dev/null | LC_ALL=C sort)
+          PROD=()
+          while IFS= read -r line; do PROD+=("$line"); done < <(find Androidapp/app/build/generated -path '*ksp*' -name 'CycleCareDatabase_Impl.kt' ! -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          test "${#V9[@]}" -eq 1 || { echo "expected exactly ONE V9FixtureAnchorDatabase_Impl.kt under androidTest ksp output, found ${#V9[@]}:"; if test "${#V9[@]}" -gt 0; then printf '%s\n' "${V9[@]}"; fi; find Androidapp/app/build/generated -name '*_Impl*' 2>/dev/null; exit 1; }
+          test "${#PROD[@]}" -eq 1 || { echo "expected exactly ONE CycleCareDatabase_Impl.kt under main ksp output, found ${#PROD[@]}:"; if test "${#PROD[@]}" -gt 0; then printf '%s\n' "${PROD[@]}"; fi; find Androidapp/app/build/generated -name '*_Impl*' 2>/dev/null; exit 1; }
+          echo "V9 impl:   ${V9[0]}"
+          echo "prod impl: ${PROD[0]}"
+          mkdir -p build-logs/room-generated
+          cp "${V9[0]}" build-logs/room-generated/V9FixtureAnchorDatabase_Impl.kt
+          cp "${PROD[0]}" build-logs/room-generated/CycleCareDatabase_Impl.kt
+          shasum -a 256 build-logs/room-generated/V9FixtureAnchorDatabase_Impl.kt build-logs/room-generated/CycleCareDatabase_Impl.kt | tee build-logs/room-generated-sha256.txt
+          echo "BOTH generated impls present in intended source sets, copied + hashed"
+          } 2>&1 | tee build-logs/room-generated.log
+      - name: 'Exact test identity inventory (structural DEX parse, ALL classes*.dex, pinned 18-set: 10 stage-F + 8 pre-existing)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK"; exit 1; }
+          python3 stage-f-evidence/dex_test_inventory.py "${TAPKS[0]}" stage-f-evidence/expected-test-inventory.txt build-logs/test-inventory.txt
+          } 2>&1 | tee build-logs/test-inventory.log
+      - name: 'Anchor class gate (V9FixtureAnchorDatabase compiled into test APK; non-test class, separate gate)'
+        script: |
+          set -euo pipefail
+          {
+          shopt -s nullglob
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly ONE androidTest APK"; exit 1; }
+          python3 stage-f-evidence/dex_test_inventory.py "${TAPKS[0]}" /dev/null build-logs/anchor-gate.txt \
+            --anchor-only --require-class 'Lcom/cyclecare/app/data/local/V9FixtureAnchorDatabase;'
+          } 2>&1 | tee build-logs/anchor-gate.log
+      - name: 'Merged manifest inventory (both: exact package/targetPackage/runner asserts; providers/initializers recorded)'
+        script: |
+          set -euo pipefail
+          {
+          APPMAN=()
+          while IFS= read -r line; do APPMAN+=("$line"); done < <(find Androidapp/app/build/intermediates -name 'AndroidManifest.xml' -path '*erged_manifest*' -path '*debug*' ! -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          TESTMAN=()
+          while IFS= read -r line; do TESTMAN+=("$line"); done < <(find Androidapp/app/build/intermediates -name 'AndroidManifest.xml' -path '*erged_manifest*' -path '*ndroidTest*' 2>/dev/null | LC_ALL=C sort)
+          test "${#APPMAN[@]}" -eq 1 || { echo "app merged manifest candidates != 1 (${#APPMAN[@]}):"; if test "${#APPMAN[@]}" -gt 0; then printf '%s\n' "${APPMAN[@]}"; fi; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*anifest*'; exit 1; }
+          test "${#TESTMAN[@]}" -eq 1 || { echo "test merged manifest candidates != 1 (${#TESTMAN[@]}):"; if test "${#TESTMAN[@]}" -gt 0; then printf '%s\n' "${TESTMAN[@]}"; fi; find Androidapp/app/build/intermediates -maxdepth 2 -type d -name '*anifest*'; exit 1; }
+          cp "${APPMAN[0]}" build-logs/merged-manifest-app.xml
+          cp "${TESTMAN[0]}" build-logs/merged-manifest-test.xml
+          shasum -a 256 build-logs/merged-manifest-app.xml build-logs/merged-manifest-test.xml | tee build-logs/merged-manifest-sha256.txt
+          grep -q 'package="com.cyclecare.app.debug"' build-logs/merged-manifest-app.xml || { echo "app merged manifest package != com.cyclecare.app.debug"; exit 1; }
+          grep -q 'package="com.cyclecare.app.debug.test"' build-logs/merged-manifest-test.xml || { echo "test merged manifest package != com.cyclecare.app.debug.test"; exit 1; }
+          grep -q 'targetPackage="com.cyclecare.app.debug"' build-logs/merged-manifest-test.xml || { echo "test instrumentation targetPackage != com.cyclecare.app.debug"; exit 1; }
+          grep -q 'android:name="androidx.test.runner.AndroidJUnitRunner"' build-logs/merged-manifest-test.xml || { echo "test instrumentation runner != androidx.test.runner.AndroidJUnitRunner"; exit 1; }
+          echo "EXACT package/targetPackage/runner asserts OK"
+          grep -o 'android:name="[^"]*Initializer"' build-logs/merged-manifest-app.xml > build-logs/app-manifest-initializers.txt || true
+          grep -o 'android:name="[^"]*Provider"' build-logs/merged-manifest-app.xml > build-logs/app-manifest-providers.txt || true
+          grep -c 'uses-permission' build-logs/merged-manifest-app.xml > build-logs/app-manifest-permission-count.txt || true
+          cat build-logs/app-manifest-initializers.txt build-logs/app-manifest-providers.txt build-logs/app-manifest-permission-count.txt
+          BT=()
+          while IFS= read -r line; do BT+=("$line"); done < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/aapt2' | LC_ALL=C sort)
+          test "${#BT[@]}" -ge 1 || { echo "no aapt2 in SDK build-tools"; exit 1; }
+          AAPT="${BT[$((${#BT[@]}-1))]}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 && test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly one app + one test APK for badging"; exit 1; }
+          "$AAPT" dump badging "${APKS[0]}" > build-logs/app-apk-badging.txt 2>&1 || { echo "app APK badging failed"; exit 1; }
+          "$AAPT" dump badging "${TAPKS[0]}" > build-logs/test-apk-badging.txt 2>&1 || { echo "test APK badging failed"; exit 1; }
+          grep -q "package: name='com.cyclecare.app.debug'" build-logs/app-apk-badging.txt || { echo "app APK badging package mismatch"; exit 1; }
+          grep -q "package: name='com.cyclecare.app.debug.test'" build-logs/test-apk-badging.txt || { echo "test APK badging package mismatch"; exit 1; }
+          echo "full badging saved for both APKs; package cross-check OK"
+          } 2>&1 | tee build-logs/merged-manifest-inventory.log
+      - name: 'APK cert evidence + SAME-CERT assert (app vs test, fail closed; runner auto debug keystore)'
+        script: |
+          set -euo pipefail
+          {
+          SG=()
+          while IFS= read -r line; do SG+=("$line"); done < <(compgen -G '/usr/local/share/android-sdk/build-tools/*/apksigner' | LC_ALL=C sort)
+          test "${#SG[@]}" -ge 1 || { echo "no apksigner in SDK build-tools"; exit 1; }
+          APKSIGNER="${SG[$((${#SG[@]}-1))]}"
+          shopt -s nullglob
+          APKS=(Androidapp/app/build/outputs/apk/debug/*.apk)
+          TAPKS=(Androidapp/app/build/outputs/apk/androidTest/debug/*.apk)
+          shopt -u nullglob
+          test "${#APKS[@]}" -eq 1 && test "${#TAPKS[@]}" -eq 1 || { echo "expected exactly one app + one test APK for cert verify"; exit 1; }
+          "$APKSIGNER" verify --print-certs "${APKS[0]}" > build-logs/app-apk-certs.txt 2>&1 || { echo "app APK cert verification failed"; exit 1; }
+          "$APKSIGNER" verify --print-certs "${TAPKS[0]}" > build-logs/test-apk-certs.txt 2>&1 || { echo "test APK cert verification failed"; exit 1; }
+          AC=$(grep 'certificate SHA-256' build-logs/app-apk-certs.txt)
+          TC=$(grep 'certificate SHA-256' build-logs/test-apk-certs.txt)
+          test -n "$AC" && test -n "$TC" || { echo "cert SHA-256 digest line missing"; exit 1; }
+          test "$AC" = "$TC" || { echo "APP AND TEST APK SIGNED WITH DIFFERENT CERTS:"; echo "app:  $AC"; echo "test: $TC"; exit 1; }
+          echo "same-cert assert OK: $AC"
+          } 2>&1 | tee build-logs/apk-certs.log
+    artifacts:
+      - build-logs/*.log
+      - build-logs/*.txt
+      - build-logs/merged-manifest-*.xml
+      - build-logs/room-generated/*
+      - build-logs/utility-orchestrator.apk
+      - Androidapp/app/build/outputs/apk/debug/*.apk
+      - Androidapp/app/build/outputs/apk/androidTest/debug/*.apk

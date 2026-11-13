@@ -72,6 +72,34 @@ class AuthPreferencesLintSemanticsTest {
         assertEquals(0, recording.applyCalls)
     }
 
+    @Test fun ownerMoveAndClearEachCommitIdentityAndGenerationTogetherWithoutApply() {
+        val before = preferences.sessionGeneration
+        preferences.userId = "synthetic-other-owner"
+        assertEquals("synthetic-other-owner", backing.getString("user_id", null))
+        assertEquals(before + 1L, backing.getLong("session_generation_v3", -1L))
+        assertEquals(1, recording.commitCalls)
+        assertEquals(0, recording.applyCalls)
+        preferences.userId = null
+        assertFalse(backing.contains("user_id"))
+        assertEquals(before + 2L, backing.getLong("session_generation_v3", -1L))
+        assertEquals(2, recording.commitCalls)
+        assertEquals(0, recording.applyCalls)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val reloaded = AuthPreferences(context, backing, true)
+        assertNull(reloaded.userId)
+        assertEquals(before + 2L, reloaded.sessionGeneration)
+    }
+
+    @Test fun failedOwnerMoveCommitMustNotAcknowledgeSuccess() {
+        val before = preferences.operationSnapshot()
+        recording.failCommit = true
+        val error = assertThrows(IllegalStateException::class.java) { preferences.userId = null }
+        assertEquals("identity_commit_failed", error.message)
+        assertEquals(before, preferences.operationSnapshot())
+        assertEquals(1, recording.commitCalls)
+        assertEquals(0, recording.applyCalls)
+    }
+
     @Test fun migrationCopiesOncePreservesSecureValuesThenClearsLegacy() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val legacy = context.getSharedPreferences("cyclecare_auth_prefs", Context.MODE_PRIVATE)

@@ -51,46 +51,61 @@ data class OnboardingUiState(
     val dynamicAnswers: Map<String, Set<String>> = emptyMap(),
     val isLoadingDynamicQuestions: Boolean = false
 ) {
-    val canProceedFromPrivacy: Boolean
+    val canProceedFromPrivacy:Boolean get()=OnboardingDerived.bool("privacy",this)
+    val lastPeriodAnswered:Boolean get()=OnboardingDerived.bool("answered",this)
+    val needsCycleFollowup:Boolean get()=OnboardingDerived.any { selectedGoals.map { goal -> listOf("understand my cycle","track my periods","fertility").any{goal.contains(it,ignoreCase=true)} } }
+    val needsPeriodFollowup:Boolean get()=needsCycleFollowup
+    val needsSymptomFollowup:Boolean get()=OnboardingDerived.any { selectedGoals.map { goal -> goal.contains("symptom",ignoreCase=true)||goal.contains("changes in my body",ignoreCase=true) } }
+    val needsFertilityFollowup:Boolean get()=OnboardingDerived.any { selectedGoals.map {it.contains("fertility",ignoreCase=true)} }
+    val hasCycleStartEstimate:Boolean get()=OnboardingDerived.bool("estimate",this)
+    val periodStartChoice:String get()=OnboardingDerived.choice(this)
+    val effectiveLastPeriodDate:LocalDate get(){if(selectedExactDate!=null)return selectedExactDate;val daysAgo=OnboardingDerived.offset(selectedApproximateChip);return LocalDate.now().minusDays(daysAgo.toLong())}
+    val effectivePeriodEndDate:LocalDate get(){if(selectedPeriodEndDate!=null)return selectedPeriodEndDate;if(isPeriodOngoing)return LocalDate.now();return effectiveLastPeriodDate.plusDays(OnboardingDerived.endOffset(periodDurationDays).toLong())}
+    val daysSinceLastPeriod:Int get()=OnboardingDerived.days { ChronoUnit.DAYS.between(effectiveLastPeriodDate,LocalDate.now()) }
+    val dayOfCycle:Int get()=OnboardingDerived.day(this)
+    val isPeriodActiveToday:Boolean get()=OnboardingDerived.bool("active",this)
+    val currentPhaseName:String get()=OnboardingDerived.phase(this)
+
+    internal val canProceedFromPrivacyKotlin: Boolean
         get() = isAgeVerified && isTermsAgreed
 
-    val lastPeriodAnswered: Boolean
+    internal val lastPeriodAnsweredKotlin: Boolean
         get() = (selectedExactDate != null) || (selectedApproximateChip != null)
 
-    val needsCycleFollowup: Boolean
+    internal val needsCycleFollowupKotlin: Boolean
         get() = selectedGoals.any { goal ->
             listOf("understand my cycle", "track my periods", "fertility")
                 .any { goal.contains(it, ignoreCase = true) }
         }
 
-    val needsPeriodFollowup: Boolean
-        get() = needsCycleFollowup
+    internal val needsPeriodFollowupKotlin: Boolean
+        get() = needsCycleFollowupKotlin
 
-    val needsSymptomFollowup: Boolean
+    internal val needsSymptomFollowupKotlin: Boolean
         get() = selectedGoals.any { goal ->
             goal.contains("symptom", ignoreCase = true) ||
                 goal.contains("changes in my body", ignoreCase = true)
         }
 
-    val needsFertilityFollowup: Boolean
+    internal val needsFertilityFollowupKotlin: Boolean
         get() = selectedGoals.any { it.contains("fertility", ignoreCase = true) }
 
-    val hasCycleStartEstimate: Boolean
+    internal val hasCycleStartEstimateKotlin: Boolean
         get() = selectedExactDate != null || (selectedApproximateChip != null && !isUnknownDateChoice(selectedApproximateChip))
 
-    val periodStartChoice: String
+    internal val periodStartChoiceKotlin: String
         get() = when {
             selectedExactDate != null -> "EXACT"
-            !hasCycleStartEstimate -> "UNKNOWN"
+            !hasCycleStartEstimateKotlin -> "UNKNOWN"
             else -> "APPROXIMATE:${selectedApproximateChip.orEmpty()}"
         }
 
-    val effectiveLastPeriodDate: LocalDate
+    internal val effectiveLastPeriodDateKotlin: LocalDate
         get() {
             if (selectedExactDate != null) {
                 return selectedExactDate
             }
-            val daysAgo = when (selectedApproximateChip) {
+            internal val daysAgo = when (selectedApproximateChip) {
                 "Today" -> 0
                 "A few days ago" -> 4
                 "About a week ago" -> 7
@@ -101,28 +116,28 @@ data class OnboardingUiState(
             return LocalDate.now().minusDays(daysAgo.toLong())
         }
 
-    val effectivePeriodEndDate: LocalDate
+    internal val effectivePeriodEndDateKotlin: LocalDate
         get() {
             if (selectedPeriodEndDate != null) return selectedPeriodEndDate
             if (isPeriodOngoing) return LocalDate.now()
-            return effectiveLastPeriodDate.plusDays((periodDurationDays - 1).toLong().coerceAtLeast(0))
+            return effectiveLastPeriodDateKotlin.plusDays((periodDurationDays - 1).toLong().coerceAtLeast(0))
         }
 
-    val daysSinceLastPeriod: Int
-        get() = ChronoUnit.DAYS.between(effectiveLastPeriodDate, LocalDate.now()).toInt().coerceAtLeast(0)
+    internal val daysSinceLastPeriodKotlin: Int
+        get() = ChronoUnit.DAYS.between(effectiveLastPeriodDateKotlin, LocalDate.now()).toInt().coerceAtLeast(0)
 
-    val dayOfCycle: Int
-        get() = if (hasCycleStartEstimate) (daysSinceLastPeriod % cycleLengthDays) + 1 else 0
+    internal val dayOfCycleKotlin: Int
+        get() = if (hasCycleStartEstimateKotlin) (daysSinceLastPeriodKotlin % cycleLengthDays) + 1 else 0
 
-    val isPeriodActiveToday: Boolean
-        get() = hasCycleStartEstimate && (isPeriodOngoing || (dayOfCycle <= periodDurationDays))
+    internal val isPeriodActiveTodayKotlin: Boolean
+        get() = hasCycleStartEstimateKotlin && (isPeriodOngoing || (dayOfCycleKotlin <= periodDurationDays))
 
-    val currentPhaseName: String
+    internal val currentPhaseNameKotlin: String
         get() = when {
-            !hasCycleStartEstimate -> "No estimate yet"
-            isPeriodActiveToday -> "Menstrual Phase"
-            dayOfCycle < (cycleLengthDays - 14) - 4 -> "Follicular Phase"
-            dayOfCycle in ((cycleLengthDays - 14) - 4)..((cycleLengthDays - 14) + 1) -> "Estimated fertile window"
+            !hasCycleStartEstimateKotlin -> "No estimate yet"
+            isPeriodActiveTodayKotlin -> "Menstrual Phase"
+            dayOfCycleKotlin < (cycleLengthDays - 14) - 4 -> "Follicular Phase"
+            dayOfCycleKotlin in ((cycleLengthDays - 14) - 4)..((cycleLengthDays - 14) + 1) -> "Estimated fertile window"
             else -> "Luteal Phase"
         }
 
@@ -151,14 +166,12 @@ class OnboardingViewModel : ViewModel() {
     // where the local adaptive bank is the single source.
     var questionService: com.cyclecare.app.data.supabase.OnboardingQuestionService? = null
 
+    private fun reduce(event:OnboardingStateReducer.Event) {
+        _uiState.update { OnboardingStateReducer.reduce(it,event) }
+    }
+
     fun nextStep() {
-        _uiState.update { current ->
-            if (current.step < current.totalSteps) {
-                current.copy(step = current.step + 1)
-            } else {
-                current
-            }
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.NEXT))
         loadDynamicQuestionsForCurrentStep()
     }
 
@@ -192,36 +205,15 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun toggleDynamicAnswer(questionId: String, option: String, multiSelect: Boolean) {
-        _uiState.update { current ->
-            val existing = current.dynamicAnswers[questionId] ?: emptySet()
-            val next = when {
-                !multiSelect -> setOf(option)
-                existing.contains(option) -> existing - option
-                else -> existing + option
-            }
-            current.copy(dynamicAnswers = current.dynamicAnswers + (questionId to next))
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.ANSWER,text=questionId,other=option,flag=multiSelect))
     }
 
     fun previousStep() {
-        _uiState.update { current ->
-            if (current.step > 1) {
-                current.copy(step = current.step - 1)
-            } else {
-                current
-            }
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.PREVIOUS))
     }
 
     fun toggleGoal(goal: String) {
-        _uiState.update { current ->
-            val updated = if (current.selectedGoals.contains(goal)) {
-                current.selectedGoals - goal
-            } else {
-                current.selectedGoals + goal
-            }
-            current.copy(selectedGoals = updated)
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.GOAL,text=goal))
     }
 
     fun setExactDate(date: LocalDate) {
@@ -254,7 +246,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun setNotSureSelected(notSure: Boolean) {
-        _uiState.update { it.copy(isNotSureSelected = notSure) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.NOT_SURE,flag=notSure))
     }
 
     fun selectApproximateChip(chip: String) {
@@ -267,7 +259,7 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun setDatePickerDialogVisible(visible: Boolean) {
-        _uiState.update { it.copy(showDatePickerDialog = visible) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.DATE_PICKER,flag=visible))
     }
 
     fun setExactEndDate(date: LocalDate) {
@@ -306,12 +298,12 @@ class OnboardingViewModel : ViewModel() {
 
     /** User tapped "Dates are correct": the confirmed raw end date is kept. */
     fun confirmPeriodEndDate() {
-        _uiState.update { it.copy(periodEndDateConfirmed = true, periodDateDialogMessage = null) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.CONFIRM_END))
     }
 
     /** User tapped "Edit dates": reopen the end date picker to fix the entry. */
     fun editPeriodEndDate() {
-        _uiState.update { it.copy(periodDateDialogMessage = null, showEndDatePickerDialog = true) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.EDIT_END))
     }
 
     /**
@@ -319,7 +311,9 @@ class OnboardingViewModel : ViewModel() {
      * valid and (typical or explicitly confirmed). Null when ongoing, absent,
      * or an unusual entry the user has not confirmed.
      */
-    fun confirmedPeriodEndDate(): LocalDate? {
+    fun confirmedPeriodEndDate():LocalDate? = OnboardingDerived.confirmed(_uiState.value)
+
+    internal fun confirmedPeriodEndDateKotlin(): LocalDate? {
         val s = _uiState.value
         if (s.isPeriodOngoing || !s.periodEndDateConfirmed) return null
         val start = s.selectedExactDate ?: return null
@@ -351,63 +345,51 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun setEndDatePickerDialogVisible(visible: Boolean) {
-        _uiState.update { it.copy(showEndDatePickerDialog = visible) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.END_PICKER,flag=visible))
     }
 
     fun selectCycleOption(option: String, days: Int) {
-        _uiState.update { current ->
-            current.copy(
-                selectedCycleOption = option,
-                cycleLengthDays = days
-            )
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.CYCLE,text=option,days=days))
     }
 
     fun setRemindFertile(remind: Boolean) {
-        _uiState.update { it.copy(remindFertileWindow = remind) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.REMIND,flag=remind))
     }
 
     fun setAgeVerified(verified: Boolean) {
-        _uiState.update { it.copy(isAgeVerified = verified) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.AGE,flag=verified))
     }
 
     fun setTermsAgreed(agreed: Boolean) {
-        _uiState.update { it.copy(isTermsAgreed = agreed) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.TERMS,flag=agreed))
     }
 
     fun setCloudSyncAllowed(allowed: Boolean) {
-        _uiState.update { it.copy(isCloudSyncAllowed = allowed) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.CLOUD,flag=allowed))
     }
 
     fun setShowTermsDialog(show: Boolean) {
-        _uiState.update { it.copy(showTermsDialog = show) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.TERMS_DIALOG,flag=show))
     }
 
     fun setShowPrivacyDialog(show: Boolean) {
-        _uiState.update { it.copy(showPrivacyDialog = show) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.PRIVACY_DIALOG,flag=show))
     }
 
     fun toggleTypicalSymptom(symptom: String) {
-        _uiState.update { current ->
-            val updated = if (current.selectedTypicalSymptoms.contains(symptom)) {
-                current.selectedTypicalSymptoms - symptom
-            } else {
-                current.selectedTypicalSymptoms + symptom
-            }
-            current.copy(selectedTypicalSymptoms = updated, hasCompletedDeepBaseline = true)
-        }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.SYMPTOM,text=symptom))
     }
 
     fun selectTypicalEnergy(energy: String) {
-        _uiState.update { it.copy(selectedTypicalEnergy = energy, hasCompletedDeepBaseline = true) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.ENERGY,text=energy))
     }
 
     fun selectTypicalSleep(sleep: String) {
-        _uiState.update { it.copy(selectedTypicalSleep = sleep, hasCompletedDeepBaseline = true) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.SLEEP,text=sleep))
     }
 
     fun setCompletedDeepBaseline(completed: Boolean) {
-        _uiState.update { it.copy(hasCompletedDeepBaseline = completed) }
+        reduce(OnboardingStateReducer.Event(OnboardingStateReducer.Action.DEEP,flag=completed))
     }
 }
 

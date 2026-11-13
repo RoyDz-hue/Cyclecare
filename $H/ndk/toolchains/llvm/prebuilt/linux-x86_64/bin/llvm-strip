@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# $1=mode $2=file; if a fixture for the mode exists, it defines the result
+if [ -f "$FIXDIR/strip$1.so" ]; then cp "$FIXDIR/strip$1.so" "$2"; fi
+exit 0

@@ -495,8 +495,15 @@ class AuthPreferences internal constructor(context: Context, unitTestPreferences
     var userId: String?
         get() = readSecureString(KEY_USER_ID)
         set(value) { mutatePublicationIdentity { synchronized(prefs) {
-            if (readSecureString(KEY_USER_ID) != value) prefs.edit().putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L)).commit()
-            writeSecureString(KEY_USER_ID, value)
+            // Identity and its generation must become durable TOGETHER. The
+            // former generation-only commit followed by apply(user_id) could
+            // acknowledge sign-out before the identity removal reached disk.
+            val stored = value?.takeIf { isSecureStorageAvailable && it.isNotBlank() }
+            val edit = prefs.edit()
+            if (readSecureString(KEY_USER_ID) != stored)
+                edit.putLong("session_generation_v3", Math.addExact(sessionGeneration, 1L))
+            if (stored == null) edit.remove(KEY_USER_ID) else edit.putString(KEY_USER_ID, stored)
+            check(edit.commit()) { "identity_commit_failed" }
         } } }
 
     var userEmail: String?

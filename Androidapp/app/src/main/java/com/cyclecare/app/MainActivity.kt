@@ -138,6 +138,7 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val viewModel: CycleCareViewModel by viewModels { viewModelFactory }
+            androidx.compose.runtime.LaunchedEffect(viewModel){viewModel.traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.ACTIVITY_VM)}
             val authLink by pendingAuthLink.collectAsStateWithLifecycle()
             LaunchedEffect(authLink) {
                 authLink?.let {
@@ -153,6 +154,23 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingAuthLink.value = intent.data
+    }
+}
+
+/** The failure branch owns its colors, independent of an ancestor Surface. */
+@Composable
+internal fun LocalReadFailureContent(onRetry: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("We couldn't open your saved data.", color = MaterialTheme.colorScheme.onBackground)
+                TextButton(onClick = onRetry) { Text("Try again") }
+            }
+        }
     }
 }
 
@@ -178,12 +196,7 @@ fun CycleCareApp(viewModel: CycleCareViewModel) {
     CycleCareTheme {
         when {
             uiState.localReadFailed -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("We couldn't open your saved data.")
-                        TextButton(onClick = { viewModel.retryLocalRead() }) { Text("Try again") }
-                    }
-                }
+                LocalReadFailureContent { viewModel.retryLocalRead() }
             }
 
             // First Launch Auth Flow (Account Creation / Sign In / Guest) BEFORE Onboarding

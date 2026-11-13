@@ -140,3 +140,43 @@ pub mod local_plan_wire;
 #[cfg(feature="test-support")]pub use platform_record_io::Io as SyntheticRecordIo;
 
 pub mod local_onboarding_transaction;
+
+pub mod doctor_summary;
+
+pub mod baseline_full;
+
+pub mod phase_full;
+
+pub mod learned_full;
+
+pub mod timeline_full;
+
+pub mod explain_full;
+
+pub mod deviation_full;
+
+pub mod period_episode_full;
+
+pub mod onboarding_state_full;
+
+pub mod onboarding_questions_full;
+
+pub mod onboarding_date_full;
+
+pub mod onboarding_derived_full;
+
+pub mod onboarding_completion_full;
+
+pub mod settings_storage_executor;
+
+pub mod batch_storage_executor;
+
+pub mod outbox_storage_executor;
+
+pub mod conflict_storage_executor;
+
+pub mod remote_storage_executor;
+
+pub mod resolution_storage_executor;
+
+pub mod erasure_storage_executor;

@@ -87,6 +87,84 @@ fn dispatch(contract: &str, payload: &str) -> String {
         Err(e) => return err(&format!("bad payload json: {e}")),
     };
     match contract {
+        "learned_full_v1" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Symptom {key:String,label:String}
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Log {date:String,symptoms:Vec<Symptom>}
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {completed:bool,average:i32,duration:i32,luteal:i32,anchor:String,setup:Vec<Symptom>,logs:Vec<Log>}
+            let input:Input=match serde_json::from_value(v) {Ok(i)=>i,Err(_)=>return err("learned full schema mismatch")};
+            let sym=|s:Symptom| corelib::learned_full::Symptom{key:s.key,label:s.label};
+            let logs:Vec<_>=input.logs.into_iter().map(|l|corelib::learned_full::LearningLog{date_string:l.date,symptoms:l.symptoms.into_iter().map(sym).collect()}).collect();
+            let profile=corelib::learned_full::LearningProfile{is_completed:false,symptoms:input.setup.into_iter().map(sym).collect()};
+            let settings=corelib::learning::LearningSettings{is_onboarding_completed:input.completed,average_cycle_length:input.average,period_duration:input.duration,luteal_phase_days:input.luteal,last_period_start_date:input.anchor};
+            let observations=corelib::learned_full::compile_learned_observations(&settings,&logs,Some(&profile));
+            let values:Vec<_>=observations.into_iter().map(|o|serde_json::json!({"id":o.id,"category":o.category,"headline":o.headline,"description":o.description,"confidence":o.confidence})).collect();
+            serde_json::json!({"ok":{"version":1,"observations":values}}).to_string()
+        }
+        "phase_full_v1" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input { date:String, anchor:String, average:i32, duration:i32, luteal:i32 }
+            let input:Input=match serde_json::from_value(v) {
+                Ok(input)=>input,Err(_)=>return err("phase full schema mismatch"),
+            };
+            match corelib::phase_full::calculate(&input.date,&input.anchor,input.average,input.duration,input.luteal) {
+                Some(phase)=>serde_json::json!({"ok":{"version":1,"phase":phase.kotlin_name()}}).to_string(),
+                None=>err("phase date is not a Java LocalDate"),
+            }
+        }
+        "baseline_full_v1" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Log { date: String, bleeding: bool }
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input { average: i32, duration: i32, logs: Vec<Log> }
+            let input: Input = match serde_json::from_value(v) {
+                Ok(input) => input,
+                Err(_) => return err("baseline full schema mismatch"),
+            };
+            let logs: Vec<_> = input.logs.into_iter().map(|l| corelib::baseline_full::Log {
+                date:l.date, bleeding:l.bleeding,
+            }).collect();
+            let m=corelib::baseline_full::compute(input.average,input.duration,&logs);
+            serde_json::json!({"ok":{"version":1,"metrics":{
+                "averageCycleLength":m.average_cycle_length,"medianCycleLength":m.median_cycle_length,
+                "minCycleLength":m.min_cycle_length,"maxCycleLength":m.max_cycle_length,
+                "variabilityDays":m.variability_days,"isRegular":m.is_regular,
+                "totalLoggedDays":m.total_logged_days,"observedCycleIntervals":m.observed_cycle_intervals
+            }}}).to_string()
+        }
+        "doctor_summary_v1" => {
+            // Strict schema, no absent/wrong-type defaults or numeric truncation.
+            // Input text labels are the exact JVM platform primitive, not new copy.
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Symptom { key: String, label: String }
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Log { date: String, symptoms: Vec<Symptom>, pain: i32, flow: String }
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input { logs: Vec<Log> }
+            let input: Input = match serde_json::from_value(v) {
+                Ok(input) => input,
+                Err(_) => return err("doctor summary schema mismatch"),
+            };
+            let logs: Vec<_> = input.logs.into_iter().map(|log| corelib::doctor_summary::Log {
+                date: log.date, pain: log.pain, flow: log.flow,
+                symptoms: log.symptoms.into_iter().map(|s| corelib::doctor_summary::Symptom {
+                    key: s.key, label: s.label,
+                }).collect(),
+            }).collect();
+            serde_json::json!({"ok": {"version": 1,
+                "questions": corelib::doctor_summary::generate(&logs)}}).to_string()
+        }
         "sync_profile_on_settings" => {
             // Strict contract: hasProfile boolean; existingOption string when
             // hasProfile, string-or-null otherwise; both averages integers in
@@ -942,4 +1020,51 @@ pub fn dispatch_for_test(contract: &str, payload: &str) -> String {
 pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativePlan(mut env:JNIEnv,_class:JClass,payload:JString)->jstring {
  let payload:String=match env.get_string(&payload){Ok(s)=>s.into(),Err(_)=>return std::ptr::null_mut()};
  match std::panic::catch_unwind(||corelib::local_plan_wire::plan(&payload)){Ok(Ok(result))=>out(&mut env,&result),_=>std::ptr::null_mut()}
+}
+
+mod onboarding_storage_jni;
+/// Stateful boundary ONLY for a private admitted completion transaction session.
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeComplete<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {
+    onboarding_storage_jni::execute(env,session)
+}
+
+mod settings_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeSettings<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>,reads:jint,mutations:jint)->jint {
+    settings_storage_jni::execute(env,session,reads,mutations)
+}
+
+mod batch_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeBatch<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>,reads:jint,mutations:jint)->jint {
+    batch_storage_jni::execute(env,session,reads,mutations)
+}
+
+mod outbox_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeOutbox<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>,mode:jint)->jint {
+    outbox_storage_jni::execute(env,session,mode)
+}
+
+mod conflict_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeConflict<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {
+    conflict_storage_jni::execute(env,session)
+}
+
+mod remote_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeRemote<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {remote_storage_jni::execute(env,session)}
+
+mod resolution_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeResolution<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {
+    resolution_storage_jni::execute(env,session)
+}
+
+mod erasure_storage_jni;
+#[no_mangle]
+pub extern "system" fn Java_com_cyclecare_app_data_local_rust_RustTrackNative_nativeErase<'local>(env:JNIEnv<'local>,_class:JClass<'local>,session:jni::objects::JObject<'local>)->jint {
+    erasure_storage_jni::execute(env,session)
 }

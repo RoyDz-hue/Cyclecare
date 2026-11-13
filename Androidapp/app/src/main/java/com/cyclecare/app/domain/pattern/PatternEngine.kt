@@ -37,6 +37,12 @@ object PatternEngine {
      * Computes cycle-length statistics from distinct observed bleeding episodes.
      */
     fun computeBaseline(settings: CycleSettings, logs: List<CycleDayLog>): BaselineMetrics {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullBaseline(settings, logs)
+            ?: computeBaselineKotlin(settings, logs)
+    }
+
+    /** Verbatim source oracle retained for native failure/unsupported wire. */
+    internal fun computeBaselineKotlin(settings: CycleSettings, logs: List<CycleDayLog>): BaselineMetrics {
         val starts = observedPeriodStarts(settings, logs)
         val cycleLengths = starts.zipWithNext { first, next ->
             ChronoUnit.DAYS.between(first, next).toInt()
@@ -123,6 +129,12 @@ object PatternEngine {
      * Determines the estimated cycle phase for a specific date based on settings.
      */
     fun calculatePhaseForDate(date: LocalDate, settings: CycleSettings): CyclePhase {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.fullPhase(date,settings)
+            ?: calculatePhaseForDateKotlin(date,settings)
+    }
+
+    /** Verbatim original phase oracle, retained for unsupported/failed native calls. */
+    internal fun calculatePhaseForDateKotlin(date: LocalDate, settings: CycleSettings): CyclePhase {
         val lastStart = settings.lastPeriodStartDate.takeIf(String::isNotBlank)?.let {
             runCatching { LocalDate.parse(it) }.getOrNull()
         } ?: return CyclePhase.FOLLICULAR

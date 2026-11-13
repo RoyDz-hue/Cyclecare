@@ -19,6 +19,7 @@ internal class IdentityPublicationAdmission(
  private val lock=Any()
  private val queue=ArrayDeque<()->Unit>()
  private var running=false
+ @Volatile internal var afterEnqueueForTests:((String)->Unit)?=null
  private val idleWaiters=mutableListOf<CompletableFuture<Unit>>()
  /** Quiescence of already queued/active work, not a ban on future enqueue.
   * Call only after producers stop. No waiter blocks MAIN or domain monitors. */
@@ -115,7 +116,10 @@ internal class IdentityPublicationAdmission(
  }
  fun stamp():CompletableFuture<Stamp> = enqueue({it()},"read"){Stamp(epoch)}
  fun publish(expected:Stamp,stillCurrent:()->Boolean,paint:()->Unit):CompletableFuture<Boolean> = enqueue(main,"publication"){
-  if(epoch!=expected.epoch||!stillCurrent())false else{paint();true}
+  val epochCurrent=epoch==expected.epoch
+  val allowed=epochCurrent&&stillCurrent()
+  StartupRouteDiagnostics.record(StartupRouteDiagnostics.Event.STAMP_RECEIPT,this,epoch,expected.epoch,if(allowed)1 else 0)
+  if(!allowed)false else{paint();true}
  }
  /** Off-main callers wait only before taking domain monitors. Main/reentrant
   * callers queue instead, avoiding blocking a paint that must run on main.
@@ -198,6 +202,7 @@ internal class IdentityPublicationAdmission(
    else{queue.addLast(job);if(running)false else{running=true;true}}
   }
   if(future.isCompletedExceptionally)reportFailure(IllegalStateException("identity_admission_queue_full"))
+  afterEnqueueForTests?.invoke(kind)
   if(start)next()
   return future
  }
@@ -220,16 +225,24 @@ internal class IdentityPublicationAdmission(
  * updates are serialized and synchronous subscribers have publication privilege
  * only. Caller must still carry data identity from read through compute.
  */
-internal class AdmissionStateFlow<T>(initial:T,private val admission:()->IdentityPublicationAdmission?,private val state:kotlinx.coroutines.flow.MutableStateFlow<T> = kotlinx.coroutines.flow.MutableStateFlow(initial),private val normalize:(T)->T={it}):kotlinx.coroutines.flow.MutableStateFlow<T> by state{
+internal class AdmissionStateFlow<T>(initial:T,private val admission:()->IdentityPublicationAdmission?,private val state:kotlinx.coroutines.flow.MutableStateFlow<T> = kotlinx.coroutines.flow.MutableStateFlow(initial),private val normalize:(T)->T={it},private val afterPaint:(T)->Unit={}):kotlinx.coroutines.flow.MutableStateFlow<T> by state{
+ // Diagnostic samples precede normalization; direct state assertions remain
+ // the oracle for the resulting admitted value. Null in production.
+ companion object { @Volatile internal var beforeValuePaintForTests:((Any?,Any?)->Unit)?=null }
+ private fun paintValue(value:T){
+  try{beforeValuePaintForTests?.invoke(state.value,value)}catch(_:Throwable){}
+  state.value=normalize(value)
+  try{afterPaint(state.value)}catch(_:Throwable){}
+ }
  override var value:T
   get()=state.value
   set(value){
    val gate=admission()
    val origin=PublicationOrigin.capture()
    if(!origin())return
-   if(gate==null)state.value=normalize(value)
-   else if(gate.isOnDrain())gate.callbacks{state.value=normalize(value)}
-   else gate.stamp().thenAccept{stamp->gate.publish(stamp,{origin()}){state.value=normalize(value)}}
+   if(gate==null)paintValue(value)
+   else if(gate.isOnDrain())gate.callbacks{paintValue(value)}
+   else gate.stamp().thenAccept{stamp->gate.publish(stamp,{origin()}){paintValue(value)}}
   }
  override val replayCache:List<T> get()=state.replayCache
  override val subscriptionCount:kotlinx.coroutines.flow.StateFlow<Int> get()=state.subscriptionCount
@@ -287,4 +300,41 @@ internal object SubscriberAdmission {
   override fun updateThreadContext(context:kotlin.coroutines.CoroutineContext):MutableList<()->Unit>?{val old=deferred.get();deferred.set(mutableListOf());return old}
   override fun restoreThreadContext(context:kotlin.coroutines.CoroutineContext,oldState:MutableList<()->Unit>?){val actions=deferred.get().orEmpty();deferred.set(oldState);if(oldState!=null)oldState.addAll(actions)else actions.forEach{it()}}
  }
+}
+
+/** Disabled except an explicitly enabled synthetic test. Fixed metadata only:
+ * no owner IDs, rows, strings from storage, credentials or exception text.
+ * A bounded process-local ring is dumped once by the failed Home assertion.
+ */
+internal object StartupRouteDiagnostics {
+ enum class Event { VM_CAPTURE, ACTIVITY_VM, START_READ, START_READY, START_SCOPE, START_NO_SCOPE,
+  START_BEFORE, START_CHECK, START_AFTER, READ_BEGIN, READ_CHECK, READ_RECEIPT,
+  UI_AFTER_ASSIGN, STAMP_RECEIPT, INSTALL_OUTCOME }
+ private val lock=Any()
+ private var enabled=false
+ private var sequence=0L
+ private var nextId=0
+ private val identities=java.util.IdentityHashMap<Any,Int>()
+ private val rows=java.util.ArrayDeque<String>()
+ private var dumped=false
+ fun start(){synchronized(lock){enabled=true;sequence=0;nextId=0;identities.clear();rows.clear();dumped=false}}
+ fun stop(){synchronized(lock){enabled=false;identities.clear();rows.clear()}}
+ fun isEnabled()=synchronized(lock){enabled}
+ fun record(event:Event,instance:Any,vararg flags:Long){
+  try{synchronized(lock){
+   if(!enabled)return
+   val id=identities[instance]?:if(identities.size<64){(++nextId).also{identities[instance]=it}}else 0
+   if(rows.size==128)rows.removeFirst()
+   rows.addLast("${++sequence} $event instance=$id flags=${flags.joinToString(",")}")
+  }}catch(_:Throwable){}
+ }
+ fun opaqueId(instance:Any?):Long=synchronized(lock){
+  if(!enabled||instance==null)0L else (identities[instance]?:if(identities.size<64){(++nextId).also{identities[instance]=it}}else 0).toLong()
+ }
+ /** Non-consuming identity check for the synthetic Activity witness. */
+ fun hasEvent(event:Event,instance:Any):Boolean=synchronized(lock){
+  val id=identities[instance]?:return@synchronized false
+  rows.any{it.contains(" $event instance=$id flags=")}
+ }
+ fun dumpOnce():List<String> = synchronized(lock){if(dumped)emptyList() else{dumped=true;rows.toList()}}
 }

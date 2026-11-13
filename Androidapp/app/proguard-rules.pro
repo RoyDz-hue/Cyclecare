@@ -49,3 +49,110 @@
 
 # Tink references error_prone annotations that are compile-time only.
 -dontwarn com.google.errorprone.annotations.**
+
+# Stateful completion JNI uses exact named entry point and callbacks. Keep only
+# this bridge and private operation-local callback session; no new effect grant.
+-keep class com.cyclecare.app.data.local.rust.RustTrackNative {
+    native <methods>;
+}
+-keep class com.cyclecare.app.data.local.rust.RustCompletionStorage$Session {
+    public int receipt();
+    public boolean valid(int);
+    public long revision(int);
+    public long server(int);
+    public void domain(int);
+    public void revisionWrite(int,long,long);
+    public void outboxWrite(int,long,long);
+    public void finish(long,long);
+}
+# Same-connection settings-only driver callback names.
+-keep class com.cyclecare.app.data.local.rust.RustSettingsStorage$Session {
+    public int receipt();
+    public boolean validRead(int);
+    public boolean valid(int);
+    public long revision(int);
+    public long server(int);
+    public void domain(int);
+    public void revisionWrite(int,long,long);
+    public void outboxWrite(int,long,long);
+    public void finish();
+}
+
+# Generic bounded same-connection batch driver callback names.
+-keep class com.cyclecare.app.data.local.rust.RustBatchStorage$Session {
+    public int receipt();
+    public boolean validRead(int);
+    public boolean valid(int);
+    public long revision(int);
+    public long server(int);
+    public void domain(int);
+    public void revisionWrite(int,long,long);
+    public void outboxWrite(int,long,long);
+    public void finish();
+}
+
+# Same-connection ACK/retry driver, precise private callback signatures.
+-keep class com.cyclecare.app.data.local.rust.RustOutboxStorage$Session {
+    public void ready();
+    public long base();
+    public long acknowledged();
+    public boolean matches();
+    public int attempts();
+    public void maxServer(long);
+    public void deleteAcked();
+    public void rebase(long);
+    public boolean retryCas(int);
+}
+
+# Same-connection conflict capture private callbacks.
+-keep class com.cyclecare.app.data.local.rust.RustConflictStorage$Session {
+    public void ready();
+    public boolean matches();
+    public void latest();
+    public void write();
+}
+
+# Private same-connection pull-page callbacks.
+-keep class com.cyclecare.app.data.local.rust.RustRemoteStorage$Session {
+    public int ready();
+    public long cursor();
+    public long remote(int);
+    public long sequence(int);
+    public void inspect(int);
+    public long server(int);
+    public boolean pending(int);
+    public void conflict(int);
+    public void prepare(int);
+    public long local(int);
+    public void domain(int);
+    public void revision(int,long);
+    public void advance(int,long);
+}
+
+# Private admitted conflict-resolution callbacks and exact typed policy exception.
+-keep class com.cyclecare.app.data.local.rust.ConflictRejected {
+    public <init>(java.lang.String);
+}
+-keep class com.cyclecare.app.data.local.rust.RustResolutionStorage$Session {
+    public void ready();
+    public long[] metadata();
+    public boolean hashMatches();
+    public void skip();
+    public void prepare(long,boolean);
+    public void domain();
+    public void delete();
+    public void revision(long);
+    public void outbox();
+    public void resolve();
+}
+
+# Private admitted erasure DB callbacks, no preferences or callouts in JNI.
+-keep class com.cyclecare.app.data.local.rust.RustErasureStorage$Session {
+    public void ready();
+    public void global(int);
+    public void owned(int);
+    public void receipts();
+    public boolean exists(int);
+    public void stageDelete(int);
+    public void defaults();
+}

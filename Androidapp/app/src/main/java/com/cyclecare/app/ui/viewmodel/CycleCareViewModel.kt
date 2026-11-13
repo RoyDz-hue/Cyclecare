@@ -216,7 +216,7 @@ class CycleCareViewModel(
             val date=selectedDateIntent
             normalizedOnboardingStatus(state.copy(localReadFailed=state.localReadFailed||recoveryMutable.value.isNotEmpty(),isCloudSyncAllowed=authPreferences.isCloudSyncAllowed,selectedDate=date,selectedDatePrediction=if(state.hasCycleAnchor)repository.calculateDayPrediction(date,state.settings)else null))
         }
-    })
+    },afterPaint={state->traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.UI_AFTER_ASSIGN,state.hasCompletedInitialAuth)})
     val uiState: StateFlow<CycleUiState> = _uiState.asStateFlow()
     private val careLogConsentGate = com.cyclecare.app.domain.ai.CareLogConsentGate()
     private var careJob: kotlinx.coroutines.Job? = null
@@ -227,6 +227,20 @@ class CycleCareViewModel(
     private var pendingQuickLogOwner: String? = null
     private var pendingCareProposal: com.cyclecare.app.domain.ai.ProposedCareLog? = null
     private val processorConsentService = com.cyclecare.app.domain.ai.AiProcessorConsentService(authPreferences)
+
+    /** Flags: pid,prefs,repository,database,local,auth,uiAuth,session,
+     * readEpoch,resetEpoch,portRevision,selectedPort,scopeCurrent,originCurrent,admissionId,contextEpoch.
+     * Instance IDs are ring-local counters, never owner/database names. */
+    internal fun traceStartup(event:com.cyclecare.app.security.StartupRouteDiagnostics.Event,
+        uiAuth:Boolean=_uiState.value.hasCompletedInitialAuth,scopeCurrent:Boolean=true,originCurrent:Boolean=true){
+        val trace=com.cyclecare.app.security.StartupRouteDiagnostics
+        if(!trace.isEnabled())return
+        try{trace.record(event,this,android.os.Process.myPid().toLong(),trace.opaqueId(authPreferences),trace.opaqueId(repository),
+            trace.opaqueId(repository.currentContext().database),if(authPreferences.isLocalOnlyMode)1 else 0,
+            if(authPreferences.hasCompletedInitialAuth)1 else 0,if(uiAuth)1 else 0,authPreferences.sessionGeneration,
+            localReadEpoch,identityResetEpoch,repository.currentRustPortRevision(),if(repository.currentRustPortForOnboarding()!=null)1 else 0,
+            if(scopeCurrent)1 else 0,if(originCurrent)1 else 0,trace.opaqueId(authPreferences.publicationAdmission),repository.currentContext().epoch)}catch(_:Throwable){}
+    }
 
     /** One-shot jobs retain intent-time owner/mode/consent/lifecycle through
      * every suspension. Long-lived flows establish a fresh origin per emission.
@@ -426,6 +440,7 @@ class CycleCareViewModel(
     }
 
     private fun resetPrivateConversation() {
+        println("MERGE_DIAG reset pending="+(pendingCareProposal!=null)+" stack="+Thread.currentThread().stackTrace.take(12).joinToString(" | "))
         careRequestGeneration++
         careJob?.cancel()
         imageJob?.cancel()
@@ -766,10 +781,27 @@ class CycleCareViewModel(
         val operationId=uiReadIds.incrementAndGet()
         val receipt=UiReadOperation(operationId,operationId,uiReadOrder)
         lastUiReadOperation=receipt;uiReadByPurpose[purpose]=receipt
+        traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.READ_BEGIN)
+        receipt.changes.let { changes ->
+            if(com.cyclecare.app.security.StartupRouteDiagnostics.isEnabled())viewModelScope.launch(kotlinx.coroutines.Dispatchers.Unconfined){
+                changes.first{record->
+                    if(record.outcome!=null||record.effect==UiEffect.SUCCEEDED||record.effect==UiEffect.FAILED){
+                        com.cyclecare.app.security.StartupRouteDiagnostics.record(com.cyclecare.app.security.StartupRouteDiagnostics.Event.READ_RECEIPT,this@CycleCareViewModel,
+                            operationId,record.status.ordinal.toLong(),record.effect.ordinal.toLong(),record.waitEnd.ordinal.toLong())
+                        true
+                    }else false
+                }
+            }
+        }
         val gate=authPreferences.publicationAdmission?:run{receipt.complete(UiReadStatus.SUPERSEDED);return receipt}
         val origin=com.cyclecare.app.security.PublicationOrigin.capture()
         val port=repository.currentRustPortForOnboarding()?:run{receipt.complete(UiReadStatus.SUPERSEDED);return receipt}
-        val current={origin()&&valid()&&repository.currentRustPortForOnboarding()===port&&port.isCurrent()}
+        val current={
+            val originOk=origin();val validOk=originOk&&valid();val samePort=validOk&&repository.currentRustPortForOnboarding()===port;val portOk=samePort&&port.isCurrent()
+            com.cyclecare.app.security.StartupRouteDiagnostics.record(com.cyclecare.app.security.StartupRouteDiagnostics.Event.READ_CHECK,this,
+                operationId,if(originOk)1 else 0,if(validOk)1 else 0,if(samePort)1 else 0,if(portOk)1 else 0)
+            originOk&&validOk&&samePort&&portOk
+        }
         observeReadRecovery(gate,purpose,receipt,current)
         // A pure-read attempt can fail before effect. Never replay a started paint.
         var lastError:Throwable?=null
@@ -847,7 +879,11 @@ class CycleCareViewModel(
         startupJob = launchIdentity {
             // One database/owner capture; a read that straddled an owner or
             // session switch is retried, never published.
-            val scope = readStartScope() ?: return@launchIdentity
+            traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_READ)
+            val scope = readStartScope() ?: run{traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_NO_SCOPE);return@launchIdentity}
+            traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_READY)
+            com.cyclecare.app.security.StartupRouteDiagnostics.record(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_SCOPE,this@CycleCareViewModel,
+                scope.startEpoch,scope.resetEpoch,scope.snapshot.context.epoch,scope.owner.session)
             val stored = scope.snapshot
             var settings = stored.settings
             var profile = stored.profile
@@ -870,9 +906,11 @@ class CycleCareViewModel(
             val isCachedSuspended = authPreferences.accountStatus.equals("SUSPENDED", ignoreCase = true)
             val cachedNotice = authPreferences.suspensionReason
 
+            traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_BEFORE)
             beforeStartupPublicationForTests?.invoke(this@CycleCareViewModel)
             val startupOrigin=com.cyclecare.app.security.PublicationOrigin.capture()
             val publishStartup={
+                traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_CHECK,scopeCurrent=isStartScopeCurrent(scope),originCurrent=startupOrigin())
                 if(startupOrigin()&&isStartScopeCurrent(scope)){
                     gate=if(com.cyclecare.app.rust.RustLifecycleConfig.STARTUP_GATE_ENABLED)
                         com.cyclecare.app.rust.RustLifecycleAdapters.startupGate(authPreferences,profile!=null,settings.isOnboardingCompleted) else null
@@ -907,6 +945,7 @@ class CycleCareViewModel(
                         accountNoticeMessage = cachedNotice,
                         isPasswordSetupRequired = authPreferences.needsPasswordSetup
                     )
+                    traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.START_AFTER)
                 }
             }
             val startupAdmission=authPreferences.publicationAdmission
@@ -984,53 +1023,6 @@ class CycleCareViewModel(
 
     private var logObservationJob:kotlinx.coroutines.Job?=null
     private var derivedObservationJob:kotlinx.coroutines.Job?=null
-    init {
-        authPreferences.publicationAdmission?.onFailure{error->
-            _uiState.value=_uiState.value.copy(localReadFailed=true)
-            android.util.Log.w("CycleCareLocalRead","admission operation failed",error)
-        }?.let{addCloseable(it)}
-        authPreferences.publicationAdmission?.onTransition{com.cyclecare.app.security.PublicationOrigin.withOrigin({true}){resetIdentityUiIfNeeded();clearStaleCandidateEditor()}}?.let{addCloseable(it)}
-        startLogObservation()
-        SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
-
-        runStartup()
-
-        // Reactive network connectivity observer. Reconnect work runs only on
-        // an offline -> online transition, throttled per owner, so flappy
-        // networks cannot trigger unbounded reconcile/fetch loops. A throttled
-        // transition is deferred, not dropped: one trailing run fires when the
-        // cooldown expires, and a failed run gets exactly one bounded retry,
-        // so pending offline claims are reconciled once the network settles.
-        viewModelScope.launch {
-            com.cyclecare.app.util.NetworkHelper.observeNetwork(authPreferences.context).collect { isConnected ->
-                val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
-                when (val decision = if (com.cyclecare.bridge.RustReconnectPolicyConfig.ENABLED)
-                    com.cyclecare.bridge.RustReconnectPolicy.decide(
-                        reconnectWorkState, isConnected, eligible,
-                        authPreferences.effectiveUserId, System.currentTimeMillis()
-                    )
-                else com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decide(
-                    reconnectWorkState, isConnected, eligible,
-                    authPreferences.effectiveUserId, System.currentTimeMillis()
-                )) {
-                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Run -> {
-                        if (!runReconnectWorkOnce()) {
-                            scheduleTrailingReconnectWork(
-                                com.cyclecare.app.domain.sync.ReconnectWorkPolicy.MIN_INTERVAL_MS,
-                                allowReschedule = false
-                            )
-                        }
-                    }
-                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Throttled ->
-                        scheduleTrailingReconnectWork(decision.retryAfterMs, allowReschedule = true)
-                    com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Skip -> Unit
-                }
-            }
-        }
-
-        // Reactively recompute baseline & pattern metrics whenever settings OR logs change
-        startDerivedObservation()
-    }
 
     private fun startLogObservation(){
         logObservationJob?.cancel()
@@ -1896,19 +1888,22 @@ class CycleCareViewModel(
     }
 
     fun confirmCareLog() {
-        val pending = pendingCareProposal ?: return
+        println("MERGE_DIAG confirm pending="+(pendingCareProposal!=null)); val pending = pendingCareProposal ?: return
         // Intent-time token BEFORE the consent gate consumes its pending: a
         // stale mint leaves pendingCareProposal AND the gate's pending intact,
         // so the user can retry the identical confirmation.
-        val token=try{repository.beginOperation()}catch(_:com.cyclecare.app.data.repository.OwnerTransitionException){return}
-        val confirmed = careLogConsentGate.confirm(pending.id, authPreferences.effectiveUserId) ?: return
+        val token=try{repository.beginOperation()}catch(e:com.cyclecare.app.data.repository.OwnerTransitionException){println("MERGE_DIAG mint refused "+e.javaClass.simpleName);return}
+        val confirmed = careLogConsentGate.confirm(pending.id, authPreferences.effectiveUserId) ?: run{println("MERGE_DIAG gate refused");return};println("MERGE_DIAG gate consumed")
         pendingCareProposal = null
         _uiState.value = _uiState.value.copy(pendingCareLog = null, pendingCareTurnId = null)
         launchIdentity {
+            println("MERGE_DIAG launch entered ownerCurrent="+(confirmed.ownerId==authPreferences.effectiveUserId))
             if (confirmed.ownerId != authPreferences.effectiveUserId) return@launchIdentity
             val existing = repository.getLogForDate(confirmed.date) ?: CycleDayLog(dateString = confirmed.date)
+            println("MERGE_DIAG read done ownerCurrent="+(confirmed.ownerId==authPreferences.effectiveUserId))
             if (confirmed.ownerId != authPreferences.effectiveUserId) return@launchIdentity
-            try{repository.saveLog(com.cyclecare.app.domain.ai.CareConversationPolicy.merge(existing, confirmed.interpretation),token)}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:com.cyclecare.app.data.repository.OwnerTransitionException){return@launchIdentity}catch(_:com.cyclecare.app.data.local.rust.RustRepositoryPort.Failure){return@launchIdentity}
+            try{repository.saveLog(com.cyclecare.app.domain.ai.CareConversationPolicy.merge(existing, confirmed.interpretation),token)}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(e:com.cyclecare.app.data.repository.OwnerTransitionException){println("MERGE_DIAG save owner refusal "+e.javaClass.simpleName);return@launchIdentity}catch(e:com.cyclecare.app.data.local.rust.RustRepositoryPort.Failure){println("MERGE_DIAG save port failure "+e.toString());return@launchIdentity}
+            println("MERGE_DIAG save returned")
             _uiState.value = _uiState.value.copy(careSavedReviewMessage = "Saved to your health log. No coins were awarded for this health entry.")
             updateCalculations(_uiState.value.settings, _uiState.value.currentDate, _uiState.value.selectedDate)
             autoSyncSilently()
@@ -3584,6 +3579,60 @@ class CycleCareViewModel(
         if (!current.hasCycleAnchor) return null
         return repository.calculateDayPrediction(date, current.settings)
     }
+
+    // Install listeners and launch Main.immediate collectors only AFTER every
+    // backing field in this ViewModel has been initialized. Production main
+    // dispatch can execute callbacks inline during construction; the previous
+    // mid-class init reached screenCommandMutable before it existed.
+    init {
+        traceStartup(com.cyclecare.app.security.StartupRouteDiagnostics.Event.VM_CAPTURE)
+        authPreferences.publicationAdmission?.onFailure{error->
+            _uiState.value=_uiState.value.copy(localReadFailed=true)
+            android.util.Log.w("CycleCareLocalRead","admission operation failed",error)
+        }?.let{addCloseable(it)}
+        authPreferences.publicationAdmission?.onTransition{com.cyclecare.app.security.PublicationOrigin.withOrigin({true}){resetIdentityUiIfNeeded();clearStaleCandidateEditor()}}?.let{addCloseable(it)}
+        startLogObservation()
+        SoundFeedbackManager.isSoundEnabled = authPreferences.isSoundEnabled
+
+        runStartup()
+
+        // Reactive network connectivity observer. Reconnect work runs only on
+        // an offline -> online transition, throttled per owner, so flappy
+        // networks cannot trigger unbounded reconcile/fetch loops. A throttled
+        // transition is deferred, not dropped: one trailing run fires when the
+        // cooldown expires, and a failed run gets exactly one bounded retry,
+        // so pending offline claims are reconciled once the network settles.
+        viewModelScope.launch {
+            com.cyclecare.app.util.NetworkHelper.observeNetwork(authPreferences.context).collect { isConnected ->
+                val eligible = !authPreferences.isLocalOnlyMode && authPreferences.userId != null
+                when (val decision = if (com.cyclecare.bridge.RustReconnectPolicyConfig.ENABLED)
+                    com.cyclecare.bridge.RustReconnectPolicy.decide(
+                        reconnectWorkState, isConnected, eligible,
+                        authPreferences.effectiveUserId, System.currentTimeMillis()
+                    )
+                else com.cyclecare.app.domain.sync.ReconnectWorkPolicy.decide(
+                    reconnectWorkState, isConnected, eligible,
+                    authPreferences.effectiveUserId, System.currentTimeMillis()
+                )) {
+                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Run -> {
+                        if (!runReconnectWorkOnce()) {
+                            scheduleTrailingReconnectWork(
+                                com.cyclecare.app.domain.sync.ReconnectWorkPolicy.MIN_INTERVAL_MS,
+                                allowReschedule = false
+                            )
+                        }
+                    }
+                    is com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Throttled ->
+                        scheduleTrailingReconnectWork(decision.retryAfterMs, allowReschedule = true)
+                    com.cyclecare.app.domain.sync.ReconnectWorkPolicy.Decision.Skip -> Unit
+                }
+            }
+        }
+
+        // Reactively recompute baseline & pattern metrics whenever settings OR logs change
+        startDerivedObservation()
+    }
+
 
     class Factory(
         private val repository: CycleRepository,

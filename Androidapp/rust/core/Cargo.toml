@@ -6,6 +6,7 @@ description = "Framework-neutral CycleCare domain/state contracts (identity, sta
 license = "UNLICENSED"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 aes-gcm = "0.11"
 base64 = "0.22"
 sha2 = "0.10"

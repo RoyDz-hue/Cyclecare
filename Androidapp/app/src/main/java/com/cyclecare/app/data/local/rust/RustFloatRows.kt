@@ -37,6 +37,7 @@ internal object RustFloatRows {
   * without same-transaction domain write is prohibited by caller contract.
   */
  fun recordAfterDomainWrite(db:SupportSQLiteDatabase,row:CycleDayLog){
+  check(db.inTransaction()) { "paired_domain_bits_transaction_required" }
   require(row.bbtCelsius.isFinite()&&row.sleepHours.isFinite())
   val actual=readOne(db,row.dateString)?:throw CorruptRustFloat()
   require(normalizedHash(actual)==normalizedHash(row))

@@ -30,6 +30,16 @@ object LearningEngine {
         logs: List<CycleDayLog>,
         profile: OnboardingProfile? = null
     ): List<LearnedObservation> {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.learnedObservations(settings,logs,profile,::displayLabel)
+            ?: compileLearnedObservationsKotlin(settings,logs,profile)
+    }
+
+    /** Original complete observation oracle retained for strict native fallback. */
+    internal fun compileLearnedObservationsKotlin(
+        settings: CycleSettings,
+        logs: List<CycleDayLog>,
+        profile: OnboardingProfile? = null
+    ): List<LearnedObservation> {
         val observations = mutableListOf<LearnedObservation>()
         val validLogs = logsWithDates(logs)
         val hasCompletedSetup = settings.isOnboardingCompleted || profile?.isCompleted == true
@@ -108,6 +118,15 @@ object LearningEngine {
 
     /** Returns only discussion prompts that can point to an actual saved observation. */
     fun generateDoctorSummary(
+        settings: CycleSettings,
+        logs: List<CycleDayLog>
+    ): List<String> {
+        return com.cyclecare.app.rust.CycleCareCoreBridge.doctorSummary(logs, ::displayLabel)
+            ?: generateDoctorSummaryKotlin(settings, logs)
+    }
+
+    /** Verbatim pre-migration oracle; any unsupported/malformed native call falls back here. */
+    internal fun generateDoctorSummaryKotlin(
         settings: CycleSettings,
         logs: List<CycleDayLog>
     ): List<String> {

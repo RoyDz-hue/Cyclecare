@@ -242,7 +242,7 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
    val op=token.preference.operation;val owner=op.owner?.takeIf{it.isNotBlank()}?:"legacy_guest"
    val namespace=op.owner?.takeIf{it.isNotBlank()}?.let(CycleCareDatabase::namespaceFor)?:"cycle_care_database"
    val intent=RustRoomBatch.Intent(namespace,operation,op.consentGeneration,now,listOf(capturedBase(sql,owner,"profile")),listOf(RustRoomBatch.Mutation(capturedBase(sql,owner,"settings"),RustDomainRows.Row.Settings(settings),child)),"first-settings-v1")
-   check(applyBatch(sql,token,intent) is RustRoomBatch.Outcome.Committed)
+   check(applyBatch(sql,token,intent,settings=true) is RustRoomBatch.Outcome.Committed)
   }
   DomainSnapshot(token,null,settings,profile)
  }
@@ -292,7 +292,7 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
  }
  fun commitSettingsIntent(prepared:PreparedSettingsEdit):Result<RustRoomBatch.Outcome> {
   if(prepared.host!==this)return Result.Rejected("settings_intent_wrong_host")
-  return commitBatch(prepared.token,prepared.intent)
+  return transaction(prepared.token){sql->applyBatch(sql,prepared.token,prepared.intent,settings=true)}
  }
  fun applySettingsIntent(base:SettingsEditBase,intent:SettingsIntent,operation:String,children:List<String>,now:Long):Result<DomainSnapshot> {
   // Compatibility convenience; durable/retry-aware callers keep PreparedSettingsEdit.
@@ -317,7 +317,7 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
    profileSync.writeProfile&&profile!=null->profile.copy(cycleLengthOption=profileSync.cycleLengthOption!!,cycleLengthDays=settings.averageCycleLength,periodDurationDays=settings.periodDuration)
    else->null
   }
-  applyRowsNow(sql,token,operation,children,now,listOfNotNull(RustDomainRows.Row.Settings(settings),changed?.let(RustDomainRows.Row::Profile)))
+  applyRowsNow(sql,token,operation,children,now,listOfNotNull(RustDomainRows.Row.Settings(settings),changed?.let(RustDomainRows.Row::Profile)),settings=true)
   DomainSnapshot(token,null,settings,changed?:profile)
  }
  /** Scoped anchor intent merges into current physical rows, never a caller's
@@ -329,20 +329,20 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
   val prior=(RustDomainRows.read(sql,"settings") as? RustDomainRows.Row.Settings)?.value?:derivedSettings(profile)
   val settings=prior.copy(lastPeriodStartDate=date)
   val changed=profile?.copy(lastPeriodDateString=date,approximatePeriodChoice="EXACT")
-  applyRowsNow(sql,token,operation,children,now,listOfNotNull(RustDomainRows.Row.Settings(settings),changed?.let(RustDomainRows.Row::Profile)))
+  applyRowsNow(sql,token,operation,children,now,listOfNotNull(RustDomainRows.Row.Settings(settings),changed?.let(RustDomainRows.Row::Profile)),settings=true)
   DomainSnapshot(token,null,settings,changed)
  }
  fun completeOnboarding(token:Token,operation:String,children:List<String>,now:Long,profile:com.cyclecare.app.data.local.OnboardingProfile,enableLock:Boolean):Result<DomainSnapshot> = transaction(token){sql->
   require(children.size==2)
   val prior=(RustDomainRows.read(sql,"settings") as? RustDomainRows.Row.Settings)?.value?:com.cyclecare.app.data.local.CycleSettings()
-  val settings=prior.copy(isOnboardingCompleted=true,selectedGoalsCsv=profile.selectedGoalsCsv,lastPeriodStartDate=profile.lastPeriodDateString,averageCycleLength=profile.cycleLengthDays,periodDuration=profile.periodDurationDays,remindFertile=profile.remindFertileWindow,isAppLockEnabled=enableLock)
-  applyRowsNow(sql,token,operation,children,now,listOf(RustDomainRows.Row.Profile(profile),RustDomainRows.Row.Settings(settings)))
+  val settings=com.cyclecare.app.domain.onboarding.OnboardingCompletionMapping.settings(prior,profile,enableLock)
+  applyRowsNow(sql,token,operation,children,now,listOf(RustDomainRows.Row.Profile(profile),RustDomainRows.Row.Settings(settings)),completion=true)
   DomainSnapshot(token,null,settings,profile)
  }
- private fun applyRowsNow(sql:androidx.sqlite.db.SupportSQLiteDatabase,token:Token,operation:String,children:List<String>,now:Long,rows:List<RustDomainRows.Row>){
+ private fun applyRowsNow(sql:androidx.sqlite.db.SupportSQLiteDatabase,token:Token,operation:String,children:List<String>,now:Long,rows:List<RustDomainRows.Row>,completion:Boolean=false,settings:Boolean=false){
   val op=token.preference.operation;val owner=op.owner?.takeIf{it.isNotBlank()}?:"legacy_guest";val namespace=op.owner?.takeIf{it.isNotBlank()}?.let(CycleCareDatabase::namespaceFor)?:"cycle_care_database"
   val mutations=rows.mapIndexed{index,row->RustRoomBatch.Mutation(capturedBase(sql,owner,RustDomainRows.record(row)),row,children[index])}
-  check(applyBatch(sql,token,RustRoomBatch.Intent(namespace,operation,op.consentGeneration,now,emptyList(),mutations,"typed-composite-v1")) is RustRoomBatch.Outcome.Committed)
+  check(applyBatch(sql,token,RustRoomBatch.Intent(namespace,operation,op.consentGeneration,now,emptyList(),mutations,"typed-composite-v1"),completion,settings) is RustRoomBatch.Outcome.Committed)
  }
  /** Explicit erasure is one-way for old token. Durable gate is set BEFORE
   * DB effects so a failure stays blocked, never resurrects data via old workers.
@@ -371,23 +371,14 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
    active=null
    token.database.runInTransaction{
     val sql=token.database.openHelper.writableDatabase
-    listOf("cycle_day_logs","onboarding_profiles","cycle_settings","rust_float_bits").forEach{table->sql.execSQL("DELETE FROM $table")}
-    listOf("health_sync_outbox","health_sync_revisions","health_sync_cursors","health_sync_conflicts").forEach{table->sql.execSQL("DELETE FROM $table WHERE ownerId=?",arrayOf(syncOwner))}
-    val namespace=owner?.takeIf{it.isNotBlank()}?.let(CycleCareDatabase::namespaceFor)?:"cycle_care_database"
-    sql.execSQL("DELETE FROM rust_commit_receipts WHERE namespace=?",arrayOf(namespace))
-    // Stage tables may not exist before candidate schema registration.
-    listOf("rust_enrollment_rows","rust_enrollment_receipts","rust_enrollments").forEach{table->
-     val exists=sql.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",arrayOf(table)).use{it.moveToFirst()}
-     if(exists)sql.execSQL("DELETE FROM $table WHERE namespace=?",arrayOf(namespace))
-    }
-    RustDomainRows.write(sql,"settings",RustDomainRows.Row.Settings(com.cyclecare.app.data.local.CycleSettings(isOnboardingCompleted=false,lastPeriodStartDate="",averageCycleLength=28,periodDuration=5)))
+    RustErasureStorage.apply(sql,owner,syncOwner)
    }
   }
   if(cancellationNeeded)preferences.cancelHealthSyncWorkAfterErasure()
   return result
  }
 
- fun resolveConflict(token:Token,record:String,retain:Boolean,child:String,now:Long):Result<Unit> = transaction(token){sql->RustConflictRows.apply(sql,token.preference.operation.owner?.takeIf{it.isNotBlank()}?:"legacy_guest",record,retain,child,now,token.preference.operation.consentGeneration)}
+ fun resolveConflict(token:Token,record:String,retain:Boolean,child:String,now:Long):Result<Unit> = transaction(token){sql->RustResolutionStorage.apply(sql,token.preference.operation.owner?.takeIf{it.isNotBlank()}?:"legacy_guest",record,retain,child,now,token.preference.operation.consentGeneration)}
  fun pendingConflicts(token:Token):Result<List<com.cyclecare.app.data.local.HealthSyncConflictEntity>> = transaction(token){sql->
   val owner=token.preference.operation.owner?.takeIf{it.isNotBlank()}?:"legacy_guest";val out=mutableListOf<com.cyclecare.app.data.local.HealthSyncConflictEntity>()
   sql.query("SELECT * FROM health_sync_conflicts WHERE ownerId=? AND resolvedAt IS NULL ORDER BY createdAt",arrayOf(owner)).use{c->
@@ -400,16 +391,16 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
  fun applyRemotePage(token:Token,serverGeneration:Long,changes:List<RustRemoteRows.Change>,now:Long):Result<Int> = transaction(token,serverGeneration){sql->
   val owner=token.preference.operation.owner?:error("signed_in_owner_required")
   check(preferences.isCloudSyncAllowed&&!preferences.hasPendingHealthSyncRevoke&&preferences.serverHealthConsentGeneration==serverGeneration){"sync_consent_changed"}
-  RustRemoteRows.apply(sql,owner,changes,now)
+  RustRemoteStorage.apply(sql,owner,changes,now)
  }
  fun acknowledgeSync(token:Token,serverGeneration:Long,entry:com.cyclecare.app.data.local.HealthSyncOutboxEntry,serverRevision:Long):Result<Boolean> = transaction(token,serverGeneration){sql->
-  checkSync(token,serverGeneration,entry.ownerId);RustOutboxRows.acknowledge(sql,entry,serverRevision)
+  checkSync(token,serverGeneration,entry.ownerId);RustOutboxStorage.acknowledge(sql,entry,serverRevision)
  }
  fun retrySync(token:Token,serverGeneration:Long,entry:com.cyclecare.app.data.local.HealthSyncOutboxEntry,nextAttempt:Long,error:String):Result<Boolean> = transaction(token,serverGeneration){sql->
-  checkSync(token,serverGeneration,entry.ownerId);RustOutboxRows.retry(sql,entry,nextAttempt,error)
+  checkSync(token,serverGeneration,entry.ownerId);RustOutboxStorage.retry(sql,entry,nextAttempt,error)
  }
  fun conflictSync(token:Token,serverGeneration:Long,entry:com.cyclecare.app.data.local.HealthSyncOutboxEntry,remoteRevision:Long,payload:String?,tombstone:Boolean,now:Long):Result<Boolean> = transaction(token,serverGeneration){sql->
-  checkSync(token,serverGeneration,entry.ownerId);RustOutboxRows.conflict(sql,entry,remoteRevision,payload,tombstone,now)
+  checkSync(token,serverGeneration,entry.ownerId);RustConflictStorage.apply(sql,entry,remoteRevision,payload,tombstone,now)
  }
  /** Explicit include-existing-data enrollment only, not automatic background
   * upload. Re-journals full current rows under current server consent. Existing
@@ -507,12 +498,12 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
  fun readDomain(token:Token,date:String?=null):Result<DomainSnapshot> = transaction(token){sql->DomainSnapshot(token,date?.let{RustFloatRows.readOne(sql,it)},(RustDomainRows.read(sql,"settings") as? RustDomainRows.Row.Settings)?.value,(RustDomainRows.read(sql,"profile") as? RustDomainRows.Row.Profile)?.value)}
  /** Batch consumer, only reachable through the same full identity guard. */
  fun commitBatch(token:Token,intent:RustRoomBatch.Intent):Result<RustRoomBatch.Outcome> = transaction(token){sql->applyBatch(sql,token,intent)}
- private fun applyBatch(sql:androidx.sqlite.db.SupportSQLiteDatabase,token:Token,intent:RustRoomBatch.Intent):RustRoomBatch.Outcome {
+ private fun applyBatch(sql:androidx.sqlite.db.SupportSQLiteDatabase,token:Token,intent:RustRoomBatch.Intent,completion:Boolean=false,settings:Boolean=false):RustRoomBatch.Outcome {
   val op=token.preference.operation;val owner=op.owner?.takeIf{it.isNotBlank()}?:"legacy_guest"
   require((intent.reads+intent.mutations.map{it.base}).all{it.storage!=null})
   require(intent.namespace==(op.owner?.takeIf{it.isNotBlank()}?.let(CycleCareDatabase::namespaceFor)?:"cycle_care_database")&&intent.generation==op.consentGeneration)
   val binding=org.json.JSONArray().put(op.owner?:org.json.JSONObject.NULL).put(op.effectiveUserId).put(op.session).put(op.consentGeneration).put(token.preference.localOnly).put(token.preference.accountMode).put(token.epoch).put(token.instance).put(token.lifecycle.generation).toString()
-  return RustRoomBatch.apply(sql,owner,binding,intent)
+  return if(completion)RustCompletionStorage.apply(sql,owner,binding,intent) else if(settings)RustSettingsStorage.apply(sql,owner,binding,intent) else RustBatchStorage.apply(sql,owner,binding,intent)
  }
  class UiRows internal constructor(val token:Token,val settings:com.cyclecare.app.data.local.CycleSettings?,val profile:com.cyclecare.app.data.local.OnboardingProfile?,val logs:List<CycleDayLog>)
  /** Pure read: legitimate absence remains data, never initialization here. */
@@ -542,7 +533,14 @@ internal class RustBoundRoomHost(private val preferences:AuthPreferences,private
   * Renderer still must use publishSnapshot, not paint after map acceptance.
   */
  fun observe(token:Token)=callbackFlow<Unit> {
-  val observer=object:InvalidationTracker.Observer("cycle_day_logs","rust_float_bits","cycle_settings","onboarding_profiles") {
+  // Room tracks only its registered domain entities. rust_float_bits is
+  // additive raw-SQL metadata, deliberately absent from the generated Room
+  // table inventory. Every supported bit write follows a cycle_day_logs
+  // domain write in the SAME transaction (RustFloatRows.recordAfterDomainWrite),
+  // and domain triggers invalidate obsolete bits. The domain wake therefore
+  // rereads BOTH rows and bits coherently; registering metadata here throws
+  // before collection even though the SQL table itself exists.
+  val observer=object:InvalidationTracker.Observer("cycle_day_logs","cycle_settings","onboarding_profiles") {
    override fun onInvalidated(tables:Set<String>){trySend(Unit)}
   }
   token.database.invalidationTracker.addObserver(observer);trySend(Unit)
