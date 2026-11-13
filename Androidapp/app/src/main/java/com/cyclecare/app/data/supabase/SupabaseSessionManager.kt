@@ -140,15 +140,31 @@ object SupabaseSessionManager {
     }
 
     /** Structural consistency only: authenticity is established by the fixed authenticated server, not by this parser. */
-    private fun validTokenForOwner(token: String, owner: String): Boolean = try {
+    private fun validTokenForOwner(token: String, owner: String): Boolean {
+        // Native-first: core session_token parity port of this exact check
+        // (NEW IMPLEMENTATION wiring, 2026-11-13). A null reply (native
+        // unavailable/malformed) keeps the Kotlin check below, byte for byte.
+        com.cyclecare.app.rust.CycleCareCoreBridge.sessionTokenValidForOwner(token, owner, System.currentTimeMillis() / 1000)?.let { return it }
+        return validTokenForOwnerKotlin(token, owner)
+    }
+
+    private fun validTokenForOwnerKotlin(token: String, owner: String): Boolean = try {
         val pieces = token.split('.')
         token.length in 1..MAX_TOKEN_CHARS && pieces.size == 3 &&
             pieces.all { it.isNotEmpty() && it.all { char -> char in 'A'..'Z' || char in 'a'..'z' || char in '0'..'9' || char == '_' || char == '-' } } &&
             JSONObject(String(Base64.decode(pieces[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP), Charsets.UTF_8)).opt("sub") == owner &&
-            tokenExpiry(token) > System.currentTimeMillis() / 1000
+            tokenExpiryKotlin(token) > System.currentTimeMillis() / 1000
     } catch (_: Exception) { false }
 
-    private fun tokenExpiry(token: String): Long = try {
+    private fun tokenExpiry(token: String): Long {
+        // Native-first: core session_token parity port of this exact parse
+        // (NEW IMPLEMENTATION wiring, 2026-11-13). A null reply (native
+        // unavailable/malformed) keeps the Kotlin parse below, byte for byte.
+        com.cyclecare.app.rust.CycleCareCoreBridge.sessionTokenExpiry(token)?.let { return it }
+        return tokenExpiryKotlin(token)
+    }
+
+    private fun tokenExpiryKotlin(token: String): Long = try {
         val payload = token.split('.')[1]
         val decoded = String(Base64.decode(payload, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP), Charsets.UTF_8)
         (JSONObject(decoded).opt("exp") as? Number)?.toLong() ?: 0L

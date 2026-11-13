@@ -793,6 +793,56 @@ object CycleCareCoreBridge {
     }.getOrNull()
 
     /** Raw dispatcher call; null on any failure (caller falls back to Kotlin). */
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * session_token parity port for SupabaseSessionManager.tokenExpiry
+     * (SessionTokenParity JVM locks t01-t08). 0 mirrors the source's
+     * catch-all. null = native unavailable/malformed -> caller keeps the
+     * Kotlin parse. */
+    fun sessionTokenExpiry(token: String): Long? {
+        val reply = call("session_token_expiry_v1", JSONObject().put("token", token)) ?: return null
+        return decodeSessionTokenExpiry(reply)
+    }
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "expiry" a
+     * genuine Int/Long >= 0 (0 mirrors the source catch-all; a negative or
+     * coerced echo has no source shape). */
+    internal fun decodeSessionTokenExpiry(reply: JSONObject): Long? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val expiry = ok.opt("expiry")
+        if (expiry !is Int && expiry !is Long) return null
+        val value = (expiry as Number).toLong()
+        if (value < 0L) return null
+        return value
+    }
+
+    /** NEW IMPLEMENTATION (2026-11-13): native wiring of the existing core
+     * session_token parity port for
+     * SupabaseSessionManager.validTokenForOwner (structural consistency
+     * only; authenticity is the server's job). [nowSecs] is caller-supplied
+     * so both paths judge the same instant. null = native
+     * unavailable/malformed -> caller keeps the Kotlin check. */
+    fun sessionTokenValidForOwner(token: String, owner: String, nowSecs: Long): Boolean? {
+        val reply = call("session_token_valid_for_owner_v1", JSONObject()
+            .put("token", token)
+            .put("owner", owner)
+            .put("nowSecs", nowSecs)) ?: return null
+        return decodeSessionTokenValid(reply)
+    }
+
+    /** Strict decode: "ok" a real object, "version" exactly 1, "valid" a
+     * genuine Boolean (optBoolean would coerce a malformed reply into an
+     * authoritative auth verdict). */
+    internal fun decodeSessionTokenValid(reply: JSONObject): Boolean? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        val valid = ok.opt("valid")
+        if (valid !is Boolean) return null
+        return valid
+    }
+
     /** Reply of [supabaseConfigResolveClientSettings]. */
     data class SupabaseClientSettings(val url: String, val apiKey: String)
 

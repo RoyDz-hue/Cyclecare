@@ -812,6 +812,26 @@ fn dispatch(contract: &str, payload: &str) -> String {
             };
             serde_json::json!({"ok": ok}).to_string()
         })(),
+        "session_token_expiry_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port session_token::token_expiry
+            // (SupabaseSessionManager.kt tokenExpiry, main@31b88f5 lineage;
+            // SessionTokenParity JVM locks t01-t08). 0 mirrors the source's
+            // catch-all; authenticity stays the server's job.
+            let token = match v.get("token").and_then(|x| x.as_str()) { Some(s) => s, None => return err("token missing or not a string") };
+            serde_json::json!({"ok":{"version":1,"expiry":corelib::session_token::token_expiry(token)}}).to_string()
+        })(),
+        "session_token_valid_for_owner_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port session_token::valid_token_for_owner
+            // (SupabaseSessionManager.kt validTokenForOwner; structural
+            // consistency only). nowSecs is caller-supplied so the Kotlin
+            // fallback and native path evaluate the same instant.
+            let token = match v.get("token").and_then(|x| x.as_str()) { Some(s) => s, None => return err("token missing or not a string") };
+            let owner = match v.get("owner").and_then(|x| x.as_str()) { Some(s) => s, None => return err("owner missing or not a string") };
+            let now_secs = match v.get("nowSecs").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("nowSecs missing or not an integer") };
+            serde_json::json!({"ok":{"version":1,"valid":corelib::session_token::valid_token_for_owner(token, owner, now_secs)}}).to_string()
+        })(),
         "supabase_config_resolve_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port supabase_config::resolve_client_settings
