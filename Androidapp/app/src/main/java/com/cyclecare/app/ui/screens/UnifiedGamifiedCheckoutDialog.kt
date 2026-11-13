@@ -74,6 +74,7 @@ import com.cyclecare.app.data.payment.PaymentProvider
 import com.cyclecare.app.data.payment.PaymentOperation
 import com.cyclecare.app.data.payment.PaymentReleasePolicy
 import com.cyclecare.app.data.payment.DisabledPaymentReleasePolicy
+import com.cyclecare.app.rust.CycleCareCoreBridge
 import com.cyclecare.app.util.NetworkHelper
 import com.cyclecare.app.util.PaymentInputValidator
 import kotlinx.coroutines.delay
@@ -128,7 +129,10 @@ fun UnifiedGamifiedCheckoutDialog(
     }
 
     val phoneValidation = remember(mpesaPhone) {
-        if (mpesaPhone.isBlank()) null else PaymentInputValidator.validateKenyanPhoneNumber(mpesaPhone)
+        // NEW IMPLEMENTATION (2026-11-13): native-first via payment_phone_v1
+        // (op=validate); null reply -> the verbatim Kotlin twin.
+        if (mpesaPhone.isBlank()) null
+        else CycleCareCoreBridge.paymentPhoneValidate(mpesaPhone) ?: kotlinValidateMpesaPhone(mpesaPhone)
     }
     val amountKes = pkg.priceKes.toDouble()
     val phoneIsValid = phoneValidation?.isValid == true
@@ -597,7 +601,9 @@ private fun MpesaForm(
         Button(
             onClick = onSubmit,
             enabled = isOnline && amountKes > 0 && validationMessage == null && phone.isNotBlank() &&
-                PaymentInputValidator.validateKenyanPhoneNumber(phone).isValid,
+                // NEW IMPLEMENTATION (2026-11-13): native-first via
+                // payment_phone_v1 (op=validate); null reply -> twin.
+                (CycleCareCoreBridge.paymentPhoneValidate(phone) ?: kotlinValidateMpesaPhone(phone)).isValid,
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("pay_mpesa_stk_button"),
             shape = RoundedCornerShape(17.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
@@ -760,3 +766,11 @@ private fun SuccessPanel(
         }
     }
 }
+
+/**
+ * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the
+ * original M-Pesa phone validation call, reached whenever the native
+ * payment_phone_v1 (op=validate) reply is null.
+ */
+private fun kotlinValidateMpesaPhone(raw: String) =
+    PaymentInputValidator.validateKenyanPhoneNumber(raw)
