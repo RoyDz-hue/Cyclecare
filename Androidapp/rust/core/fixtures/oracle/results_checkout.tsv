@@ -1,0 +1,71 @@
+g1	MPESA,PAYPAL
+g2	EMPTY
+g3	PAYPAL
+g4	PAYPAL
+g5	MPESA
+g6	PAYPAL
+n1	Reconnect to continue securely.
+n2	Follow the prompt on your phone and enter your PIN there.
+n3	Approve the payment in PayPal, then return here.
+n4	Do not retry a charge until its status and your wallet have been verified.
+n5	Review the message above, then try again.
+n6	Next: send the prompt, then confirm on your phone.
+n7	Next: enter your Kenyan mobile number.
+n8	Next: continue to PayPal to approve your payment.
+n9	Do not retry a charge until its status and your wallet have been verified.
+a1	KES 900
+a2	Price unavailable
+a3	$2.99
+c1	250 coins
+c2	300 coins · includes 50 bonus
+l1	true	M-Pesa KES 900
+l2	false	-
+l3	false	-
+l4	false	-
+d1	A payment prompt arrives on your Kenyan phone.
+d2	Approve securely with your PayPal account.
+d3	
+d4	
+i1	Selected
+i2	Select PayPal
+t1	payment_method_mpesa
+t2	payment_method_debit_credit_card
+s1	true
+s2	true
+s3	false
+s4	false
+s5	false
+s6	false
+s7	false
+s8	true
+b1	Send payment prompt · KES 389
+b2	Send payment prompt · KES 389
+p1	Continue to PayPal · $2.99
+f1	Your M-Pesa PIN is entered on your phone, never in CycleCare.
+f2	Payment approval is completed in PayPal’s secure checkout.
+w1	Waiting for your phone
+w2	Securing your PayPal payment
+w3	Approve the prompt on your phone to finish.
+w4	Please wait while we verify your order.
+w5	Waiting on STK
+u1	300 coins are ready to use.
+u2	Payment confirmed
+o1	1 verified option
+o2	Verified options
+x1	true
+x2	false
+y1	Success
+y2	Processing
+y3	Form
+z1	Mpesa
+z2	Paypal
+z3	Omitted
+z4	Omitted
+n10	Do not retry a charge until its status and your wallet have been verified.
+n11	Do not retry a charge until its status and your wallet have been verified.
+n12	Do not retry a charge until its status and your wallet have been verified.
+n13	Do not retry a charge until its status and your wallet have been verified.
+c3	-9223372036854775808 coins · includes 1 bonus
+c4	-2 coins · includes 9223372036854775807 bonus
+u3	-9223372036854775804 coins are ready to use.
+u4	9223372036854775807 coins are ready to use.

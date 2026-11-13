@@ -1,0 +1,23 @@
+Physical=Cramps,Headache,Back pain,Breast tenderness
+Mood=Anxious,Irritable,Tearful,Low motivation
+Energy & Sleep=Heavy fatigue,Brain fog,Restless sleep
+Pelvic=Discharge change,Spotting,Deep pressure
+Stomach=Bloating,Nausea,Appetite surge
+---when---
+Physical=Cramps,Headache,Back pain,Breast tenderness
+Mood=Anxious,Irritable,Tearful,Low motivation
+Energy & Sleep=Heavy fatigue,Brain fog,Restless sleep
+Pelvic=Discharge change,Spotting,Deep pressure
+Stomach=Bloating,Nausea,Appetite surge
+Unknown=
+=
+---chips---
+Cramps|Fatigue|Headache|Mood shift|Stomach pain|Bloating|Nausea|Restless sleep|Spotting|Just feel off
+---append---
+Cramps
+Nausea
+Headache, Bloating
+a, b, Spotting
+---gates---
+false
+true

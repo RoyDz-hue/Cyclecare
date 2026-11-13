@@ -1,0 +1,350 @@
+workflows:
+  cyclecare-slim:
+    name: CycleCare slim APK + targeted unit tests
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.m2
+    scripts:
+      - name: Route org.robolectric via Google-hosted Maven Central mirror
+        script: |
+          set -e
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+          settingsEvaluated { settings ->
+              settings.dependencyResolutionManagement.repositories {
+                  exclusiveContent {
+                      forRepository {
+                          maven {
+                              name = 'GoogleCloudStorageMavenCentralMirror'
+                              url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                          }
+                      }
+                      filter { includeGroup('org.robolectric') }
+                  }
+              }
+          }
+          GRADLE
+      - name: Prefetch Robolectric runtime jar (bounded, logged)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          VER="14-robolectric-10818077-i7"
+          BASE="https://maven-central.storage-download.googleapis.com/maven2/org/robolectric/android-all-instrumented/$VER"
+          DEST="$HOME/.m2/repository/org/robolectric/android-all-instrumented/$VER"
+          mkdir -p "$DEST"
+          for f in "android-all-instrumented-$VER.jar" "android-all-instrumented-$VER.pom"; do
+            if [ ! -s "$DEST/$f" ]; then
+              echo "fetching $f"
+              curl -fsSL --max-time 240 -o "$DEST/$f" "$BASE/$f"
+            fi
+            ls -la "$DEST/$f"
+          done
+          echo "prefetch complete"
+          } 2>&1 | tee build-logs/robolectric-prefetch.log
+      - name: Targeted unit tests
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          mkdir -p ../build-logs
+          ./gradlew testDebugUnitTest \
+            --tests "com.cyclecare.app.domain.ai.AiConsentTapDecisionTest" \
+            --tests "com.cyclecare.app.data.notification.NotificationParsingTest" \
+            --tests "com.cyclecare.app.domain.parser.NaturalLanguageLogParserTest" \
+            --tests "com.cyclecare.app.domain.ai.LayeredChatOrchestratorTest" \
+            --tests "com.cyclecare.app.ui.CoinAmountInputTest" \
+            --tests "com.cyclecare.app.ui.SettingsPinTest" \
+            --tests "com.cyclecare.app.ui.GuidedChatsRoomOpenTest" \
+            --tests "com.cyclecare.app.AccountStartPolicyTest" \
+            --tests "com.cyclecare.app.ReturningUserReopenTest" \
+            --tests "com.cyclecare.app.ReopenSplashGateTest" \
+            --tests "com.cyclecare.app.WalletStatusTest" \
+            --tests "com.cyclecare.app.domain.ai.CareAiSourceContractTest" \
+            2>&1 | tee ../build-logs/test-run.log
+      - name: Build unsigned slim APK (arm64, minified)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          mkdir -p ../build-logs
+          ./gradlew assembleSlim -PslimApk 2>&1 | tee ../build-logs/assemble-run.log
+    artifacts:
+      - Androidapp/app/build/outputs/apk/**/*.apk
+      - Androidapp/app/build/test-results/testDebugUnitTest/*.xml
+      - build-logs/*.log
+  cyclecare-goldens:
+    name: CycleCare golden refresh (Paparazzi, JDK21)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Route org.robolectric via Google-hosted Maven Central mirror
+        script: |
+          set -e
+          mkdir -p "$HOME/.gradle/init.d"
+          cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+          settingsEvaluated { settings ->
+              settings.dependencyResolutionManagement.repositories {
+                  exclusiveContent {
+                      forRepository {
+                          maven {
+                              name = 'GoogleCloudStorageMavenCentralMirror'
+                              url = uri('https://maven-central.storage-download.googleapis.com/maven2/')
+                          }
+                      }
+                      filter { includeGroup('org.robolectric') }
+                  }
+              }
+          }
+          GRADLE
+      - name: Record stale goldens after the page-canvas rework
+        script: |
+          set -e
+          cd Androidapp
+          chmod +x gradlew
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          "$JAVA_HOME/bin/java" -version
+          for f in "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties" "$HOME/.gradle/gradle.properties"; do
+            if [ -f "$f" ]; then
+              echo "java keys in $f:"
+              grep -E '^[[:space:]]*(org\.gradle\.java\.home|org\.gradle\.java\.installations\.[a-z-]+|org\.gradle\.jvm\.version|java\.home)' "$f" || echo "(none)"
+            else
+              echo "(no $f)"
+            fi
+          done
+          mkdir -p ../build-logs
+          set -o pipefail
+          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" recordPaparazziDebug -Ppaparazzi \
+            --tests "com.cyclecare.app.ui.ScreensScreenshotTest" \
+            --tests "com.cyclecare.app.ui.ShellFrameScreenshotTest" \
+            --tests "com.cyclecare.app.ui.HomeFrameScreenshotTest" \
+            --tests "com.cyclecare.app.ui.CompactShellScreenshotTest" \
+            --tests "com.cyclecare.app.ui.SettingsScreenshotTest" \
+            --tests "com.cyclecare.app.ui.DarkModeContrastScreenshotTest" \
+            --tests "com.cyclecare.app.ui.OnboardingContrastScreenshotTest" \
+            --tests "com.cyclecare.app.ui.CareConsentScreenshotTest" \
+            --tests "com.cyclecare.app.ui.WalletStatusScreenshotTest" 2>&1 | tee ../build-logs/goldens-record.log
+      - name: Capture expanded consent details (interactive, Robolectric)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          mkdir -p ../build-logs
+          ./gradlew testDebugUnitTest --tests "com.cyclecare.app.ui.CareConsentExpandedCaptureTest" 2>&1 | tee ../build-logs/consent-capture.log
+          cp app/build/test-results/testDebugUnitTest/*.xml ../build-logs/ 2>/dev/null || true
+    artifacts:
+      - Androidapp/app/src/test/snapshots/images/*.png
+      - Androidapp/app/build/outputs/captures/*.png
+      - build-logs/*.log
+  cyclecare-device-verify:
+    name: CycleCare emulator inset verification (real window insets)
+    max_build_duration: 35
+    instance_type: mac_mini_m2
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $ANDROID_HOME/system-images
+    scripts:
+      - name: Build debug app and instrumented test APKs
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          mkdir -p ../build-logs
+          ./gradlew assembleDebug assembleDebugAndroidTest 2>&1 | tee ../build-logs/device-verify-build.log
+      - name: Inspect installed Android SDK images (bounded)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          echo "== system-images dir =="
+          ls -R "$ANDROID_HOME/system-images" 2>/dev/null || echo "(none installed)"
+          echo "== sdkmanager installed =="
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | grep -i "system-images" || echo "(sdkmanager lists none)"
+          } 2>&1 | tee build-logs/sdk-inventory.log
+      - name: Ensure a usable system image (bounded 10 min)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          IMG=$(ls "$ANDROID_HOME/system-images" 2>/dev/null | grep -E '^android-[0-9]+$' | sort -t- -k2 -n | tail -1 || true)
+          if [ -n "$IMG" ]; then
+            VARIANT=$(ls "$ANDROID_HOME/system-images/$IMG" | grep -E 'google_apis|default' | head -1)
+            ABI=$(ls "$ANDROID_HOME/system-images/$IMG/$VARIANT" | grep -E 'arm64|x86_64' | head -1)
+            echo "reusing installed image: system-images;$IMG;$VARIANT;$ABI"
+            echo "system-images;$IMG;$VARIANT;$ABI" > build-logs/avd-image.txt
+          else
+            echo "no installed image; installing system-images;android-36;google_apis;arm64-v8a (bounded)"
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "system-images;android-36;google_apis;arm64-v8a" < /dev/null &
+            IPID=$!
+            for i in $(seq 1 120); do kill -0 $IPID 2>/dev/null || break; sleep 5; done
+            if kill -0 $IPID 2>/dev/null; then
+              kill $IPID 2>/dev/null
+              echo "UNSUPPORTED: system image install exceeded 10 minutes on this runner"
+              exit 1
+            fi
+            wait $IPID
+            echo "system-images;android-36;google_apis;arm64-v8a" > build-logs/avd-image.txt
+          fi
+          cat build-logs/avd-image.txt
+          } 2>&1 | tee build-logs/ensure-image.log
+      - name: Create AVD and boot emulator (bounded 10 min)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          IMAGE=$(cat build-logs/avd-image.txt)
+          echo "using image: $IMAGE"
+          AVDMGR="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          EMU="$ANDROID_HOME/emulator/emulator"
+          echo no | "$AVDMGR" create avd -n ccverify -k "$IMAGE" -d pixel_6 --force \
+            || echo no | "$AVDMGR" create avd -n ccverify -k "$IMAGE" -d pixel --force
+          "$EMU" -avd ccverify -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-save > build-logs/emulator-console.log 2>&1 &
+          adb wait-for-device
+          BOOTED=""
+          for i in $(seq 1 110); do
+            BOOTED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$BOOTED" = "1" ] && break
+            sleep 5
+          done
+          echo "boot_completed=$BOOTED"
+          [ "$BOOTED" = "1" ]
+          adb shell wm size && adb shell wm density
+          } 2>&1 | tee build-logs/emulator-step.log
+      - name: Run production inset screenshot tests (bounded 8 min)
+        script: |
+          set -e
+          set -o pipefail
+          mkdir -p build-logs
+          {
+          adb install -r Androidapp/app/build/outputs/apk/debug/app-debug.apk
+          adb install -r Androidapp/app/build/outputs/androidTest/apk/debug/app-debug-androidTest.apk
+          adb shell am instrument -w \
+            -e class com.cyclecare.app.DeviceInsetsScreenshotTest \
+            com.cyclecare.app.debug.test/androidx.test.runner.AndroidJUnitRunner > build-logs/instrumentation.log 2>&1 &
+          JPID=$!
+          for i in $(seq 1 96); do kill -0 $JPID 2>/dev/null || break; sleep 5; done
+          if kill -0 $JPID 2>/dev/null; then
+            kill $JPID 2>/dev/null
+            echo "instrumentation exceeded 8 minutes"
+            cat build-logs/instrumentation.log || true
+            exit 1
+          fi
+          wait $JPID; RC=$?
+          cat build-logs/instrumentation.log
+          [ $RC -eq 0 ]
+          } 2>&1 | tee build-logs/instrument-step.log
+      - name: Collect screenshots
+        script: |
+          mkdir -p device-verify
+          adb pull /sdcard/Android/data/com.cyclecare.app.debug/files/. device-verify/ || true
+          ls -la device-verify/ || true
+          adb shell emu kill || true
+    artifacts:
+      - device-verify/*.png
+      - build-logs/*.log
+  cyclecare-release-r8-unsigned:
+    name: CycleCare release R8 + resource shrink qualification (unsigned, task-only)
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    inputs:
+      expected_source_sha:
+        description: Exact final candidate commit, supplied after commit creation
+        default: ""
+    environment:
+      vars:
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+        - $HOME/.m2
+    scripts:
+      - name: Verify pinned source and forbid signing custody
+        script: |
+          set -euo pipefail
+          mkdir -p build-logs
+          test ! -e Androidapp/.private/cyclecare-debug.jks
+          test ! -e Androidapp/my-upload-key.jks
+          test -z "${CYCLECARE_DEBUG_KEYSTORE:-}"
+          test -z "${CYCLECARE_DEBUG_STORE_PASSWORD:-}"
+          test -z "${CYCLECARE_DEBUG_KEY_PASSWORD:-}"
+          test -z "${KEYSTORE_PATH:-}"
+          test -z "${STORE_PASSWORD:-}"
+          test -z "${KEY_PASSWORD:-}"
+          test -n "${EXPECTED_SOURCE_SHA:-}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git rev-parse HEAD | tee build-logs/source-commit.txt
+      - name: Explicit toolchain setup (JDK21, from cyclecare-goldens)
+        script: |
+          set -e
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          "$JAVA_HOME/bin/java" -version
+          test -d "$ANDROID_HOME/platforms/android-36.1" || { echo "MISSING android-36.1 platform (compileSdk 36 minorApiLevel 1); installed:"; ls "$ANDROID_HOME/platforms"; exit 1; }
+      - name: SDK inventory (informational only, not a setup check)
+        script: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | grep -E "build-tools|platforms;android" || true
+      - name: Release R8 minification + resource optimization (real tasks, unsigned)
+        script: |
+          set -e
+          set -o pipefail
+          cd Androidapp
+          chmod +x gradlew
+          export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home
+          mkdir -p ../build-logs
+          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" \
+            minifyReleaseWithR8 optimizeReleaseResources \
+            2>&1 | tee ../build-logs/release-r8-run.log
+      - name: Bridge class and JNI methods kept (validated parser v3.1)
+        script: |
+          set -e
+          MAP=Androidapp/app/build/outputs/mapping/release/mapping.txt
+          test -s "$MAP"
+          grep -Fx 'com.cyclecare.app.rust.CycleCareCoreBridge -> com.cyclecare.app.rust.CycleCareCoreBridge:' "$MAP"
+          awk '/^com\.cyclecare\.app\.rust\.CycleCareCoreBridge -> com\.cyclecare\.app\.rust\.CycleCareCoreBridge:$/{b=1;next} /^#/{next} /^[^[:blank:]].* -> [^[:blank:]]+$/{if(b) exit} b&&/^[[:blank:]]/' "$MAP" > build-logs/bridge-mapping-block.txt
+          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?int nativeCoreHandshake\(\)(:[0-9]+(:[0-9]+)?)? -> nativeCoreHandshake$' build-logs/bridge-mapping-block.txt
+          grep -E '^[[:blank:]]+([0-9]+:[0-9]+:)?java\.lang\.String nativeCall\(java\.lang\.String,java\.lang\.String\)(:[0-9]+(:[0-9]+)?)? -> nativeCall$' build-logs/bridge-mapping-block.txt
+      - name: Obfuscation positive control (file-gated, no pipe mask)
+        script: |
+          set -e
+          MAP=Androidapp/app/build/outputs/mapping/release/mapping.txt
+          awk -F' -> ' '/^com\.cyclecare\.app\..* -> /{rhs=$2; sub(/:$/,"",rhs); if (rhs !~ /^com\.cyclecare\./) print}' "$MAP" > build-logs/obfuscation-control.txt
+          test -s build-logs/obfuscation-control.txt
+          head -5 build-logs/obfuscation-control.txt
+      - name: optimizeReleaseResources output present (release-anchored, AGP 9.1.1 contract)
+        script: |
+          set -e
+          OUT=$(find Androidapp/app/build/intermediates/optimized_processed_res/release -type f -name 'optimize.ap_' -size +0c -print)
+          test "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1
+          ls -la "$OUT" | tee build-logs/shrink-output-evidence.txt
+          shasum -a 256 "$OUT" >> build-logs/shrink-output-evidence.txt
+          grep -F '> Task :app:optimizeReleaseResources' build-logs/release-r8-run.log
+          grep -F 'BUILD SUCCESSFUL' build-logs/release-r8-run.log
+      - name: 'Guard: no package/sign task substitution'
+        script: |
+          set -e
+          ! grep -E '> Task :app:(packageRelease|signRelease|assembleRelease|bundleRelease)' build-logs/release-r8-run.log
+    artifacts:
+      - Androidapp/app/build/outputs/mapping/release/mapping.txt
+      - Androidapp/app/build/outputs/mapping/release/seeds.txt
+      - Androidapp/app/build/outputs/mapping/release/usage.txt
+      - Androidapp/app/build/intermediates/optimized_processed_res/**/optimize.ap_
+      - build-logs/*.log
+      - build-logs/*.txt

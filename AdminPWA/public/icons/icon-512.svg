@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512">
+  <defs>
+    <radialGradient id="sanctuaryBg" cx="42%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#3A1B28"/>
+      <stop offset="55%" stop-color="#241019"/>
+      <stop offset="100%" stop-color="#15090E"/>
+    </radialGradient>
+    <linearGradient id="goldBezel" x1="10%" y1="10%" x2="90%" y2="90%">
+      <stop offset="0%" stop-color="#FFF3D1"/>
+      <stop offset="45%" stop-color="#E5C378"/>
+      <stop offset="100%" stop-color="#9E6B18"/>
+    </linearGradient>
+    <linearGradient id="moonGrad" x1="20%" y1="18%" x2="72%" y2="84%">
+      <stop offset="0%" stop-color="#FFF9E6"/>
+      <stop offset="35%" stop-color="#F3D078"/>
+      <stop offset="75%" stop-color="#D49B35"/>
+      <stop offset="100%" stop-color="#8C5A08"/>
+    </linearGradient>
+    <linearGradient id="petalOuter" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFCDD8"/>
+      <stop offset="50%" stop-color="#E8839B"/>
+      <stop offset="100%" stop-color="#9E3B52"/>
+    </linearGradient>
+    <linearGradient id="petalMid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE4EC"/>
+      <stop offset="50%" stop-color="#F498AF"/>
+      <stop offset="100%" stop-color="#B84A62"/>
+    </linearGradient>
+    <radialGradient id="dewCore" cx="45%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="35%" stop-color="#FFF3D6"/>
+      <stop offset="75%" stop-color="#E8BA68"/>
+      <stop offset="100%" stop-color="#C2842B"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" rx="46" fill="url(#sanctuaryBg)"/>
+  <circle cx="100" cy="100" r="88" fill="none" stroke="url(#goldBezel)" stroke-width="2.6" opacity="0.85"/>
+  <circle cx="100" cy="100" r="76" fill="none" stroke="#F48FB1" stroke-width="1" stroke-dasharray="4 6" opacity="0.32"/>
+  <path d="M114 34 C66 34 34 68 34 106 C34 142 64 168 110 168 C126 168 142 161 153 150 C145 154 134 156 122 155 C82 152 56 126 56 96 C56 66 80 42 114 34 Z" fill="url(#moonGrad)"/>
+  <path d="M108 38 C72 42 46 68 46 102 C46 128 64 148 92 156 C68 144 54 122 54 96 C54 68 76 46 108 38 Z" fill="#FFFFFF" opacity="0.32"/>
+  <path d="M100 148 C68 148 44 128 42 102 C62 104 82 118 100 148 Z" fill="url(#petalOuter)"/>
+  <path d="M100 148 C132 148 156 128 158 102 C138 104 118 118 100 148 Z" fill="url(#petalOuter)"/>
+  <path d="M100 148 C74 140 58 114 66 80 C84 90 94 114 100 148 Z" fill="url(#petalMid)"/>
+  <path d="M100 148 C126 140 142 114 134 80 C116 90 106 114 100 148 Z" fill="url(#petalMid)"/>
+  <path d="M100 62 C100 62 76 94 76 116 C76 132 87 144 100 144 C113 144 124 132 124 116 C124 94 100 62 100 62 Z" fill="url(#dewCore)" stroke="#E5C378" stroke-width="1.5"/>
+  <path d="M92 84 C86 96 84 108 86 120 C88 128 92 133 96 135 C90 126 89 112 92 98 C93 92 95 87 92 84 Z" fill="#FFFFFF" opacity="0.6"/>
+  <path d="M138 54 L141 62 L149 65 L141 68 L138 76 L135 68 L127 65 L135 62 Z" fill="#FFF3D1"/>
+  <circle cx="154" cy="82" r="3" fill="#F48FB1"/>
+</svg>

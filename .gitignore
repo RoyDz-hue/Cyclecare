@@ -1,0 +1,52 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+.env.*
+!.env.example
+!.env.android.example
+debug.keystore
+
+# Sensitive Credentials & Production Secrets
+docs/CREDENTIALS.md
+docs/*credential*
+docs/*CREDENTIAL*
+*.credentials
+*.credentials.*
+*.pem
+*.key
+*.secret
+
+# Generated outputs and machine-local state
+**/.gradle/
+**/build/
+**/node_modules/
+**/dist/
+AdminPWA/dist/
+supabase/.temp/
+**/supabase/.temp/
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+
+# Python contract-test caches
+__pycache__/
+*.py[cod]
+
+# Signing material must never be committed
+.private/
+*.jks
+spike/out/

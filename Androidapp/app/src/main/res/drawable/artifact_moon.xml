@@ -1,0 +1,79 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Soft Ambient Halo / Glow -->
+    <path
+        android:pathData="M142,32 C82,32 44,72 44,116 C44,152 74,178 136,178 C80,160 62,126 62,110 C62,80 88,48 142,32 Z"
+        android:strokeWidth="12"
+        android:strokeColor="#25FFE082" />
+
+    <!-- Gold Bezel Backing & Outer Rim -->
+    <path
+        android:pathData="M145,30 C75,30 36,75 36,120 C36,158 68,185 138,185 C78,168 58,130 58,112 C58,80 85,46 145,30 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="40"
+                android:startY="30"
+                android:endX="140"
+                android:endY="180">
+                <item android:offset="0.0" android:color="#FFF8E1" />
+                <item android:offset="0.3" android:color="#E0A728" />
+                <item android:offset="0.7" android:color="#9E6B0C" />
+                <item android:offset="1.0" android:color="#F7D377" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Mother-of-Pearl Luminous Core -->
+    <path
+        android:pathData="M140,36 C78,36 44,78 44,118 C44,152 72,176 132,176 C80,160 64,126 64,110 C64,82 88,50 140,36 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="50"
+                android:startY="40"
+                android:endX="120"
+                android:endY="170">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.25" android:color="#FFF9E6" />
+                <item android:offset="0.5" android:color="#F5E4C3" />
+                <item android:offset="0.75" android:color="#EED3B0" />
+                <item android:offset="1.0" android:color="#FFFBF2" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Iridescent Opal Sheen Highlight -->
+    <path
+        android:pathData="M136,42 C86,45 56,82 56,116 C56,140 76,162 118,170 C84,154 72,128 72,112 C72,88 94,60 136,42 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="60"
+                android:startY="50"
+                android:endX="110"
+                android:endY="160">
+                <item android:offset="0.0" android:color="#B3FFFFFF" />
+                <item android:offset="0.4" android:color="#40FFE8B6" />
+                <item android:offset="0.8" android:color="#20F8BBD0" />
+                <item android:offset="1.0" android:color="#60FFF8E1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Upper Tip Gold Cap -->
+    <path
+        android:pathData="M140,34 C143,33 147,36 145,39 C140,43 133,48 128,52 C132,44 136,38 140,34 Z"
+        android:fillColor="#E5B23A" />
+
+    <!-- Lower Tip Gold Cap -->
+    <path
+        android:pathData="M134,178 C137,179 140,175 137,171 C132,166 124,160 118,155 C122,165 128,172 134,178 Z"
+        android:fillColor="#E5B23A" />
+
+</vector>

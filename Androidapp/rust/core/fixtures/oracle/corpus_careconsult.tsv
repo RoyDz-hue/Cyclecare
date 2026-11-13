@@ -1,0 +1,133 @@
+e1	entry	false	hello world
+e2	entry	true	hello world
+e3	entry	false	<EMPTY>
+e4	entry	false	<SPACES>
+e5	entry	false	<NBSP>hi<NBSP>
+e6	entry	false	<A1200>
+e7	entry	false	<A1201>
+e8	entry	false	<A1198><EMOJI>
+e9	entry	false	<A1199><EMOJI>
+e10	entry	false	  padded question  
+e11	entry	false	<EMOJI>single emoji
+r1	remote	true	true	false	false	false
+r2	remote	false	true	false	false	false
+r3	remote	true	false	false	false	false
+r4	remote	true	true	true	false	false
+r5	remote	true	true	false	true	false
+r6	remote	true	true	false	false	true
+x1	ctx	true	true	false
+x2	ctx	true	true	true
+x3	ctx	true	false	false
+x4	ctx	false	true	false
+u1	current	true	true	true
+u2	current	false	true	true
+u3	current	true	false	true
+u4	current	true	true	false
+t1	token	true	true	tok
+t2	token	true	false	tok
+t3	token	false	true	tok
+t4	token	true	true	-
+f1	force	true	ctx
+f2	force	true	-
+f3	force	false	ctx
+a1	allow	true	true
+a2	allow	true	false
+a3	allow	false	true
+h1	hist	true	1	CycleCare Assistant · cohere	q1	s1	w1
+h2	hist	false	1	CycleCare Assistant	q1	s1	w1
+h3	hist	true	3	CycleCare	q0	s0	w0	CycleCare Assistant · cohere	q1	s1	w1	CycleCare Expert · x	q2	s2	w2
+h4	hist	true	4	CycleCare Assistant · a	q1	s1	w1	CycleCare Assistant · b	q2	s2	w2	CycleCare Assistant · c	q3	s3	w3	CycleCare Assistant · d	q4	s4	w4
+h5	hist	true	1	CycleCare AI · legacy	<A700>	<A700>	w
+h6	hist	true	2	LocalBrain	qL	sL	wL	CycleCare Assistant	q1	s1	w1
+h7	hist	true	0
+i1	items	cramps|fatigue|low mood
+i2	items	single
+i3	items	-
+z1	fail
+d1	dentry	false	false	user123
+d2	dentry	true	false	user123
+d3	dentry	false	true	user123
+d4	dentry	false	false	-
+d5	dentry	false	false	<EMPTY>
+d6	dentry	false	false	<SPACES>
+d7	dentry	false	false	<NBSP>
+p1	dpause	true
+p2	dpause	false
+s1	dstate	x
+w1	dcurrent	true	true
+w2	dcurrent	false	true
+w3	dcurrent	true	false
+g1	dfinal	true
+g2	dfinal	false
+m1	cigate	false	true	false	tok	
+m2	cigate	true	true	false	tok	
+m3	cigate	false	false	false	tok	
+m4	cigate	false	false	true	tok	
+m5	cigate	false	true	false	-	
+m6	cigate	false	true	false	<SPACES>	
+m7	cigate	false	true	false	tok	<A700>
+m8	cigate	false	true	false	tok	short prompt
+m9	cigate	false	true	false	tok	<EMOJI>
+q1	toff	true
+q2	toff	false
+v1	reauth	true	true	true
+v2	reauth	false	true	false
+v3	reauth	false	false	true
+v4	reauth	false	false	false
+b1	alo	true
+b2	alo	false
+k1	achk	true	false
+k2	achk	false	true
+k3	achk	false	false
+k4	achk	true	true
+w5	rprobe	true	false	true
+w6	rprobe	true	true	false
+w7	rprobe	true	true	true
+w8	rprobe	false	false	false
+e1x	telig	false	true
+e2x	telig	true	true
+e3x	telig	false	false
+p1x	tdisp	true	true	true
+p2x	tdisp	false	true	true
+p3x	tdisp	false	true	false
+p4x	tdisp	false	false	true
+r1x	rsucc	true	true
+r2x	rsucc	true	false
+r3x	rsucc	false	true
+c1x	ccoal	true
+c2x	ccoal	false
+f1x	fgate	true
+f2x	fgate	false
+t1	dpath	true	false	u	true	false	true	false
+t2	dpath	false	true	u	true	false	true	false
+t3	dpath	false	false	-	true	false	true	false
+t4	dpath	false	false	u	false	false	true	false
+t5	dpath	false	false	u	true	true	true	false
+t6	dpath	false	false	u	true	false	true	true
+t7	dpath	false	false	u	true	false	true	false
+t8	dpath	false	false	u	true	false	false	false
+dr1	draft	true	true
+dr2	draft	true	false
+dr3	draft	false	true
+ps1	pset	Success
+ps2	pset	VerificationRequired
+ps3	pset	Error
+sv1	savedmsg
+gf1	gift	Bloom Badge	-	-	-
+gf2	gift	Unknown Badge	-	-	-
+gf3	gift	-	-	You earned a Moon Pin!	Congrats
+gf4	gift	-	-	nothing here	Congrats
+gf5	gift	<SPACES>	-	body has star charm inside	Congrats
+gf6	gift	-	-	Congrats	title says BLOOM BADGE loudly
+gf7	gift	-	-	-	-
+pg1	pgate	true
+pg2	pgate	false
+rn1	rnentry	false	true
+rn2	rnentry	true	true
+rn3	rnentry	false	false
+rn4	rnout	true
+rn5	rnout	false
+gq1	giftq	false	GIFT
+gq2	giftq	true	GIFT
+gq3	giftq	false	gift
+gq4	giftq	false	OTHER

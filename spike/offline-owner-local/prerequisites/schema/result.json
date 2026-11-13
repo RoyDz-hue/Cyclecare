@@ -1,0 +1,7 @@
+{
+  "status": "PASS",
+  "assertions": 20,
+  "sqlite": "3.37.2",
+  "scope": "synthetic standard SQLite schema draft roundtrip/rollback only, NOT Room/SQLCipher/schema9 migration acceptance",
+  "ddlSHA256": "9480e16a3dd01933294b464727917d7f084c4cdc5322ed2c960e9f32ba0b0146"
+}

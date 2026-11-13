@@ -1,0 +1,705 @@
+import { parseCoinRequest, applyCoinReply, isConfirmation, selectCandidate, startsCoinCommand } from "../_shared/coin-dialog.js";
+import { asksMemberCount, mixesWriteActions, asksJoinedCount, asksJoinedList, isBareConfirmation, joinedWindowBoundary, asksTierCount, asksTopBalance } from "../_shared/command-intents.js";
+import { missingFacets, FACET_LABEL } from "../_shared/admin-plan-coverage.ts";
+import { coinDialog, executeStep, persistMessage, planHasMultipleWrites, prepareGiftAllSteps, resolveWorkflowGate, runWritesSequential } from "../_shared/admin-command-flow.ts";
+import { buildToolCatalog, matchWorkflow, validateSteps } from "../_shared/admin-tool-spec.ts";
+import { amountSourceFlags, amountSourceProblem, signMismatchProblem, effectMismatchProblem, coinWriteGuardProblem } from "../_shared/amount-hygiene.js";
+import { nextAttemptGrant, REQUEST_BUDGET } from "../_shared/ai-cost.ts";
+import { composeMissingClarify, filterActuallyMissing, sanitizeClarifyText } from "../_shared/planner-clarify.ts";
+import { runVerifier } from "../_shared/admin-verify.ts";
+import { formatCommandOutcome, formatTopBalanceReply, formatJoinedListReply } from "../_shared/command-results.js";
+// Admin Command: prompt-driven admin agent for the CycleCare Admin PWA.
+// Flow: prompt -> planner (existing provider chain) -> validated plan card
+// (DB policy gate: tools, kinds, limits) -> admin approval for WRITE/RISKY ->
+// execution through the existing audited admin RPCs with the admin's own JWT
+// (every action re-checks is_cyclecare_admin). Read-only plans run instantly.
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
+import { isConfiguredSecret, jsonResponse, supabaseSecretKey } from "../_shared/payments.ts";
+import { AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3, loadAgentPrompt, recordAiRun } from "../_shared/ai-core.ts";
+import { capConversation, extractUsage, TokenUsage } from "../_shared/ai-cost.ts";
+
+type ProviderId = "GEMINI" | "COHERE" | "OPENROUTER";
+
+const TOOL_CATALOG = "\n" + buildToolCatalog();
+
+function fnv1a(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) { hash ^= input.charCodeAt(i); hash = Math.imul(hash, 0x01000193); }
+  return hash >>> 0;
+}
+
+type ProviderOutcome = { text: string | null; errorKind: string | null; usage: TokenUsage | null };
+
+function httpErrorKind(status: number): string {
+  return status === 429 ? "http_429" : status >= 500 ? "http_5xx" : "http_4xx";
+}
+
+async function callProvider(provider: ProviderId, apiKey: string, system: string, user: string, maxTokens: number, timeoutMs: number): Promise<ProviderOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    if (provider === "GEMINI") {
+      const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, signal: controller.signal,
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { temperature: 0.2, maxOutputTokens: maxTokens } }),
+      });
+      if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: unknown }) => typeof p?.text === "string" ? p.text : "").join("")?.trim() || null;
+      return { text, errorKind: text ? null : "empty", usage: extractUsage("GEMINI", data) };
+    }
+    const endpoint = provider === "COHERE" ? "https://api.cohere.com/v2/chat" : "https://openrouter.ai/api/v1/chat/completions";
+    const model = provider === "COHERE" ? "command-a-03-2025" : "openai/gpt-4.1-mini";
+    const res = await fetch(endpoint, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, signal: controller.signal,
+      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: maxTokens,
+        ...(provider === "OPENROUTER" ? { provider: { only: ["openai"], allow_fallbacks: false, data_collection: "deny", zdr: true } } : {}) }),
+    });
+    if (!res.ok) return { text: null, errorKind: httpErrorKind(res.status), usage: null };
+    const data = await res.json();
+    const raw = provider === "COHERE" ? data?.message?.content : data?.choices?.[0]?.message?.content;
+    const joined = Array.isArray(raw) ? raw.map((c: { text?: unknown }) => typeof c?.text === "string" ? c.text : "").join("") : raw;
+    const text = typeof joined === "string" && joined.trim() ? joined.trim() : null;
+    return { text, errorKind: text ? null : "empty", usage: extractUsage(provider, data) };
+  } catch { return { text: null, errorKind: "network", usage: null }; } finally { clearTimeout(timer); }
+}
+
+type PlannerResult =
+  | { kind: "steps"; plan: any; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number }
+  | { kind: "chat" | "clarify"; text: string; provider: string; usage: TokenUsage | null; attempts: number; reservedOutput: number; missing: unknown };
+
+async function planWithProviders(admin: any, userId: string, system: string, user: string, promptVersion: string): Promise<PlannerResult | null> {
+  const keys: Record<ProviderId, string | undefined> = { GEMINI: Deno.env.get("GEMINI_API_KEY"), COHERE: Deno.env.get("COHERE_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY") };
+  const configured = (Object.keys(keys) as ProviderId[]).filter((p) => isConfiguredSecret(keys[p]));
+  if (configured.length === 0) return null;
+  const start = (fnv1a(userId) + Math.floor(Date.now() / 600_000)) % configured.length;
+  // Hard REQUEST-WIDE budget across all fallback attempts combined: each
+  // configured provider is tried at most ONCE, and the aggregate grant decays
+  // per attempt (1500/1000/500 output tokens) with a 3,000-token total reserve
+  // and a 60s wall-clock cap - one admin message can never burn more than
+  // that, no matter how providers fail. Failed attempts report no usage:
+  // their consumption is UNKNOWN (never logged as zero).
+  let attempts = 0;
+  let reservedOutput = 0;
+  const requestStart = Date.now();
+  for (const provider of configured.map((_, i) => configured[(start + i) % configured.length])) {
+    const elapsed = Date.now() - requestStart;
+    const grant = nextAttemptGrant(attempts, reservedOutput, elapsed);
+    // The in-flight attempt's own timeout is bounded by the REMAINING
+    // wall-clock budget, not just checked between attempts: a slow final
+    // attempt can never push the request past 60s.
+    const remainingMs = REQUEST_BUDGET.maxTotalMs - elapsed;
+    if (grant === null || remainingMs <= 0) {
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, promptVersion, status: "failed", errorKind: "budget_exhausted", latencyMs: Date.now() - requestStart, meta: { attempts, reservedOutput } });
+      break;
+    }
+    attempts++;
+    reservedOutput += grant;
+    const attemptStart = Date.now();
+    const { text, errorKind, usage } = await callProvider(provider, keys[provider]!, system, user, grant, Math.min(REQUEST_BUDGET.perAttemptTimeoutMs, remainingMs));
+    const logFailure = (kind: string) => void recordAiRun(admin, {
+      agent: AGENT_ADMIN_COMMAND, userId, provider, promptVersion, status: "failed",
+      errorKind: kind, latencyMs: Date.now() - attemptStart,
+      meta: { attempts, usage, grant } }); // usage null = provider did not report; consumption unknown, never zero
+    if (!text) { logFailure(errorKind ?? "empty"); continue; }
+    const cleaned = text.replace(/```[a-z]*\n?/gi, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) { logFailure("invalid_schema"); continue; }
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return { kind: "steps", plan: parsed, provider, usage, attempts, reservedOutput };
+      if (parsed && typeof parsed.chat === "string" && parsed.chat.trim()) return { kind: "chat", text: parsed.chat.trim(), provider, usage, attempts, reservedOutput, missing: null };
+      if (parsed && typeof parsed.clarify === "string" && parsed.clarify.trim()) return { kind: "clarify", text: parsed.clarify.trim(), provider, usage, attempts, reservedOutput, missing: Array.isArray(parsed.missing) ? parsed.missing : null };
+    } catch { /* fall through to schema failure */ }
+    logFailure("invalid_schema");
+  }
+  return null;
+}
+
+
+function namedRecipient(text: string): string | null {
+  const coin=parseCoinRequest(text);
+  if(coin)return coin.query;
+  // A message carrying a coin amount and a giving verb is an action intent,
+  // never a member name - even when the parser cannot resolve its scope.
+  if(/(\d+(?:\.\d+)?)[\s-]*coins?\b/i.test(text)&&/\b(?:give|gives|giving|grant|grants|granting|gift|gifts|gifting|git|credit|credits|crediting|award|awards|awarding|send|sends|sending|disburse|disburses|disbursing|disbursement|distribute|distributes|distributing|distribution|pay|pays|drop|drops|allocate|allocates|allocating|allocation|entitle|entitlement|deposit|deposits|deduct|debit|remove)\b/i.test(text))return null;
+  const match = text.match(/\b(?:give|grant|gift|award|credit|deduct(?:\s+from)?|ban|suspend)\s+(.+?)(?=\s+\d|\s+(?:some|coins|a gift|an artifact)\b|[.!?]|$)/i);
+  const name = match?.[1]?.trim();
+  // A real name is short and comma-free; longer prose after a verb is part of
+  // the instruction, never a member lookup.
+  if (!name || name.includes("@") || name.includes(",") || name.split(/\s+/).length > 4 || /^(?:the |them$|those |all |me$|myself$)/i.test(name) || name.length>100) return null;
+  return name;
+}
+async function checkNamedRecipient(userClient: any, text: string): Promise<{ query?:string; candidates:any[]; clarification?:string }> {
+  const query = namedRecipient(text);
+  if (!query) return {candidates:[]};
+  const { data, error } = await userClient.rpc("admin_find_recipients",{p_query:query});
+  if (error || !Array.isArray(data)) return {query,candidates:[],clarification:"I couldn't check the member list. No change has been made."};
+  if (!data.length) return {query,candidates:[],clarification:`I couldn't find a member matching "${query}". Please give their full name or email. No change has been made.`};
+  if (data.length>1) return {query,candidates:data,clarification:`Which member did you mean? No change has been made.\n${data.map((p:any,i:number)=>`${i+1}. ${p.display_name} (${p.email})`).join("\n")}\nPlease reply with their email.`};
+  return {query,candidates:data};
+}
+
+async function recipientContext(userClient: any, text: string): Promise<string> {
+  const emails = [...new Set(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])].slice(-5);
+  const found = [];
+  for (const email of emails) {
+    const { data, error } = await userClient.rpc("admin_resolve_recipient", {p_email:email});
+    if (!error && data?.user_id) found.push(data);
+  }
+  return JSON.stringify(found);
+}
+
+// Resolve explicit email references through trusted account records, not the model.
+async function bindRecipients(userClient: any, steps: any[], context: string, rewrite: boolean): Promise<string[]> {
+  const resolvedEmails: string[] = [];
+  const latest = context.split("\n").filter(Boolean)[0] ?? "";
+  const named = await checkNamedRecipient(userClient, latest);
+  if (named.clarification) throw new Error(named.clarification);
+  const emails = [...new Set((context.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((x) => x.toLowerCase()))];
+  for (const step of steps) {
+    if (!Array.isArray(step.args?.targets) || !step.args.targets.length || step.tool === "moderate_message") continue;
+    const ownEmails = [...new Set((String(step.label ?? "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((x) => x.toLowerCase()))];
+    if (ownEmails.some((email) => !emails.includes(email))) throw new Error("The proposed email was not supplied in this conversation. Please name the recipient again.");
+    const latestEmails = latest.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
+    const references = latestEmails.length ? latestEmails.map(x=>x.toLowerCase()) : ownEmails.length ? ownEmails : emails;
+    if (!references.length) {
+      if (named.candidates.length === 1) {
+        const person = named.candidates[0];
+        if (!rewrite && step.args.targets[0] !== person.user_id) throw new Error("The recipient could not be confirmed. Prepare a new plan.");
+        if (step.args.targets.length !== 1) throw new Error("Please select one confirmed recipient at a time.");
+        step.args.targets = [person.user_id];
+        if (rewrite) {step.label += ` (confirmed account: ${person.display_name}, ${person.email})`;resolvedEmails.push(person.email);}
+        continue;
+      }
+      const explicitIds = context.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+      if (!step.args.targets.every((id:string)=>explicitIds.includes(id))) throw new Error("Please give the recipient's full name or email so I can confirm the right account before preparing a change.");
+      continue;
+    }
+    if (references.length !== 1 || step.args.targets.length !== 1) throw new Error("Please prepare one email-addressed member action at a time.");
+    const { data, error } = await userClient.rpc("admin_resolve_recipient", { p_email: references[0] });
+    if (error || !data?.user_id) throw new Error("I couldn't confirm the account for that email. No change was made.");
+    if (rewrite) {
+      step.args.targets = [data.user_id];
+      step.label = `${step.label} (confirmed account: ${data.email})`;
+      resolvedEmails.push(data.email);
+    } else if (step.args.targets[0] !== data.user_id) throw new Error("The planned recipient does not match that email. Prepare a new plan; no change was made.");
+  }
+  return resolvedEmails;
+}
+
+function summarizePlan(plan: any): string {
+  return (plan.steps || []).map((s: any) => s?.label || s?.tool).filter(Boolean).join(" -> ");
+}
+
+
+// Conversation history for the Admin Command chat thread. Service-role writes
+// are always scoped to the verified admin's own id (RLS also enforces this for
+// user-context clients; the service client bypasses RLS, so filter explicitly).
+
+function resultSummaryText(outcome: { status: string; steps: unknown[] }): string {
+  return formatCommandOutcome(outcome);
+}
+
+// Post-execution read-back for writes: confirms the change actually landed.
+// Returns true/false when verifiable, null when there is nothing cheap to check.
+async function resolveTargetNames(admin: any, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const { data: profiles } = await admin.from("profiles").select("user_id,display_name").in("user_id", ids);
+  const names = new Map<string, string>((profiles ?? []).map((p: any) => [String(p.user_id), String(p.display_name)] as [string, string]));
+  return ids.map((id) => names.get(String(id)) ?? String(id));
+}
+
+async function enrichPlanTargetNames(admin: any, steps: any[]): Promise<void> {
+  for (const step of steps ?? []) {
+    const targets = Array.isArray(step?.args?.targets) ? step.args.targets.map(String).slice(0, 25) : [];
+    if (targets.length > 0 && !Array.isArray(step.args.target_names)) {
+      step.args.target_names = await resolveTargetNames(admin, targets);
+    }
+  }
+}
+
+async function attachMemberNames(admin: any, result: any): Promise<any> {
+  const rows = Array.isArray(result) ? result : Object.values(result ?? {}).flatMap((v: any) => Array.isArray(v) ? v : []);
+  const ids = [...new Set(rows.map((r: any) => r?.user_id).filter(Boolean))];
+  if (!ids.length) return result;
+  const { data: profiles } = await admin.from("profiles").select("user_id,display_name").in("user_id", ids);
+  const { data: personas } = await admin.from("personas").select("persona_id,display_name").in("persona_id", ids.filter((id: any) => String(id).startsWith("persona:")).map((id: any) => String(id).slice(8)));
+  const names = new Map((profiles ?? []).map((p: any) => [p.user_id, p.display_name]));
+  for (const p of personas ?? []) names.set(`persona:${p.persona_id}`, p.display_name);
+  for (const row of rows) if (row?.user_id && names.get(row.user_id)) row.display_name = names.get(row.user_id);
+  return result;
+}
+
+const KIND_CACHE: Record<string, string> = {};
+async function toolKind(admin: any, tool: string): Promise<string> {
+  if (KIND_CACHE[tool]) return KIND_CACHE[tool];
+  const { data } = await admin.from("ai_tool_registry").select("kind").eq("tool_name", tool).maybeSingle();
+  KIND_CACHE[tool] = data?.kind ?? "RISKY";
+  return KIND_CACHE[tool];
+}
+
+async function executeRun(admin: any, userClient: any, runId: string, adminId: string): Promise<{ status: string; steps: unknown[] }> {
+  const { data: run } = await admin.from("admin_command_runs").select("*").eq("id", runId).maybeSingle();
+  if (!run || run.admin_user_id !== adminId) return { status: "not_found", steps: [] };
+  if (run.status !== "approved") return { status: run.status, steps: run.step_results ?? [] };
+  if (!Number.isFinite(Date.parse(run.created_at)) || Date.now()-Date.parse(run.created_at)>30*60_000) {
+    await admin.from("admin_command_runs").update({status:"rejected",error:"This plan expired. Ask again."}).eq("id",runId).eq("status","approved");
+    return {status:"expired",steps:[]};
+  }
+  const { data: claimed, error: claimError } = await admin.from("admin_command_runs")
+    .update({ status: "executing" }).eq("id", runId).eq("status", "approved").select("id").maybeSingle();
+  if (claimError || !claimed) return { status: "already_started", steps: [] };
+  const steps: any[] = run.plan?.steps ?? [];
+  // Execute-time sign backstop: re-ground every coin-moving write against the
+  // run's ORIGINAL wording. A legacy run whose original words were never bound
+  // (plan has no original_prompt) cannot be re-checked: it fails closed and
+  // asks for a fresh review instead of trusting the derived label.
+  const originalPrompt = typeof run.plan?.original_prompt === "string" ? run.plan.original_prompt : null;
+  for (const step of steps) {
+    const guard = coinWriteGuardProblem(originalPrompt, String(step?.tool ?? ""), Number(step?.args?.delta));
+    if (guard) {
+      await admin.from("admin_command_runs").update({status:"failed", error:guard}).eq("id", runId);
+      return { status:"failed", steps:[{ok:false,label:guard}] };
+    }
+  }
+  try { await bindRecipients(userClient, steps, run.prompt, false); }
+  catch {
+    await admin.from("admin_command_runs").update({status:"failed", error:"Recipient identity could not be confirmed"}).eq("id", runId);
+    return { status:"failed", steps:[{ok:false,label:"Recipient identity check"}] };
+  }
+  const results: unknown[] = [];
+  // Independent READ steps run in parallel; WRITE/RISKY run sequentially after.
+  const reads: { index: number; step: any }[] = [];
+  const writes: { index: number; step: any }[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    const kind = await toolKind(admin, String(steps[i]?.tool ?? ""));
+    (kind === "READ" ? reads : writes).push({ index: i, step: steps[i] });
+  }
+  const includeGuides = /\binclude\s+(?:community\s+)?guides\b/i.test(run.prompt);
+  const readResults = await Promise.all(reads.map(({ step }) => executeStep(userClient, String(step.tool), step.args ?? {}, includeGuides)));
+  for (let i = 0; i < reads.length; i++) {
+    if (readResults[i].ok && ["get_user_insights", "get_safety_signals"].includes(String(reads[i].step.tool))) {
+      readResults[i].result = await attachMemberNames(admin, readResults[i].result);
+    }
+  }
+  const indexed: Record<number, unknown> = {};
+  reads.forEach(({ index, step }, i) => { indexed[index] = { tool: step.tool, label: step.label ?? step.tool, kind: "READ", ...readResults[i] }; });
+  // Writes run in declared plan order; the first failed or unconfirmed write
+  // halts the chain and later writes are skipped, never attempted.
+  const writeResults = await runWritesSequential(
+    writes,
+    (tool, args) => executeStep(userClient, tool, args),
+    (tool, args, result) => runVerifier(admin, tool, args, result),
+  );
+  for (const k of Object.keys(writeResults)) indexed[Number(k)] = writeResults[Number(k)];
+  for (let i = 0; i < steps.length; i++) results.push(indexed[i]);
+  const failed = (results as any[]).some((r) => r?.ok !== true);
+  const unconfirmed = (results as any[]).some((r) => r?.kind === "WRITE" && r?.ok === true && r?.verified !== true);
+  await admin.from("admin_command_runs").update({
+    status: failed || unconfirmed ? "failed" : "done", step_results: results,
+    error: failed ? "One or more steps failed" : unconfirmed ? "Accepted but not confirmed. Do not repeat; review the current state." : null, completed_at: new Date().toISOString() }).eq("id", runId);
+  await admin.from("admin_audit_logs").insert({
+    admin_user_id: adminId, admin_action: failed || unconfirmed ? "ADMIN_COMMAND_FAILED" : "ADMIN_COMMAND_EXECUTED",
+    target_user_id: "admin_command", details: { run_id: runId, prompt: run.prompt, steps: (results as any[]).map((r) => ({ tool: r.tool, ok: r.ok })) }, performed_by: adminId });
+  return { status: failed ? "failed" : unconfirmed ? "unconfirmed" : "done", steps: results };
+}
+
+function buildSuggestions(insights: any): { label: string; prompt: string }[] {
+  const chips: { label: string; prompt: string }[] = [];
+  const richest = insights?.richest?.[0]; const active = insights?.most_active?.[0]; const inactive = insights?.inactive?.[0]; const newest = insights?.newest?.[0];
+  if (active?.user_id) chips.push({ label: "Reward the most committed member", prompt: `Check the most active member and gift ${active.user_id} 500 coins with a thank-you notice` });
+  if (inactive?.user_id) chips.push({ label: "Win back inactive members", prompt: "Show me the most inactive members and send them a warm CycleCare team notice inviting them back" });
+  if (richest?.user_id) chips.push({ label: "Richest members", prompt: "Show me the richest users by coin balance" });
+  if (newest?.user_id) chips.push({ label: "Newest members", prompt: "Show me the newest users and their tier split" });
+  chips.push({ label: "Pricing check", prompt: "Show me the current coin packages and cosmetic prices" });
+  chips.push({ label: "Moderation queue", prompt: "Show me the flagged messages waiting for review" });
+  chips.push({ label: "Premium vs free", prompt: "Compare premium vs free members and show the tier split" });
+  return chips.slice(0, 6);
+}
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return jsonResponse({ ok: true });
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+  const secretKey = supabaseSecretKey();
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const authHeader = req.headers.get("Authorization") ?? "";
+  if (!supabaseUrl || !secretKey || !anonKey) return jsonResponse({ error: "Backend is not configured" }, 503);
+  if (!authHeader.startsWith("Bearer ")) return jsonResponse({ error: "Sign in is required" }, 401);
+
+  const userClient = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false }, global: { headers: { Authorization: authHeader } } });
+  const { data: userData } = await userClient.auth.getUser();
+  const userId = userData?.user?.id;
+  if (!userId) return jsonResponse({ error: "Sign in is required" }, 401);
+  const admin = createClient(supabaseUrl, secretKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data: adminRole } = await admin.from("cyclecare_admin_roles").select("user_id").eq("user_id", userId).maybeSingle();
+  if (!adminRole?.user_id) return jsonResponse({ error: "Administrator access required" }, 403);
+
+  const body = await req.json().catch(() => ({}));
+  const action = typeof body?.action === "string" ? body.action : "plan";
+
+  if (action === "suggest") {
+    const { data: insights } = await userClient.rpc("admin_member_insights", {});
+    return jsonResponse({ success: true, suggestions: buildSuggestions(insights ?? {}) });
+  }
+  if (action === "list") {
+    const { data, error } = await userClient.rpc("admin_command_list", { p_limit: 20 });
+    return error ? jsonResponse({ error: "History is unavailable" }, 500) : jsonResponse({ success: true, runs: data });
+  }
+  if (action === "decide") {
+    const { data, error } = await userClient.rpc("admin_command_decide", { p_run_id: String(body?.run_id ?? ""), p_approve: body?.approve === true });
+    if (error) return jsonResponse({ error: error.message }, 400);
+    await admin.from("admin_coin_dialog_state").delete().eq("admin_user_id",userId).filter("state->>run_id","eq",String(body.run_id));
+    const { data: planMessages } = await admin.from("admin_command_messages").select("id,meta")
+      .eq("admin_user_id", userId).eq("run_id", String(body.run_id)).eq("kind", "plan");
+    for (const message of planMessages ?? []) await admin.from("admin_command_messages")
+      .update({ meta: { ...message.meta, decided: true } }).eq("id", message.id).eq("admin_user_id", userId);
+    if (body?.approve === true && body?.execute === true) {
+      const outcome = await executeRun(admin, userClient, String(body.run_id), userId);
+      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), String(body.run_id), { status: outcome.status, steps: outcome.steps });
+      return jsonResponse({ success: outcome.status === "done", run_id: body.run_id, ...outcome });
+    }
+    return jsonResponse({ success: true, ...(data as object) });
+  }
+  if (action === "execute") {
+    const outcome = await executeRun(admin, userClient, String(body?.run_id ?? ""), userId);
+    return jsonResponse({ success: outcome.status === "done", run_id: body?.run_id, ...outcome });
+  }
+
+  if (action === "history") {
+    const { data, error } = await admin.from("admin_command_messages")
+      .select("id,role,kind,content,run_id,meta,created_at")
+      .eq("admin_user_id", userId).order("created_at", { ascending: false }).limit(60);
+    if (error) return jsonResponse({ error: "History is unavailable" }, 500);
+    const messages = (data ?? []).reverse();
+    // Ground every plan card in the run's actual saved status: a card whose
+    // run is no longer proposed is closed (completed/cancelled/failed), even
+    // if the message meta was never marked decided (expired runs, direct
+    // status transitions). The card must never look actionable when it is not.
+    const runIds = [...new Set(messages.filter((m: any) => m?.kind === "plan" && m?.run_id).map((m: any) => String(m.run_id)))];
+    if (runIds.length > 0) {
+      const { data: runs } = await admin.from("admin_command_runs").select("id,status,error").in("id", runIds);
+      const byId = new Map((runs ?? []).map((r: any) => [String(r.id), r]));
+      for (const m of messages as any[]) {
+        if (m?.kind !== "plan" || !m?.run_id) continue;
+        const run = byId.get(String(m.run_id));
+        if (!run) continue;
+        m.meta = { ...(m.meta ?? {}), run_status: run.status, ...(run.error ? { run_error: String(run.error).slice(0, 200) } : {}) };
+      }
+    }
+    return jsonResponse({ success: true, messages });
+  }
+
+  if (action === "message") {
+    const chatPrompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    if (chatPrompt.length > 2000) {
+      const msg = "That message is too long for me to act on safely (over 2,000 characters). Shorten it and I will handle the full request - nothing was done with it.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
+    if (!chatPrompt) return jsonResponse({ error: "A prompt is required" }, 400);
+    // Fair-use limit: 30 messages per rolling 10 minutes per admin.
+    const since = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { count } = await admin.from("admin_command_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("admin_user_id", userId).eq("role", "user").gte("created_at", since);
+    if ((count ?? 0) >= 30) return jsonResponse({ error: "Too many messages in a short time. Give it a few minutes and try again." }, 429);
+    await persistMessage(admin, userId, "user", "chat", chatPrompt);
+    try {
+      if (mixesWriteActions(chatPrompt)) {
+        const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "clarify", message: msg });
+      }
+      const dialog=await coinDialog(admin,userClient,userId,chatPrompt);
+      if(dialog)return jsonResponse(dialog);
+      if (isBareConfirmation(chatPrompt)) {
+        // A typed "yes" is never a new plan. If a card is waiting, point at it;
+        // otherwise there is nothing to confirm. No writes either way.
+        const { data: waiting } = await admin.from("admin_command_runs")
+          .select("id").eq("admin_user_id", userId).eq("status", "proposed")
+          .order("created_at", { ascending: false }).limit(1);
+        const msg = (waiting ?? []).length
+          ? "There's a plan waiting for your decision just above. Tap Confirm to make the change, or Cancel to discard it. Nothing has changed yet."
+          : "There's nothing waiting for confirmation right now. Tell me what you'd like to do and I'll prepare it for your review.";
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "chat", message: msg });
+      }
+    } catch {return jsonResponse({error:"I couldn't save the pending request. No change was made."},503);}
+    if (asksMemberCount(chatPrompt)) {
+      const { data: mc, error: mcErr } = await userClient.rpc("admin_member_count", {});
+      const msg = mcErr || typeof (mc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `You have ${(mc as any).total} members.`;
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    const joinedWindow = asksJoinedCount(chatPrompt);
+    if (joinedWindow) {
+      const { since, span } = joinedWindowBoundary(joinedWindow);
+      const { data: jc, error: jcErr } = await userClient.rpc("admin_member_count", { p_since: since });
+      const msg = jcErr || typeof (jc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `${(jc as any).total} members joined ${span}.`;
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    const joinedListWindow = asksJoinedList(chatPrompt);
+    if (joinedListWindow) {
+      const { since, span } = joinedWindowBoundary(joinedListWindow);
+      const { data: jl, error: jlErr } = await userClient.rpc("admin_members_joined", { p_since: since, p_limit: 50 });
+      const msg = jlErr ? "I couldn't fetch the new member list just now. No change was made." : formatJoinedListReply(jl, span);
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    const tierAsk = asksTierCount(chatPrompt);
+    if (tierAsk) {
+      const { data: tc, error: tcErr } = await userClient.rpc("admin_member_count", { p_tier: tierAsk });
+      const unknown = typeof (tc as any)?.unknown === "number" ? (tc as any).unknown : 0;
+      const msg = tcErr || typeof (tc as any)?.total !== "number" ? "I couldn't count the members just now. No change was made." : `You have ${(tc as any).total} ${tierAsk} members.${unknown > 0 ? ` ${unknown} members have unclear wallet records and are not counted in any tier.` : ""}`;
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    if (asksTopBalance(chatPrompt)) {
+      const { data: ins, error: insErr } = await userClient.rpc("admin_member_insights_scoped", { p_include_guides: false });
+      const rows = Array.isArray((ins as any)?.richest) ? (ins as any).richest : [];
+      const msg = insErr ? "I couldn't check the balances just now." : formatTopBalanceReply(rows);
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    const nameCheck = await checkNamedRecipient(userClient, chatPrompt);
+    if (nameCheck.clarification) {
+      await persistMessage(admin,userId,"assistant","chat",nameCheck.clarification);
+      return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
+    }
+    const { data: recent } = await admin.from("admin_command_messages")
+      .select("role,content").eq("admin_user_id", userId)
+      .order("created_at", { ascending: false }).limit(24);
+    const convo = capConversation((recent ?? []).reverse()
+      .map((m: any) => `${m.role === "user" ? "Admin" : "Assistant"}: ${String(m.content ?? "").slice(0, 800)}`), 4000).join("\n");
+    const recipientText = (recent ?? []).filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n") + "\n" + chatPrompt;
+    const recipients = await recipientContext(userClient, recipientText);
+    const nameCandidates = JSON.stringify(nameCheck.candidates);
+    const { data: insights } = await userClient.rpc("admin_member_insights", {});
+    const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3);
+    const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${nameCandidates}\n</live-data>\n\n<conversation>\n${convo}\n</conversation>\n\nAdministrator's latest message: ${chatPrompt}\n\nReply with the JSON now.`;
+    const started = Date.now();
+    const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
+    if (!planned) {
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, promptVersion: planner.version, status: "failed", errorKind: "planner_unavailable", latencyMs: Date.now() - started });
+      const sorry = "I'm having trouble putting that together right now. Give me a moment and try again.";
+      await persistMessage(admin, userId, "assistant", "chat", sorry);
+      return jsonResponse({ success: false, type: "chat", message: sorry }, 503);
+    }
+    if (planned.kind === "chat" || planned.kind === "clarify") {
+      const shown = planned.kind === "clarify" ? (composeMissingClarify(filterActuallyMissing(planned.missing, chatPrompt, chatPrompt.includes("@") || nameCheck.candidates.length > 0)) ?? sanitizeClarifyText(planned.text).text) : planned.text;
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
+      await persistMessage(admin, userId, "assistant", "chat", shown);
+      return jsonResponse({ success: true, type: planned.kind, message: shown });
+    }
+    // Action/analysis plan: run it through the same policy-gated propose flow.
+    let steps: any[];
+    try {
+      steps = await prepareGiftAllSteps(admin, (planned.plan.steps as any[]).slice(0, 15).map((st: any) => ({
+        tool: String(st?.tool ?? ""), label: String(st?.label ?? st?.tool ?? "").slice(0, 140), args: (st?.args && typeof st.args === "object") ? st.args : {} })));
+    } catch (e) {
+      const msg = e instanceof Error && e.message === "bad_delta"
+        ? "Choose a gift between 1 and 10,000 coins for each member, with up to 3 decimal places. No change has been made."
+        : "I couldn't prepare the member list safely. No change was made.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "chat", message: msg });
+    }
+    // Under-planning guard: never answer half a compound question as if it
+    // were the whole. Coverage comes from tool+args only, never step labels.
+    const dropped = missingFacets(chatPrompt, steps);
+    if (dropped.length > 0) {
+      const msg = `That asks for more than I prepared safely: I can show ${dropped.map((f) => FACET_LABEL[f]).join(" and ")}, but the plan I built would have skipped it. Ask me for it on its own and I'll get it right. No change was made.`;
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "underplanned_coverage", missing: dropped } });
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
+    // One change at a time: a plan bundling more than one WRITE/RISKY step is clarified,
+    // never proposed, so a single approval can never silently execute several changes.
+    // The ONLY exception is an exact match to a registered bounded workflow
+    // (fixed tool sequence, constraints satisfied) - never an ad-hoc bundle.
+    // Workflow gate: an exact registered-workflow match is still only
+    // proposed when every write in it was explicitly requested in the admin's
+    // own words. An unrequested write invented by the planner is DROPPED (the
+    // plan then matches exactly what was asked); only genuine ambiguity asks.
+    const gate = resolveWorkflowGate(chatPrompt, steps, matchWorkflow);
+    if (gate.kind === "clarify") {
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "workflow_intent" } });
+      await persistMessage(admin, userId, "assistant", "chat", gate.message);
+      return jsonResponse({ success: true, type: "clarify", message: gate.message });
+    }
+    if (gate.kind === "drop") {
+      steps = gate.steps;
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { reason: "dropped_unrequested_write", steps: steps.length } });
+    }
+    const matchedWorkflow = gate.kind === "allow" ? gate.workflow : null;
+    if (!matchedWorkflow && await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
+      const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
+    let resolvedEmails: string[] = [];
+    try { resolvedEmails = await bindRecipients(userClient, steps, chatPrompt + "\n" + recipientText, true); }
+    catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
+    await enrichPlanTargetNames(admin, steps);
+    const argProblems = validateSteps(steps);
+    if (argProblems.length > 0) {
+      const msg = "I cannot prepare that safely: " + argProblems.map((p) => p.problem).join("; ") + ". No change was made.";
+      await persistMessage(admin, userId, "assistant", "chat", msg);
+      return jsonResponse({ success: true, type: "clarify", message: msg });
+    }
+    // Amount-source hygiene: the planner picked a number, but the admin's own
+    // words decide whether that number is really a coin amount. A date,
+    // ordinal, fiat figure or identifier is never an amount; clarify instead
+    // of proposing. Same rule family as the deterministic parser.
+    for (const step of steps) {
+      const amountArgs = [step?.args?.amount, step?.args?.delta].filter((v) => typeof v === "number");
+      for (const value of amountArgs) {
+        const problem = amountSourceProblem(amountSourceFlags(chatPrompt, value as number));
+        if (problem) {
+          const msg = `I am not sure the number ${value} is the coin amount you meant: ${problem}. Please restate the exact coin amount - nothing was changed.`;
+          await persistMessage(admin, userId, "assistant", "chat", msg);
+          return jsonResponse({ success: true, type: "clarify", message: msg });
+        }
+        const signProblem = effectMismatchProblem(chatPrompt, String(step?.tool ?? "")) || signMismatchProblem(chatPrompt, String(step?.tool ?? ""), value as number);
+        if (signProblem) {
+          const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
+          await persistMessage(admin, userId, "assistant", "chat", msg);
+          return jsonResponse({ success: true, type: "clarify", message: msg });
+        }
+      }
+    }
+    const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: chatPrompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps, original_prompt: chatPrompt } });
+    if (proposeError) {
+      void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
+      await persistMessage(admin, userId, "assistant", "chat", `I couldn't prepare that safely: ${proposeError.message}`);
+      return jsonResponse({ error: proposeError.message, plan_rejected: true }, 422);
+    }
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length, usage: planned.usage, attempts: planned.attempts } });
+    const runId = (proposed as any)?.run_id;
+    const summary = summarizePlan({ steps });
+    // Honest audience review, RENDERED on the card: the gift uses the
+    // approved member snapshot; the notice resolves everyone LIVE at send
+    // time. Never claim they are the same people.
+    let planNote: string | null = null;
+    if (matchedWorkflow === "gift_all_with_notice") {
+      const gift = steps.find((st: any) => st?.tool === "gift_all_coins");
+      const n = Array.isArray(gift?.args?.recipients) ? gift.args.recipients.length : null;
+      planNote = `The gift goes to the ${n ?? "current"} members on record right now; the announcement reaches everyone at send time, which can include members who join in between.`;
+    }
+    const needsApproval = (proposed as any)?.requires_approval !== false;
+    await persistMessage(admin, userId, "assistant", "plan", summary, runId, { steps, requires_approval: needsApproval, ...(planNote ? { note: planNote } : {}) });
+    if (!needsApproval) {
+      const outcome = await executeRun(admin, userClient, runId, userId);
+      await persistMessage(admin, userId, "assistant", "result", resultSummaryText(outcome), runId, { status: outcome.status, steps: outcome.steps });
+      return jsonResponse({ success: outcome.status === "done", type: "plan", run_id: runId, requires_approval: false, summary, ...outcome });
+    }
+    return jsonResponse({ success: true, type: "plan", run_id: runId, requires_approval: true, summary, plan: { steps }, ...(planNote ? { note: planNote } : {}) });
+  }
+
+  // action === "plan"
+  const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+  if (prompt.length > 2000) {
+    return jsonResponse({ success: true, type: "clarify", message: "That message is too long for me to act on safely (over 2,000 characters). Shorten it and I will handle the full request - nothing was done with it." });
+  }
+  if (!prompt) return jsonResponse({ error: "A prompt is required" }, 400);
+  const nameCheck = await checkNamedRecipient(userClient,prompt);
+  if (nameCheck.clarification) return jsonResponse({success:true,type:"clarify",message:nameCheck.clarification});
+  const recipients = await recipientContext(userClient, prompt);
+  const { data: insights } = await userClient.rpc("admin_member_insights", {});
+  const planner = await loadAgentPrompt(admin, AGENT_ADMIN_COMMAND, ADMIN_PLANNER_PROMPT_V3);
+  const userMsg = `${TOOL_CATALOG}\n\n<live-data>\n${JSON.stringify(insights ?? {}).slice(0, 6000)}\nVerified email recipients: ${recipients}\nVerified name candidates: ${JSON.stringify(nameCheck.candidates)}\n</live-data>\n\n<conversation>\n(no prior messages)\n</conversation>\n\nAdministrator's latest message: ${prompt}\n\nReply with the JSON now.`;
+  const started = Date.now();
+  const planned = await planWithProviders(admin, userId, planner.prompt, userMsg, planner.version);
+  if (!planned) {
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, promptVersion: planner.version, status: "failed", errorKind: "planner_unavailable", latencyMs: Date.now() - started });
+    return jsonResponse({ error: "The planner is temporarily unavailable. Try again in a moment." }, 503);
+  }
+  if (planned.kind !== "steps") {
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: planned.kind, latencyMs: Date.now() - started, meta: { usage: planned.usage, attempts: planned.attempts } });
+    await persistMessage(admin, userId, "user", "chat", prompt);
+    const shown = planned.kind === "clarify" ? (composeMissingClarify(filterActuallyMissing(planned.missing, prompt, prompt.includes("@") || nameCheck.candidates.length > 0)) ?? sanitizeClarifyText(planned.text).text) : planned.text;
+    await persistMessage(admin, userId, "assistant", "chat", shown);
+    return jsonResponse({ success: true, type: planned.kind, message: shown });
+  }
+  let steps: any[];
+  try {
+    steps = await prepareGiftAllSteps(admin, (planned.plan.steps as any[]).slice(0, 15).map((s: any) => ({
+      tool: String(s?.tool ?? ""), label: String(s?.label ?? s?.tool ?? "").slice(0, 140), args: (s?.args && typeof s.args === "object") ? s.args : {} })));
+  } catch (e) {
+    const msg = e instanceof Error && e.message === "bad_delta"
+      ? "Choose a gift between 1 and 10,000 coins for each member, with up to 3 decimal places. No change has been made."
+      : "I couldn't prepare the member list safely. No change was made.";
+    await persistMessage(admin, userId, "assistant", "chat", msg);
+    return jsonResponse({ success: true, type: "chat", message: msg });
+  }
+  // Same gates as the chat path: workflow intent, one-change-at-a-time,
+  // argument validation and amount-source hygiene. The two entry paths must
+  // never diverge on safety rules.
+  const gate = resolveWorkflowGate(prompt, steps, matchWorkflow);
+  if (gate.kind === "clarify") {
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "workflow_intent" } });
+    await persistMessage(admin, userId, "assistant", "chat", gate.message);
+    return jsonResponse({ success: true, type: "clarify", message: gate.message });
+  }
+  if (gate.kind === "drop") {
+    steps = gate.steps;
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { reason: "dropped_unrequested_write", steps: steps.length } });
+  }
+  const matchedWorkflow = gate.kind === "allow" ? gate.workflow : null;
+  if (!matchedWorkflow && await planHasMultipleWrites(steps, (tool) => toolKind(admin, tool))) {
+    const msg = "That asks for more than one change. Send them one at a time so each change gets its own approval; nothing has been done yet.";
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "clarify", latencyMs: Date.now() - started, meta: { reason: "multi_write_plan", steps: steps.length } });
+    await persistMessage(admin, userId, "assistant", "chat", msg);
+    return jsonResponse({ success: true, type: "clarify", message: msg });
+  }
+  for (const step of steps) {
+    const amountArgs = [step?.args?.amount, step?.args?.delta].filter((v) => typeof v === "number");
+    for (const value of amountArgs) {
+      const problem = amountSourceProblem(amountSourceFlags(prompt, value as number));
+      if (problem) {
+        const msg = `I am not sure the number ${value} is the coin amount you meant: ${problem}. Please restate the exact coin amount - nothing was changed.`;
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "clarify", message: msg });
+      }
+      const signProblem = effectMismatchProblem(String(prompt), String(step?.tool ?? "")) || signMismatchProblem(String(prompt), String(step?.tool ?? ""), value as number);
+      if (signProblem) {
+        const msg = `I can't prepare that safely: ${signProblem}. Please restate the exact amount - nothing was changed.`;
+        await persistMessage(admin, userId, "assistant", "chat", msg);
+        return jsonResponse({ success: true, type: "clarify", message: msg });
+      }
+    }
+  }
+  let resolvedEmails: string[] = [];
+  try { resolvedEmails = await bindRecipients(userClient, steps, prompt, true); }
+  catch (error) { return jsonResponse({error: error instanceof Error ? error.message : "Recipient could not be confirmed"}, 422); }
+  await enrichPlanTargetNames(admin, steps);
+  const argProblems = validateSteps(steps);
+  if (argProblems.length > 0) {
+    const msg = "I cannot prepare that safely: " + argProblems.map((p) => p.problem).join("; ") + ". No change was made.";
+    await persistMessage(admin, userId, "assistant", "chat", msg);
+    return jsonResponse({ success: true, type: "clarify", message: msg });
+  }
+  let planNote: string | null = null;
+  if (matchedWorkflow === "gift_all_with_notice") {
+    const gift = steps.find((st: any) => st?.tool === "gift_all_coins");
+    const n = Array.isArray(gift?.args?.recipients) ? gift.args.recipients.length : null;
+    planNote = `The gift goes to the ${n ?? "current"} members on record right now; the announcement reaches everyone at send time, which can include members who join in between.`;
+  }
+  const { data: proposed, error: proposeError } = await userClient.rpc("admin_command_propose", { p_prompt: prompt + (resolvedEmails.length ? "\nConfirmed recipients: " + resolvedEmails.join(", ") : ""), p_plan: { steps, original_prompt: prompt } });
+  if (proposeError) {
+    void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "rejected", errorKind: "policy_gate", latencyMs: Date.now() - started, meta: { reason: proposeError.message } });
+    return jsonResponse({ error: proposeError.message, plan_rejected: true }, 422);
+  }
+  void recordAiRun(admin, { agent: AGENT_ADMIN_COMMAND, userId, provider: planned.provider, promptVersion: planner.version, status: "planned", latencyMs: Date.now() - started, meta: { steps: steps.length, usage: planned.usage, attempts: planned.attempts } });
+  const runId = (proposed as any)?.run_id;
+  if ((proposed as any)?.requires_approval === false) {
+    const outcome = await executeRun(admin, userClient, runId, userId);
+    return jsonResponse({ success: outcome.status === "done", run_id: runId, requires_approval: false, summary: summarizePlan({ steps }), ...outcome });
+  }
+  return jsonResponse({ success: true, run_id: runId, requires_approval: true, summary: summarizePlan({ steps }), plan: { steps }, ...(planNote ? { note: planNote } : {}) });
+});

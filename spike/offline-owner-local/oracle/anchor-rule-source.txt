@@ -1,0 +1,10 @@
+            if (log.flowLevel in listOf("LIGHT", "MODERATE", "HEAVY", "UNUSUALLY_HEAVY")) {
+                val logDate = LocalDate.parse(log.dateString)
+                val currentStart = try { LocalDate.parse(_uiState.value.settings.lastPeriodStartDate) } catch (e: Exception) { null }
+                if (currentStart == null || logDate.isAfter(currentStart.plusDays(15))) {
+                    val updatedSettings = _uiState.value.settings.copy(
+                        lastPeriodStartDate = log.dateString
+                    )
+                    repository.saveSettings(updatedSettings)
+                }
+            }

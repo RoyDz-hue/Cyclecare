@@ -1,0 +1,12 @@
+{
+  "baselinePreserved": true,
+  "added": {
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStore.kt": "9dea6264b0946df796cdedc9980d5ff894e8878fa3c48a2cc82c03030dc34e8a",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabEncryptedStoreFactory.kt": "cdcc1fac26e1f27f71485b9b031ed1ecf37e8bca46e44fbade03b2530681171c",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabReceiptDatabase.kt": "73c1b06ce3899d1f4458666048e1b5e02ea2bd96ef94dd5d43259b8bd5c555aa",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/SyntheticFixtureConfig.kt": "1ef879820d9484020a6d6d1b8e4406a22c16283a9aaff1ae19e1a4473b571383",
+    "Androidapp/app/src/lab/java/com/cyclecare/app/lab/store/LabCorpusMapper.kt": "945db63eb3c0183992c4e013a27274ba34fdba619fcdae5939324ab27de6d82c"
+  },
+  "productionChanges": [],
+  "manifestChanges": []
+}

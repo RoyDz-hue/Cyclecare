@@ -1,0 +1,73 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Glowing Pearl & Gold Outer Border -->
+    <path
+        android:pathData="M24,52 L176,52 A16,16 0 0,1 192,68 L192,132 A16,16 0 0,1 176,148 L24,148 A16,16 0 0,1 8,132 L8,68 A16,16 0 0,1 24,52 Z"
+        android:strokeWidth="5"
+        android:strokeColor="#80E0A728" />
+
+    <!-- Card Pearl Glass Surface -->
+    <path
+        android:pathData="M26,54 L174,54 A14,14 0 0,1 188,68 L188,132 A14,14 0 0,1 174,146 L26,146 A14,14 0 0,1 12,132 L12,68 A14,14 0 0,1 26,54 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="20"
+                android:startY="50"
+                android:endX="180"
+                android:endY="150">
+                <item android:offset="0.0" android:color="#FFFBF2" />
+                <item android:offset="0.3" android:color="#FFF2D6" />
+                <item android:offset="0.7" android:color="#F2DFB8" />
+                <item android:offset="1.0" android:color="#FFE8B0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Metallic Gold Chip -->
+    <path
+        android:pathData="M32,74 L60,74 A6,6 0 0,1 66,80 L66,98 A6,6 0 0,1 60,104 L32,104 A6,6 0 0,1 26,98 L26,80 A6,6 0 0,1 32,74 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="26"
+                android:startY="74"
+                android:endX="66"
+                android:endY="104">
+                <item android:offset="0.0" android:color="#FFD4AF37" />
+                <item android:offset="0.5" android:color="#FFF9A825" />
+                <item android:offset="1.0" android:color="#FF9E6B0C" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Chip Contact Lines -->
+    <path
+        android:pathData="M46,74 L46,104 M26,89 L66,89"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FF805B10" />
+
+    <!-- Contactless Wave Icon -->
+    <path
+        android:pathData="M160,118 A8,8 0 0,1 160,132 M166,114 A14,14 0 0,1 166,136 M172,110 A20,20 0 0,1 172,140"
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFB8860B"
+        android:strokeLineCap="round" />
+
+    <!-- Card Brand Text: ARTIFACT -->
+    <path
+        android:pathData="M110,72 L168,72"
+        android:strokeWidth="3"
+        android:strokeColor="#FFB8860B" />
+
+    <!-- Embossed Card Number Pattern -->
+    <path
+        android:pathData="M32,124 L140,124"
+        android:strokeWidth="4"
+        android:strokeColor="#CC9E6B0C" />
+</vector>

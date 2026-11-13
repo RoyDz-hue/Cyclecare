@@ -1,0 +1,233 @@
+// Amount-source hygiene, single shared implementation. Used by the
+// deterministic parser (coin-dialog.js, plain node) and the planner proposal
+// gate (admin-command/index.ts, Deno edge). A number written as a date, an
+// ordinal, a fiat amount or part of an identifier is never a coin amount.
+// Kept as plain ESM JavaScript so the node .mjs test suites import the exact
+// same module the edge bundles.
+
+// Blank date shapes so a date's digits are never scanned as amounts.
+export function maskDateShapes(text) {
+  return String(text).replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g,' ').replace(/\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b/g,' ');
+}
+
+// Why is the numeric token at `index` in `text` not a coin amount? Null when
+// nothing disqualifies it at that position.
+export function tokenDisqualifier(text, index, token) {
+  const after = text.slice(index + token.length);
+  const before = text.slice(0, index);
+  if (/^(?:st|nd|rd|th)\b/i.test(after.trimStart())) return 'ordinal';
+  if (/^\s*(?:KES|USD|Ksh|shillings?)\b/i.test(after)) return 'fiat';
+  if (/[A-Za-z]-?$/.test(before)) return 'identifier';
+  if (!token.includes('.') && token.replace('-','').length >= 4) return 'long_number';
+  return null;
+}
+
+// All numeric tokens in the text that survive the hygiene guards. Zero or
+// several survivors is ambiguous: clarify rather than guess.
+export function amountCandidates(text) {
+  const masked = maskDateShapes(text);
+  const cands = [];
+  for (const n of masked.matchAll(/-?\d+(?:\.\d+)?/g)) {
+    if (tokenDisqualifier(masked, n.index, n[0])) continue;
+    cands.push(n[0]);
+  }
+  return cands;
+}
+
+// Planner-gate view: the planner already picked `amount`; re-check that exact
+// number against the admin's own words. Any CLEAN written occurrence clears
+// the number entirely ("on 2026-10-31 give 31 coins": the second 31 is a real
+// amount). A year-like value explicitly glued to the word "coins" is the
+// admin's choice, not a misread.
+export function amountSourceFlags(text, amount) {
+  if (!Number.isFinite(amount)) return [];
+  const raw = String(amount);
+  const masked = maskDateShapes(text);
+  const re = new RegExp(`(^|[^\\d.])${raw.replace('.', '\\.')}([^\\d.]|$)`, 'g');
+  const flags = new Set();
+  let sawWritten = false, sawClean = false, sawCoinsGlued = false;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const index = m.index + m[1].length;
+    sawWritten = true;
+    const after = text.slice(index + raw.length);
+    if (/^\s*coins?\b/i.test(after)) { sawClean = true; sawCoinsGlued = true; continue; }
+    if (masked.slice(index, index + raw.length) !== raw) { flags.add('date'); continue; }
+    const d = tokenDisqualifier(text, index, raw);
+    if (d === 'ordinal' || d === 'fiat' || d === 'identifier') flags.add(d);
+    else if (d === null) sawClean = true;
+    // 'long_number' is neutral here: not proof of a misread, not a clean hit.
+  }
+  if (sawClean) return [];
+  if (flags.size > 0) return [...flags];
+  if (!sawWritten) return [];
+  if (!raw.includes('.') && amount >= 1900 && amount <= 2100 && !sawCoinsGlued) return ['year_like'];
+  return [];
+}
+
+export function amountSourceProblem(flags) {
+  if (flags.includes('date') || flags.includes('year_like')) return 'that number reads as a date, not a coin amount';
+  if (flags.includes('ordinal')) return 'that number reads as an ordinal (1st, 2nd, 3rd...), not a coin amount';
+  if (flags.includes('fiat')) return 'that number reads as a money amount (KES/USD), not coins';
+  if (flags.includes('identifier')) return 'that number reads as part of an identifier, not a coin amount';
+  return null;
+}
+
+// ---- Signed-amount semantics -------------------------------------------
+// Sign is meaning: "negative three" is a deduction, "+3" is a gift. A plan
+// whose signed coin effect contradicts the admin's own words is unsafe at
+// ANY confidence; these guards bind the plan's sign to the original text.
+
+const WORD_FOR_NUM = { 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine', 10: 'ten' };
+const NEG_MARKER = /(?:negative|minus|neg)\s*$/i;
+
+// Every written form of |amount| (digits and single-word numbers) and whether
+// a negative marker directly precedes it.
+export function expressedNegative(text, amount) {
+  if (!Number.isFinite(amount)) return false;
+  const abs = Math.abs(amount);
+  const forms = [String(abs)];
+  if (Number.isInteger(abs) && WORD_FOR_NUM[abs]) forms.push(WORD_FOR_NUM[abs]);
+  const t = String(text);
+  for (const form of forms) {
+    const rx = new RegExp(`(^|[^\\d.])${form.replace('.', '\\.')}(?![\\d.])`, 'gi');
+    let m;
+    while ((m = rx.exec(t)) !== null) {
+      const idx = m.index + m[1].length;
+      const before = t.slice(0, idx);
+      if (NEG_MARKER.test(before)) return true;
+      if (form === String(abs) && /\-\s*$/.test(before)) return true; // typed "-3"
+    }
+  }
+  return false;
+}
+
+// Direction cues beyond an explicit "negative": words that say the balance
+// goes DOWN (diminishing, reduced, deduct, charge, ...) or UP (allocate,
+// gift, credit, bonus, ...). Direction is semantics: when the cues conflict,
+// or when the plan's direction contradicts the only cue present, the request
+// is ambiguous and must clarify - never guess a direction at any confidence.
+export const DECREASE_CUES = /\b(?:negative|minus|diminish(?:es|ed|ing)?|reduc(?:es|ed|ing|tion|tions)|decreas(?:es|ed|ing)|lower(?:s|ed|ing)?|less|shrink(?:s|ing)?|deduct(?:s|ed|ing|ion)?|debit(?:s|ed|ing)?|subtract(?:s|ed|ing|ion)?|penalt(?:y|ies)|charge[sd]?|dock(?:s|ed|ing)?|claw\s*back|tak(?:e|en|ing)|took|remov(?:e|es|ed|ing|al)|cut(?:s|ting)?|slash(?:es|ed|ing)?)\b/i;
+export const INCREASE_CUES = /\b(?:giv(?:e|es|ing)|gift(?:s|ed|ing)?|git|grant(?:s|ed|ing)?|credit(?:s|ed|ing)?|award(?:s|ed|ing)?|send(?:s|ing)?|allocat(?:e|es|ed|ing|ion)|disburs(?:e|es|ed|ing|ement)|distribut(?:e|es|ed|ing|ion)|deposit(?:s|ed|ing)?|add(?:s|ed|ing)?|top\s*up|donat(?:e|es|ed|ing|ion)|bonus(?:es)?|reward(?:s|ed|ing)?|increas(?:e|es|ed|ing)|boost(?:s|ed|ing)?|rais(?:e|es|ed|ing)|pay(?:s|ing)?|drop(?:s|ped|ping)?|entitle(?:s|d|ment)?|bless(?:es|ed|ing)?|shower(?:s|ed|ing)?|receiv(?:e|es|ed|ing)|get(?:s|ting)?)\b/i;
+
+// A negative coin plan is also grounded by a deduction verb ("take", "deduct",
+// "remove", ...) - the word "negative" is not the only way to take coins away.
+export function expressedDeduction(text) {
+  return DECREASE_CUES.test(String(text));
+}
+
+// Direction is carried by the AMOUNT PHRASE, not by a bag-of-words vote: in
+// "allocated to all users a diminishing balance of 2 coins each", "allocated"
+// only attaches the amount to the audience while "diminishing" directs the
+// amount itself - the request is a deduction. For each written occurrence of
+// the amount, the cue CLOSEST in front of it wins; an explicit sign
+// ("negative three", "-3") outranks every cue. Returns a Set of 'dec'/'inc';
+// both present means the amount is genuinely contradictory -> clarify.
+const CUE_WINDOW = 48;
+function nearestCue(before) {
+  const win = before.slice(-CUE_WINDOW);
+  const lastEnd = (re) => {
+    const g = new RegExp(re.source, 'gi');
+    let m, last = -1;
+    while ((m = g.exec(win)) !== null) last = g.lastIndex;
+    return last;
+  };
+  return { dec: lastEnd(DECREASE_CUES), inc: lastEnd(INCREASE_CUES) };
+}
+export function attachedPolarities(text, amount) {
+  const out = new Set();
+  if (!Number.isFinite(amount)) return out;
+  const abs = Math.abs(amount);
+  const forms = [String(abs)];
+  if (Number.isInteger(abs) && WORD_FOR_NUM[abs]) forms.push(WORD_FOR_NUM[abs]);
+  const t = String(text);
+  for (const form of forms) {
+    const rx = new RegExp(`(^|[^\\d.])${form.replace('.', '\\.')}(?![\\d.])`, 'gi');
+    let m;
+    while ((m = rx.exec(t)) !== null) {
+      const idx = m.index + m[1].length;
+      const before = t.slice(0, idx);
+      if (/(?:negative|minus)\s*$/i.test(before)) { out.add('dec'); continue; }
+      if (form === String(abs) && /\-\s*$/.test(before)) { out.add('dec'); continue; }
+      const { dec, inc } = nearestCue(before);
+      if (dec < 0 && inc < 0) continue;
+      out.add(dec > inc ? 'dec' : 'inc');
+    }
+  }
+  return out;
+}
+
+// Semantic direction gate for every coin-moving write: gift_all_coins must be
+// positive, adjust_coins carries its own sign, deduct_all_coins takes a
+// positive magnitude. An explicitly signed amount ("negative three", "-3") is
+// the strongest ground and disambiguates everything else. Without one, cue
+// CONFLICT ("allocated ... diminishing") or cue/plan CONTRADICTION fails
+// closed at proposal and at execution - direction is never guessed.
+export function signMismatchProblem(text, tool, amount) {
+  if (tool !== 'gift_all_coins' && tool !== 'adjust_coins' && tool !== 'deduct_all_coins') return null;
+  if (!Number.isFinite(amount) || amount === 0) return null;
+  const negativePlan = tool === 'deduct_all_coins' || amount < 0;
+  // Amount-attached direction first: the cue bound to the amount phrase
+  // itself decides; an audience-attachment verb elsewhere does not vote.
+  const pol = attachedPolarities(text, amount);
+  if (pol.has('dec') && pol.has('inc')) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';
+  if (pol.has('dec')) {
+    if (negativePlan) return null;
+    return /(?:negative|minus)\s*(?:[\d]+|one|two|three|four|five|six|seven|eight|nine|ten)/i.test(String(text))
+      ? 'you wrote a negative amount - that would take coins away, but this plan adds them'
+      : 'your message says the balance is reduced, but this plan adds coins';
+  }
+  if (pol.has('inc')) return negativePlan ? 'your message adds or allocates coins, but this plan takes them away' : null;
+  // No amount-attached cue: message-level cues decide, conflict clarifies.
+  const dec = DECREASE_CUES.test(String(text));
+  const inc = INCREASE_CUES.test(String(text));
+  if (dec && inc) return 'your message mixes adding and reducing wording - say exactly whether to add or deduct';
+  if (dec && !negativePlan) return 'your message says the balance is reduced, but this plan adds coins';
+  if (inc && negativePlan) return 'your message adds or allocates coins, but this plan takes them away';
+  // A positive plan is never the DEFAULT: with no written increase ground at
+  // all (no sign, no amount-attached cue, no give/allocate wording), direction
+  // is ungrounded - clarify instead of gifting by assumption. Negative plans
+  // reach here only when no cues exist; they came from a deduction reading.
+  if (!inc && !dec) return 'I cannot tell whether to add or deduct coins - say exactly which';
+  return null;
+}
+
+// Effect-level intent. "Deduct all balances to zero" asks for a TARGET
+// BALANCE, not a delta; "freeze/lock balances" asks for a LOCK, not a coin
+// movement. Neither capability exists: coin writes only apply per-member
+// deltas. Detect the effect from the original wording (with common typos) so
+// the answer is a capability statement, never an amount re-ask or a guessed
+// fixed-delta mapping.
+const MONEY_WORD = /balanc|balnce|balans|coins?|wallet|fund/i;
+const TARGET_BALANCE_RE = /(?:\bto\s+(?:zero|0)(?:\s+coins?)?\b|\bzero\s*out\b|\b(?:all|whole|entire|full)\s+(?:of\s+)?(?:their\s+)?(?:balanc|balnce|balans)|\ball\s+their\s+coins\b|\beverything\s+in\s+(?:their\s+)?(?:wallet|balanc|balnce))/i;
+const FREEZE_RE = /\b(?:freez(?:e|es|ed|ing)|lock(?:s|ed|ing)?)\b(?!\s+in\b)/i;
+export function coinEffectProblem(text) {
+  const t = String(text);
+  if (!MONEY_WORD.test(t)) return null;
+  if (FREEZE_RE.test(t)) return 'freeze'; // freeze wording wins over balance phrases
+  if (TARGET_BALANCE_RE.test(t)) return 'set_target';
+  return null;
+}
+export function effectMismatchProblem(text, tool) {
+  if (tool !== 'gift_all_coins' && tool !== 'deduct_all_coins' && tool !== 'adjust_coins') return null;
+  const fx = coinEffectProblem(text);
+  if (fx === 'set_target') return 'that asks to set balances to a target amount - I can only add or deduct a fixed amount per member, not set a balance';
+  if (fx === 'freeze') return 'that asks to freeze or lock balances - I can only add or deduct coins, not lock them';
+  return null;
+}
+
+// Execute-time backstop: the run's ORIGINAL wording is re-checked before any
+// coin moves. A run whose original words were never bound (legacy canonical
+// prompts) cannot be grounded: refuse execution and require a fresh review
+// rather than pretend the rewritten label protects it.
+export function coinWriteGuardProblem(originalPrompt, tool, delta) {
+  if (tool !== 'gift_all_coins' && tool !== 'deduct_all_coins' && tool !== 'adjust_coins') return null;
+  if (typeof originalPrompt !== 'string' || !originalPrompt.trim()) {
+    return 'This plan predates amount-sign validation, so it cannot be re-checked safely. Please ask again - nothing was executed.';
+  }
+  const fx = effectMismatchProblem(originalPrompt, tool);
+  if (fx) return `This plan no longer passes safety validation: ${fx}. Please ask again - nothing was executed.`;
+  const mismatch = signMismatchProblem(originalPrompt, tool, delta);
+  if (mismatch) return `This plan no longer passes safety validation: ${mismatch}. Please ask again - nothing was executed.`;
+  return null;
+}

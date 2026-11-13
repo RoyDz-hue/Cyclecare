@@ -1,0 +1,12 @@
+rc01	true	{"success":true,"new_balance":363.5,"lifetime_earned":393.5,"new_rank":"aurelia","mined_date":"2026-11-01"}	333.5	363.5	LUMEN	2026-10-31
+rc02	true	{"success":true,"lifetime_earned":100,"new_rank":"weird"}	333.5	363.5	SOLARA	2026-10-31
+rc03	true	{"success":false}	333.5	363.5	LUMEN	2026-10-31
+rc04	false	{"success":true,"new_balance":1}	333.5	363.5	LUMEN	2026-10-31
+rc05	true	<EMPTY>	333.5	363.5	LUMEN	2026-10-31
+rc06	true	{bad	333.5	363.5	LUMEN	2026-10-31
+rc07	true	{"success":true,"new_balance":"5"}	333.5	363.5	LUMEN	2026-10-31
+rc08	true	{"success":true,"new_balance":36.6,"lifetime_earned":-1}	333.5	363.5	LUMEN	2026-10-31
+rc09	true	{"success":true}	333.5	363.5	LUMEN	2026-10-31
+rc10	true	{"success":true,"new_rank":"solara"}	333.5	363.5	LUMEN	2026-10-31
+rc11	true	{"success":true,"lifetime_earned":8000,"new_rank":"zzz"}	333.5	363.5	LUMEN	2026-10-31
+rc12	true	{"success":true,"new_rank":"Founder"}	333.5	363.5	LUMEN	2026-10-31

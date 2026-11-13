@@ -1,0 +1,37 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Ring 1 (Yellow Gold) Base -->
+    <path
+        android:pathData="M80,100m-44,0a44,44 0,1 1,88 0a44,44 0,1 1,-88 0"
+        android:strokeWidth="15"
+        android:strokeColor="#E5B23A" />
+
+    <!-- Ring 2 (Rose Gold / Silver Sheen) Interlinked on Right -->
+    <path
+        android:pathData="M120,100m-44,0a44,44 0,1 1,88 0a44,44 0,1 1,-88 0"
+        android:strokeWidth="15"
+        android:strokeColor="#E0B0A4" />
+
+    <!-- Interlocking Overlap: redraw top-arc of Ring 1 so it loops through cleanly -->
+    <path
+        android:pathData="M80,56 A44,44 0 0,1 124,100"
+        android:strokeWidth="15"
+        android:strokeColor="#F7C959" />
+
+    <!-- Specular Highlight curves -->
+    <path
+        android:pathData="M52,72 A44,44 0 0,1 80,56"
+        android:strokeWidth="2.5"
+        android:strokeColor="#80FFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M120,56 A44,44 0 0,1 150,74"
+        android:strokeWidth="2.5"
+        android:strokeColor="#80FFFFFF"
+        android:strokeLineCap="round" />
+
+</vector>

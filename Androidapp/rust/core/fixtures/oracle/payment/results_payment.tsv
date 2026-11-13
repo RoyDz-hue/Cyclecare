@@ -1,0 +1,16 @@
+p01	{"kind":"success","msg":"Payment verified. Your latest wallet balance is shown; credits may first repay reversed purchases.","userId":"owner-1"}
+p02	{"kind":"timeout","msg":"Payment was confirmed, but your balance could not be refreshed. Refresh your wallet or check this payment again; please do not pay again."}
+p03	{"kind":"timeout","msg":"Payment was confirmed, but your balance could not be refreshed. Refresh your wallet or check this payment again; please do not pay again."}
+p04	{"kind":"failed","status":"failed","msg":"Payment status: FAILED. Transaction was not completed."}
+p05	{"kind":"failed","status":"refunded","msg":"Payment status: REFUNDED. Purchased credit may have been reversed. Refresh your wallet before spending or starting another purchase."}
+p06	{"kind":"failed","status":"auth_required","msg":"Your checkout account or secure session changed. Sign in to the original account and check this payment again."}
+p07	{"kind":"timeout","msg":"Payment is not confirmed yet. Check this payment again before retrying; do not assume it failed."}
+p08	{"kind":"success","msg":"Payment verified. Your latest wallet balance is shown; credits may first repay reversed purchases.","userId":"owner-1"}
+p09	{"kind":"failed","status":"auth_required","msg":"Your checkout account or secure session changed. Sign in to the original account and check this payment again."}
+p10	{"kind":"failed","status":"auth_required","msg":"Your checkout account or secure session changed. Sign in to the original account and check this payment again."}
+p11	{"kind":"failed","status":"auth_required","msg":"Your checkout account or secure session changed. Sign in to the original account and check this payment again."}
+p12	{"kind":"failed","status":"auth_required","msg":"Your checkout account or secure session changed. Sign in to the original account and check this payment again."}
+p13	{"kind":"timeout","msg":"Payment is not confirmed yet. Check this payment again before retrying; do not assume it failed."}
+p14	{"kind":"failed","status":"reversed","msg":"Payment status: REVERSED. Purchased credit may have been reversed. Refresh your wallet before spending or starting another purchase."}
+p15	{"kind":"failed","status":"cancelled","msg":"Payment status: CANCELLED. Transaction was not completed."}
+p16	{"kind":"failed","status":"expired","msg":"Payment status: EXPIRED. Transaction was not completed."}

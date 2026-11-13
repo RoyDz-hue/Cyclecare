@@ -1,0 +1,1 @@
+PASS exhaustive current source envelope 242 files; syntactic declaration/effect inventory 2134 rows; negative injected writer blocked. Not AST alias proof.

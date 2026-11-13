@@ -1,0 +1,47 @@
+project_id = "cyclecare"
+
+[functions.ai-gateway]
+verify_jwt = true
+
+[functions.admin-provider-status]
+verify_jwt = true
+
+[functions.image-generation]
+verify_jwt = true
+
+[functions.payhero-stk]
+verify_jwt = true
+
+[functions.payhero-callback]
+verify_jwt = false
+
+[functions.paypal-create-order]
+verify_jwt = true
+
+[functions.paypal-capture]
+verify_jwt = true
+
+[functions.okx-create]
+verify_jwt = true
+
+[functions.okx-webhook]
+verify_jwt = true
+
+[functions.ai-provider-consent]
+verify_jwt = true
+
+[functions.paypal-reconcile]
+verify_jwt = true
+
+# Provider notifications do not carry a user JWT. The handler remains source-gated
+# and independently verifies PayPal's signature plus stored order/capture evidence.
+[functions.paypal-webhook]
+verify_jwt = false
+
+# Onboarding runs before guests hold a session JWT. The handler requires the
+# publishable apikey instead and never touches user data.
+[functions.onboarding-questions]
+verify_jwt = false
+
+[functions.admin-chat-moderation]
+verify_jwt = true

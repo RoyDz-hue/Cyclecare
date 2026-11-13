@@ -1,0 +1,80 @@
+Compiled from "SupportOpenHelperFactory.java"
+public class net.zetetic.database.sqlcipher.SupportOpenHelperFactory implements androidx.sqlite.db.SupportSQLiteOpenHelper$Factory {
+  private static final int UNCHANGED;
+
+  private final byte[] password;
+
+  private final net.zetetic.database.sqlcipher.SQLiteDatabaseHook hook;
+
+  private final boolean enableWriteAheadLogging;
+
+  private final int minimumSupportedVersion;
+
+  public net.zetetic.database.sqlcipher.SupportOpenHelperFactory(byte[]);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: aconst_null
+       3: iconst_0
+       4: invokespecial #1                  // Method "<init>":([BLnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;Z)V
+       7: return
+
+  public net.zetetic.database.sqlcipher.SupportOpenHelperFactory(byte[], net.zetetic.database.sqlcipher.SQLiteDatabaseHook, boolean);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: aload_2
+       3: iload_3
+       4: iconst_m1
+       5: invokespecial #7                  // Method "<init>":([BLnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;ZI)V
+       8: return
+
+  public net.zetetic.database.sqlcipher.SupportOpenHelperFactory(byte[], net.zetetic.database.sqlcipher.SQLiteDatabaseHook, boolean, int);
+    Code:
+       0: aload_0
+       1: invokespecial #10                 // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: putfield      #15                 // Field password:[B
+       9: aload_0
+      10: aload_2
+      11: putfield      #19                 // Field hook:Lnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;
+      14: aload_0
+      15: iload_3
+      16: putfield      #23                 // Field enableWriteAheadLogging:Z
+      19: aload_0
+      20: iload         4
+      22: putfield      #27                 // Field minimumSupportedVersion:I
+      25: return
+
+  public androidx.sqlite.db.SupportSQLiteOpenHelper create(androidx.sqlite.db.SupportSQLiteOpenHelper$Configuration);
+    Code:
+       0: aload_0
+       1: getfield      #27                 // Field minimumSupportedVersion:I
+       4: iconst_m1
+       5: if_icmpne     29
+       8: new           #31                 // class net/zetetic/database/sqlcipher/SupportHelper
+      11: dup
+      12: aload_1
+      13: aload_0
+      14: getfield      #15                 // Field password:[B
+      17: aload_0
+      18: getfield      #19                 // Field hook:Lnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;
+      21: aload_0
+      22: getfield      #23                 // Field enableWriteAheadLogging:Z
+      25: invokespecial #33                 // Method net/zetetic/database/sqlcipher/SupportHelper."<init>":(Landroidx/sqlite/db/SupportSQLiteOpenHelper$Configuration;[BLnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;Z)V
+      28: areturn
+      29: new           #31                 // class net/zetetic/database/sqlcipher/SupportHelper
+      32: dup
+      33: aload_1
+      34: aload_0
+      35: getfield      #15                 // Field password:[B
+      38: aload_0
+      39: getfield      #19                 // Field hook:Lnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;
+      42: aload_0
+      43: getfield      #23                 // Field enableWriteAheadLogging:Z
+      46: aload_0
+      47: getfield      #27                 // Field minimumSupportedVersion:I
+      50: invokespecial #36                 // Method net/zetetic/database/sqlcipher/SupportHelper."<init>":(Landroidx/sqlite/db/SupportSQLiteOpenHelper$Configuration;[BLnet/zetetic/database/sqlcipher/SQLiteDatabaseHook;ZI)V
+      53: areturn
+}

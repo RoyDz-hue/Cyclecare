@@ -1,0 +1,500 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
+import { corsHeaders } from "../_shared/cors.ts";
+import { isAccountRestricted, isConfiguredSecret } from "../_shared/payments.ts";
+import { normalizeAiProvider, SUPPORTED_AI_PROVIDERS, validateAiRequest } from "../_shared/request-contract.js";
+// @deno-types="../_shared/hybrid-routing.d.ts"
+import { hybridReadiness, HYBRID_SOURCE_RELEASED } from "../_shared/hybrid-routing.js";
+import { manifestWithFingerprint } from "../_shared/provider-manifests.js";
+import { fetchJsonBounded } from "../_shared/bounded-json.js";
+import { AGENT_EXPERT, EXPERT_SYSTEM_PROMPT_V1, loadAgentPrompt, recordAiRun, scanExpertText } from "../_shared/ai-core.ts";
+
+interface AiGatewayRequest {
+  schema_version?: unknown;
+  user_question?: unknown;
+  context_mode?: unknown;
+  ai_consent?: unknown;
+  context?: unknown;
+  conversation_history?: unknown;
+}
+
+
+type AiProvider = "COHERE" | "GEMINI" | "OPENROUTER" | "LAJIWA";
+
+const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status,
+  headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-store" },
+});
+
+const textField = (value: unknown, fallback: string, maxLength = 500): string => {
+  if (typeof value !== "string") return fallback;
+  const clean = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim();
+  return clean ? clean.slice(0, maxLength) : fallback;
+};
+
+async function readJsonBody(req: Request, maxBytes: number): Promise<AiGatewayRequest> {
+  const reader = req.body?.getReader(); if (!reader) throw new SyntaxError("Missing request body");
+  const controller = new AbortController(); const timer = setTimeout(() => { controller.abort(); void reader.cancel().catch(() => {}); }, 8_000);
+  const operation = (async () => { const chunks: Uint8Array[] = []; let totalBytes = 0; while (true) { const { done, value } = await reader.read(); if (done) break; totalBytes += value.byteLength; if (totalBytes > maxBytes) { await reader.cancel().catch(() => {}); throw new RangeError("Request too large"); } chunks.push(value); } const body = new Uint8Array(totalBytes); let offset = 0; for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; } const parsed: unknown = JSON.parse(new TextDecoder().decode(body)); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new SyntaxError("Request body must be a JSON object"); return parsed as AiGatewayRequest; })();
+  try { return await Promise.race([operation, new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(new Error("request-deadline")), { once: true }))]); } finally { clearTimeout(timer); reader.releaseLock(); }
+}
+
+function publishableKey(): string | undefined {
+  const legacy = Deno.env.get("SUPABASE_ANON_KEY")?.trim();
+  if (legacy) return legacy;
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "{}");
+    return typeof keys.default === "string" ? keys.default : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function secretKey(): string | undefined {
+  const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
+  if (legacy) return legacy;
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+    return typeof keys.default === "string" ? keys.default : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function openAiContent(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const text = value.map((part) => part && typeof part.text === "string" ? part.text : "").join("").trim();
+    return text || undefined;
+  }
+  return undefined;
+}
+
+function parseStructuredAnswer(text: string): Record<string, unknown> | undefined {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    const result = JSON.parse(cleaned);
+    return result && typeof result === "object" && !Array.isArray(result) ? result : undefined;
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace < 0 || lastBrace <= firstBrace) return undefined;
+    try {
+      const result = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      return result && typeof result === "object" && !Array.isArray(result) ? result : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+function validateStructuredAnswer(value: Record<string, unknown>): Record<string, string> | undefined {
+  const keys = ["summary", "what", "understand", "care", "watch", "escalate"] as const;
+  const result = {} as Record<string, string>;
+  for (const key of keys) {
+    if (typeof value[key] !== "string") return undefined;
+    const text = value[key].replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim();
+    if (!text || text.length > 1200) return undefined;
+    result[key] = text;
+  }
+  return result;
+}
+
+async function boundedProviderJson(response: Response, maxBytes = 65_536, signal?: AbortSignal): Promise<any> {
+  const length = Number(response.headers.get("content-length") || "0"); if (Number.isFinite(length) && length > maxBytes) throw new Error("provider_response_too_large");
+  const reader = response.body?.getReader(); if (!reader) throw new Error("empty-provider-response"); const chunks: Uint8Array[] = []; let total = 0; const abort = () => { void reader.cancel().catch(() => {}); }; signal?.addEventListener("abort", abort, { once: true });
+  try { while (true) { const { done, value } = await reader.read(); if (done) break; total += value.byteLength; if (total > maxBytes) throw new Error("provider_response_too_large"); chunks.push(value); } } finally { signal?.removeEventListener("abort", abort); reader.releaseLock(); }
+  const body = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; } return JSON.parse(new TextDecoder().decode(body));
+}
+
+
+function fnv1a(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+// Last-resort local intelligence: topic-aware, non-diagnostic educational
+// guidance that always satisfies the strict six-field response schema.
+function systemIntelligenceAnswer(question: string): Record<string, string> {
+  const q = question.toLowerCase();
+  const has = (...words: string[]) => words.some((w) => q.includes(w));
+  let what = "Your body follows its own rhythm, and many cycle experiences are common and manageable with simple daily care.";
+  let understand = "Cycles vary from person to person. Tracking your patterns over a few months is the best way to learn what is normal for you.";
+  let care = "Rest when you need it, stay hydrated, eat regularly, and be gentle with yourself on harder days.";
+  if (has("pain", "cramp", "ache", "hurt", "maumivu")) {
+    what = "Cramping around a period is very common, and there are gentle ways to ease it at home.";
+    understand = "Cramps come from natural uterine contractions. Mild to moderate discomfort is common, but severe or worsening pain deserves attention.";
+    care = "A warm compress on the lower belly, light movement, hydration and rest can all help. A pharmacist can guide you on over-the-counter relief options.";
+  } else if (has("irregular", "late", "missed", "delay", "chelew")) {
+    what = "A late or irregular period can have many everyday causes, including stress, travel, illness or changes in routine.";
+    understand = "Occasional variation is common, especially during stressful seasons. Patterns usually settle again on their own.";
+    care = "Keep logging your days so your patterns become clearer, and note stress, sleep and big routine changes alongside your cycle.";
+  } else if (has("mood", "sad", "anxious", "stress", "pms", "huzuni", "waswasi")) {
+    what = "Mood shifts around the cycle are real and common - you are not imagining them.";
+    understand = "Hormone changes can affect energy and emotions, especially in the days before a period.";
+    care = "Gentle movement, regular sleep and small moments of rest can soften the edges. Talking with someone you trust helps too.";
+  } else if (has("discharge", "smell", "itch", "burn", "infection", "uq")) {
+    what = "Changes in discharge can be part of a normal cycle, but some changes deserve a closer look.";
+    understand = "Normal discharge changes through the month. Itching, burning, a strong odor or unusual color can be a sign to get checked.";
+    care = "Keep the area clean and dry, avoid scented products, and choose breathable fabrics. A clinician can test and treat quickly if something is off.";
+  }
+  return {
+    summary: what,
+    what,
+    understand,
+    care,
+    watch: "If symptoms are new, getting worse, or disrupting daily life for more than a cycle or two, note them down and share them with a clinician.",
+    escalate: "Seek urgent care now for sudden severe pain, fainting, very heavy bleeding (soaking a pad or tampon every hour for several hours), fever with pelvic pain, or anything that frightens you.",
+  };
+}
+
+async function requestProvider(
+  provider: AiProvider,
+  apiKey: string,
+  systemInstruction: string,
+  userMessage: string,
+  externalSignal?: AbortSignal,
+): Promise<{ text?: string; status?: number }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    let response: Response;
+    if (provider === "GEMINI") {
+      const preferredModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
+      const candidateModels = [preferredModel, "gemini-3.6-flash"].filter((m, i, arr) => arr.indexOf(m) === i);
+      let lastStatus = 500;
+      for (const model of candidateModels) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          signal: externalSignal ?? controller.signal,
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ role: "user", parts: [{ text: userMessage }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 3000 },
+          }),
+        });
+        lastStatus = response.status;
+        if (response.ok) {
+          const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
+          const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: unknown }) =>
+            typeof part?.text === "string" ? part.text : "").join("");
+          return { text: typeof text === "string" && text.trim() ? text : undefined, status: response.status };
+        }
+      }
+      return { status: lastStatus };
+    }
+
+    if (provider === "LAJIWA") {
+      // Contract verified from Lajiwa source and deployed Worker (main 8107229 / aa54ec9d):
+      // POST /api/chat, Bearer ljw_ key, body {"message": string <= 2000 unicode scalars},
+      // 200 {"reply": string, ...optional stats}; reply may carry a trailing
+      // <!--LAJIWA_SOURCES:{...}--> comment that must be stripped. No JSON mode, no
+      // truncation flag, hard 450-token output cap, and a 200 reply can be a refusal.
+      // The full Expert prompt (1359 chars) plus a max-length question cannot fit the
+      // 2000-scalar input limit, so LAJIWA uses this compact envelope carrying the
+      // schema, length and safety-critical constraints. Output still passes the same
+      // strict six-field validation and wisdom filters below. History is omitted:
+      // stateless single call, no retries (shared free budget).
+      const compactInstruction = "You are the CycleCare Expert, a warm menstrual-health companion. Reply in the user's language. Give general educational information, never a diagnosis; never infer pregnancy or disease; encourage a qualified clinician for concerning symptoms and urgent care for severe warning signs. Never mention being an AI or any software. Return only valid JSON with string keys: summary, what, understand, care, watch, escalate. Keep every field under 140 characters.";
+      let lajiwaMessage = `${compactInstruction}\n\n${userMessage}`;
+      if ([...lajiwaMessage].length > 2000) {
+        // Drop the consented context summary first; the question itself always fits.
+        lajiwaMessage = `${compactInstruction}\n\nQuestion: ${userMessage.slice(0, 1200)}`;
+      }
+      if ([...lajiwaMessage].length > 2000) return { status: 413 };
+      const baseUrl = (Deno.env.get("LAJIWA_API_URL") || "https://lajiwa.roydeburgs.workers.dev").replace(/\/+$/, "");
+      response = await fetch(`${baseUrl}/api/chat/private`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        signal: externalSignal ?? controller.signal,
+        body: JSON.stringify({ message: lajiwaMessage }),
+      });
+      if (!response.ok) return { status: response.status };
+      const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
+      const reply = typeof data?.reply === "string" ? data.reply : undefined;
+      const text = reply?.replace(/\n?<!--LAJIWA_SOURCES:[\s\S]*?-->\s*$/, "").trim();
+      return { text: text || undefined, status: response.status };
+    }
+
+    const model = provider === "COHERE"
+      ? "command-a-03-2025"
+      : "openai/gpt-4.1-mini";
+    const endpoint = provider === "COHERE"
+      ? "https://api.cohere.com/v2/chat"
+      : "https://openrouter.ai/api/v1/chat/completions";
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      signal: externalSignal ?? controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.3,
+        max_tokens: 700,
+        response_format: { type: "json_object" },
+        ...(provider === "OPENROUTER" ? { provider: { only: ["openai"], allow_fallbacks: false, data_collection: "deny", zdr: true } } : {}),
+      }),
+    });
+    if (!response.ok) return { status: response.status };
+    const data = await boundedProviderJson(response, 65_536, externalSignal ?? controller.signal);
+    const text = provider === "COHERE"
+      ? openAiContent(data?.message?.content)
+      : openAiContent(data?.choices?.[0]?.message?.content);
+    return { text, status: response.status };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+  const contentLength = Number(req.headers.get("content-length") || 0);
+  if (contentLength > 16_384) return jsonResponse({ success: false, error: "Request too large" }, 413);
+
+  const authorization = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!authorization?.startsWith("Bearer ")) return jsonResponse({ success: false, error: "Authentication required" }, 401);
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "");
+    const anonKey = publishableKey();
+    const adminKey = secretKey();
+    if (!supabaseUrl || !anonKey || !adminKey) {
+      return jsonResponse({ success: false, fallback: true, error: "Backend authentication is not configured" }, 503);
+    }
+
+    const { response: userResponse, data: userData } = await fetchJsonBounded(`${supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: anonKey, Authorization: authorization },
+    }, { timeoutMs: 10000, maxBytes: 65536 });
+    if (!userResponse.ok) return jsonResponse({ success: false, error: "Invalid or expired session" }, 401);
+    if (!userData || typeof userData !== "object" || Array.isArray(userData)) return jsonResponse({ success: false, error: "Invalid user session" }, 401);
+    const user = userData as Record<string, unknown>;
+    if (typeof user.id !== "string" || !user.id) return jsonResponse({ success: false, error: "Invalid user session" }, 401);
+
+    if (await isAccountRestricted(supabaseUrl, adminKey, String(user.id))) {
+      return jsonResponse({ success: false, error: "This account cannot use AI guidance" }, 403);
+    }
+
+    let input: AiGatewayRequest;
+    try {
+      input = await readJsonBody(req, 16_384);
+    } catch (error) {
+      if (error instanceof RangeError) return jsonResponse({ success: false, error: "Request too large" }, 413);
+      return jsonResponse({ success: false, error: "Invalid JSON request body" }, 400);
+    }
+    const contract = validateAiRequest(input);
+    if (!contract.ok) return jsonResponse({ success: false, error: contract.error === "structure_update_required" ? "This client must update its AI request structure" : "Invalid AI request contract", code: contract.error }, contract.error === "structure_update_required" ? 426 : 400);
+    const question = contract.question;
+
+    const boundedSupabaseFetch = async (input: RequestInfo | URL, init: RequestInit = {}) => { const result = await fetchJsonBounded(input, init, { timeoutMs: 8_000, maxBytes: 262_144 }); const headers = new Headers(result.response.headers); headers.set("content-type", "application/json"); return new Response(JSON.stringify(result.data), { status: result.response.status, headers }); };
+    const runtimeClient = createClient(supabaseUrl, adminKey, { auth: { autoRefreshToken: false, persistSession: false }, global: { fetch: boundedSupabaseFetch } });
+    const [adminResult, economyResult, consentResult] = await Promise.all([
+      runtimeClient.from("cyclecare_admin_roles").select("user_id").eq("user_id", String(user.id)).maybeSingle(),
+      runtimeClient.from("economy_profiles").select("tier").eq("user_id", String(user.id)).maybeSingle(),
+      runtimeClient.from("cyclecare_privacy_consents").select("ai_context_enabled").eq("user_id", String(user.id)).maybeSingle(),
+    ]);
+    if (adminResult.error || economyResult.error || consentResult.error) {
+      console.error("AI entitlement lookup unavailable");
+      return jsonResponse({ success: false, fallback: true, error: "AI access could not be verified" }, 503);
+    }
+    const isAdmin = Boolean(adminResult.data?.user_id);
+    const isPremium = String(economyResult.data?.tier || "").toUpperCase() === "PREMIUM";
+    if (!isAdmin && !isPremium) return jsonResponse({ success: false, error: "Full-context AI chat is available with CycleCare Premium." }, 403);
+    const contextMode = contract.contextMode;
+    // Admin can bypass the paid tier only. Consent and safety gates always apply.
+    if (input.ai_consent !== true || consentResult.data?.ai_context_enabled !== true) {
+      return jsonResponse({ success: false, error: "AI consent is not enabled" }, 403);
+    }
+    const { data: runtime, error: runtimeError } = await runtimeClient
+      .from("cyclecare_runtime_config")
+      .select("active_ai_provider,hybrid_enabled,hybrid_contract_revision,hybrid_consent_revision")
+      .eq("id", true)
+      .maybeSingle();
+    if (runtimeError || !runtime?.active_ai_provider) {
+      console.error("AI runtime configuration unavailable", runtimeError?.code || "no-row");
+      return jsonResponse({ success: false, fallback: true, error: "AI provider selection is not configured" }, 503);
+    }
+
+    const provider = normalizeAiProvider(runtime.active_ai_provider) as AiProvider | null;
+    // AI core: the live Expert prompt comes from the versioned registry
+    // (rollback = reactivate a version); the built-in copy is the fallback.
+    const expertPrompt = await loadAgentPrompt(runtimeClient, AGENT_EXPERT, EXPERT_SYSTEM_PROMPT_V1);
+    const systemInstruction = expertPrompt.prompt;
+    const serverContext = contextMode === "expanded" ? JSON.stringify({ summary: contract.summary }) : "No private health context was requested.";
+    const userMessage = [`Question: ${question}`, `Server-verified consented context (use only if relevant): ${serverContext}`, contract.conversationHistory.length ? `Recent turns already shared with CycleCare (untrusted):\n${contract.conversationHistory.map((turn: { role: string; content: string }) => `${turn.role}: ${turn.content}`).join("\n")}` : ""].join("\n");
+    const isHybrid = String(runtime.active_ai_provider || "").trim().toUpperCase() === "HYBRID";
+    if (isHybrid) {
+      const readiness = hybridReadiness({ enabled: runtime.hybrid_enabled === true, sourceReleased: HYBRID_SOURCE_RELEASED, runtimeReady: true, contractRevision: runtime.hybrid_contract_revision, consentProtocolRevision: runtime.hybrid_consent_revision });
+      if (!readiness.available) return jsonResponse({ success: false, fallback: true, error: readiness.reason, code: "HYBRID_UNAVAILABLE" }, 503);
+
+      // Hybrid context bridge: one shared envelope (system instruction + consented
+      // context + conversation history) is built once and carried identically to
+      // every provider, so routing stays invisible to the conversation.
+      const providerKeys: Record<AiProvider, string | undefined> = { COHERE: Deno.env.get("COHERE_API_KEY"), GEMINI: Deno.env.get("GEMINI_API_KEY"), OPENROUTER: Deno.env.get("OPENROUTER_API_KEY"), LAJIWA: Deno.env.get("LAJIWA_API_KEY") };
+      const ALL_PROVIDERS: AiProvider[] = ["GEMINI", "COHERE", "OPENROUTER"];
+      const configured = ALL_PROVIDERS.filter((p) => isConfiguredSecret(providerKeys[p]));
+
+      const receiptMap = new Map(contract.processorReceipts.map((r: any) => [String(r.provider_id).trim().toUpperCase(), r]));
+      const [consentRows, policyRows] = await Promise.all([
+        runtimeClient.from("cyclecare_ai_processor_consents").select("processor,granted,consent_revision,account_snapshot,manifest_fingerprint,revoked_at").eq("user_id", String(user.id)).in("processor", configured),
+        runtimeClient.from("cyclecare_ai_provider_policy_readiness").select("processor,policy_revision,reviewed,eligible,manifest_fingerprint").in("processor", configured),
+      ]);
+      if (consentRows.error || policyRows.error) return jsonResponse({ success: false, fallback: true, error: "Hybrid consent could not be verified" }, 503);
+      const manifests: Record<string, any> = {};
+      for (const p of configured) manifests[p] = await manifestWithFingerprint(p);
+      // Consent gate per provider: data only flows to processors the user holds a
+      // current, unrevoked, manifest-matching receipt for AND whose policy is
+      // reviewed eligible. Unconsented providers are skipped, never failed on.
+      const eligible = configured.filter((p) => {
+        const receipt = receiptMap.get(p) as any;
+        const manifest = manifests[p];
+        if (!receipt || !manifest) return false;
+        const consent = (consentRows.data || []).find((r: any) => r.processor === p);
+        const policy = (policyRows.data || []).find((r: any) => r.processor === p);
+        return consent?.granted === true && consent.revoked_at == null && consent.account_snapshot === String(user.id)
+          && consent.consent_revision === `cyclecare-ai-manifest-v3-${receipt.revision}`
+          && consent.manifest_fingerprint === receipt.manifest_fingerprint && receipt.manifest_fingerprint === manifest.manifest_fingerprint
+          && policy?.reviewed === true && policy.eligible === true
+          && policy.policy_revision === manifest.policy_revision && policy.manifest_fingerprint === manifest.manifest_fingerprint;
+      });
+      if (eligible.length === 0) return jsonResponse({ success: false, fallback: true, code: "AI_PROCESSOR_CONSENT_REQUIRED", error: "AI processor consent is required" }, 428);
+
+      // Quota is consumed once per question, never per failover attempt.
+      const quota = await runtimeClient.rpc("consume_cyclecare_ai_quota", { p_user_id: String(user.id), p_kind: "chat" });
+      if (quota.error || quota.data?.allowed !== true) return jsonResponse({ success: false, error: quota.data?.reason === "daily_limit" ? "Daily AI chat limit reached" : "AI access is temporarily unavailable" }, quota.data?.reason === "daily_limit" ? 429 : 503);
+
+      // Dynamic balancing, O(1) and stateless: a stable per-user hash plus a
+      // 10-minute time bucket rotates the starting provider, spreading load
+      // evenly over users and time so no single provider is overworked.
+      const startIndex = (fnv1a(String(user.id)) + Math.floor(Date.now() / 600_000)) % eligible.length;
+      const order = eligible.map((_, i) => eligible[(startIndex + i) % eligible.length]);
+
+      // Failover chain: provider -> provider -> provider, bounded by one shared
+      // 45s deadline that fits inside the client's 65s call timeout.
+      const deadline = Date.now() + 45_000;
+      for (const candidate of order) {
+        const remaining = deadline - Date.now();
+        if (remaining < 2_000) break;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), Math.min(20_000, remaining));
+        try {
+          const result = await requestProvider(candidate, providerKeys[candidate]!, systemInstruction, userMessage, controller.signal);
+          if (result.text) {
+            const parsed = parseStructuredAnswer(result.text);
+            const answer = parsed && validateStructuredAnswer(parsed);
+            const wisdom = answer ? scanExpertText(Object.values(answer).join(" ")) : { ok: false, reasons: ["invalid_schema"] };
+            if (answer && wisdom.ok) {
+              clearTimeout(timer);
+              void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "ok" });
+              return jsonResponse({ success: true, source: "CycleCare Expert", data: { summary: answer.summary, whatText: answer.what, understandText: answer.understand, careText: answer.care, watchText: answer.watch, escalateText: answer.escalate } });
+            }
+            if (answer && !wisdom.ok) void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "filtered", errorKind: wisdom.reasons.join(",") });
+            if (!answer) void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: "invalid_schema" });
+            console.error("hybrid provider returned invalid output", candidate);
+          } else {
+            const status = typeof result.status === "number" ? result.status : 0;
+            const kind = status === 429 ? "http_429" : status >= 500 ? "http_5xx" : status >= 400 ? "http_4xx" : "network";
+            void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: kind });
+            console.error("hybrid provider attempt failed", candidate, result.status ?? "network");
+          }
+        } catch {
+          void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider: candidate, promptVersion: expertPrompt.version, status: "failed", errorKind: "network" });
+          console.error("hybrid provider attempt error", candidate);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      // Final link in the chain: built-in system intelligence. The user never
+      // sees the machinery - safe, structured guidance arrives either way.
+      console.error("all hybrid providers unavailable; serving system fallback");
+      void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), promptVersion: expertPrompt.version, status: "system_fallback" });
+      return jsonResponse({ success: true, source: "CycleCare Expert", data: systemIntelligenceAnswer(question) });
+    }
+    if (!provider) return jsonResponse({ success: false, fallback: true, error: "Unsupported server AI provider" }, 503);
+    const currentManifest = await manifestWithFingerprint(provider);
+    const [processorConsent, policyReadiness] = await Promise.all([
+      runtimeClient.from("cyclecare_ai_processor_consents").select("processor,granted,consent_revision,account_snapshot,manifest_fingerprint,revoked_at").eq("user_id", String(user.id)).eq("processor", provider).maybeSingle(),
+      runtimeClient.from("cyclecare_ai_provider_policy_readiness").select("processor,policy_revision,reviewed,eligible,manifest_fingerprint").eq("processor", provider).maybeSingle(),
+    ]);
+    const receipt = contract.processorReceipts.find((r: any) => String(r.provider_id).trim().toUpperCase() === provider);
+    const consent = processorConsent.data; const policy = policyReadiness.data;
+    const consentRevision = typeof consent?.consent_revision === "string" ? consent.consent_revision : "";
+    const consentReady = consent?.processor === provider && consent.granted === true && consent.account_snapshot === String(user.id) && consent.revoked_at == null && consentRevision === `cyclecare-ai-manifest-v3-${receipt?.revision}` && currentManifest?.manifest_fingerprint === consent.manifest_fingerprint && receipt?.manifest_fingerprint === consent.manifest_fingerprint;
+    const policyReady = policy?.processor === provider && policy.reviewed === true && policy.eligible === true && policy.policy_revision === currentManifest?.policy_revision && policy.manifest_fingerprint === currentManifest?.manifest_fingerprint;
+    if (processorConsent.error || policyReadiness.error || !consentReady || !policyReady) return jsonResponse({ success: false, fallback: true, provider, code: !consentReady ? "AI_PROCESSOR_CONSENT_REQUIRED" : "AI_PROVIDER_POLICY_UNAVAILABLE", error: "This AI processor is not currently available for this account" }, 428);
+    const providerApiKeys: Record<AiProvider, string | undefined> = {
+      COHERE: Deno.env.get("COHERE_API_KEY"),
+      GEMINI: Deno.env.get("GEMINI_API_KEY"),
+      OPENROUTER: Deno.env.get("OPENROUTER_API_KEY"),
+      LAJIWA: Deno.env.get("LAJIWA_API_KEY"),
+    };
+    const apiKey = providerApiKeys[provider];
+    if (!isConfiguredSecret(apiKey)) {
+      return jsonResponse({ success: false, fallback: true, provider, error: "The selected AI provider is not configured" }, 503);
+    }
+    const quota = await runtimeClient.rpc("consume_cyclecare_ai_quota", { p_user_id: String(user.id), p_kind: "chat" });
+    if (quota.error || quota.data?.allowed !== true) return jsonResponse({ success: false, error: quota.data?.reason === "daily_limit" ? "Daily AI chat limit reached" : "AI access is temporarily unavailable" }, quota.data?.reason === "daily_limit" ? 429 : 503);
+
+    const liveRestriction = await isAccountRestricted(supabaseUrl, adminKey, String(user.id));
+    const liveGlobal = await runtimeClient.from("cyclecare_privacy_consents").select("ai_context_enabled").eq("user_id", String(user.id)).maybeSingle();
+    const liveConsent = await runtimeClient.from("cyclecare_ai_processor_consents").select("granted,revoked_at,account_snapshot,consent_revision,manifest_fingerprint").eq("user_id", String(user.id)).eq("processor", provider).maybeSingle();
+    if (liveRestriction || liveGlobal.error || liveGlobal.data?.ai_context_enabled !== true || liveConsent.error || liveConsent.data?.granted !== true || liveConsent.data?.revoked_at != null || liveConsent.data?.account_snapshot !== String(user.id) || liveConsent.data?.consent_revision !== `cyclecare-ai-manifest-v3-${receipt?.revision}` || liveConsent.data?.manifest_fingerprint !== receipt?.manifest_fingerprint) return jsonResponse({ success: false, fallback: true, provider, error: "AI consent is no longer enabled" }, 403);
+
+    // v2 deliberately excludes client health fields; only the validated summary may cross the boundary.
+    // Privacy boundary: the gateway never reads profiles, cycles, or daily logs.
+    // Android supplies only a user-visible, bounded structured summary in v2 expanded mode.
+
+    const providerResult = await requestProvider(provider, apiKey, systemInstruction, userMessage);
+    if (providerResult.status !== undefined && (providerResult.status < 200 || providerResult.status >= 300)) return jsonResponse({ success: false, fallback: true, provider, error: "AI guidance is temporarily unavailable" }, providerResult.status === 429 ? 429 : 503);
+    if (!providerResult.text) {
+      console.error("AI provider request failed", provider, providerResult.status ?? "network-error");
+      return jsonResponse({ success: false, fallback: true, provider, error: "AI guidance is temporarily unavailable" }, 503);
+    }
+    const structured = parseStructuredAnswer(providerResult.text);
+    if (!structured) {
+      console.error("AI provider returned invalid JSON", provider);
+      return jsonResponse({ success: false, fallback: true, provider, error: "AI returned an invalid response" }, 502);
+    }
+
+    const answer = validateStructuredAnswer(structured);
+    if (answer) {
+      const wisdom = scanExpertText(Object.values(answer).join(" "));
+      if (!wisdom.ok) {
+        console.error("AI provider response blocked by wisdom filters", provider);
+        void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider, promptVersion: expertPrompt.version, status: "filtered", errorKind: wisdom.reasons.join(",") });
+        return jsonResponse({ success: false, fallback: true, provider, error: "AI returned a response that did not pass safety review" }, 502);
+      }
+    }
+    if (!answer) {
+      console.error("AI provider response failed strict six-field schema", provider);
+      return jsonResponse({ success: false, fallback: true, provider, error: "AI returned an incomplete or oversized response" }, 502);
+    }
+    void recordAiRun(runtimeClient, { agent: AGENT_EXPERT, userId: String(user.id), provider, promptVersion: expertPrompt.version, status: "ok" });
+    return jsonResponse({
+      success: true,
+      source: `CycleCare Expert · ${provider}`,
+      data: {
+        summary: answer.summary,
+        whatText: answer.what,
+        understandText: answer.understand,
+        careText: answer.care,
+        watchText: answer.watch,
+        escalateText: answer.escalate,
+      },
+    });
+  } catch (error) {
+    const aborted = error instanceof DOMException && error.name === "AbortError";
+    console.error("AI gateway failed", aborted ? "timeout" : "unavailable");
+    return jsonResponse({ success: false, fallback: true, error: "AI guidance is temporarily unavailable" }, 503);
+  }
+});
+

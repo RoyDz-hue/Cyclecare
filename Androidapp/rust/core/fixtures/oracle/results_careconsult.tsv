@@ -1,0 +1,133 @@
+e1	ACCEPT:11
+e2	REJECT
+e3	REJECT
+e4	REJECT
+e5	ACCEPT:2
+e6	ACCEPT:1200
+e7	REJECT
+e8	ACCEPT:1200
+e9	REJECT
+e10	ACCEPT:15
+e11	ACCEPT:14
+r1	true
+r2	false
+r3	false
+r4	false
+r5	false
+r6	false
+x1	true
+x2	false
+x3	false
+x4	false
+u1	true
+u2	false
+u3	false
+u4	false
+t1	tok
+t2	null
+t3	null
+t4	null
+f1	true
+f2	false
+f3	false
+a1	true
+a2	false
+a3	false
+h1	user|q1;;assistant|s1 w1
+h2	
+h3	user|q1;;assistant|s1 w1;;user|q2;;assistant|s2 w2
+h4	user|q2;;assistant|s2 w2;;user|q3;;assistant|s3 w3;;user|q4;;assistant|s4 w4
+h5	user|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;;assistant|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+h6	user|q1;;assistant|s1 w1
+h7	
+i1	cramps · fatigue · low mood
+i2	single
+i3	null
+z1	This explanation couldn't finish. Your health log has not changed.
+d1	Proceed
+d2	Busy
+d3	NoOnlineAccount
+d4	NoOnlineAccount
+d5	NoOnlineAccount
+d6	NoOnlineAccount
+d7	NoOnlineAccount
+p1	proceed
+p2	Your choice couldn't be saved, so nothing was erased online. Please try again.
+s1	true,false,false,Erasing your online copy…
+w1	true
+w2	false
+w3	false
+g1	Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept.
+g2	The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.
+m1	Proceed
+m2	Busy
+m3	Image creation is available with CycleCare Premium.
+m4	Proceed
+m5	Please sign in again before creating an image.
+m6	Please sign in again before creating an image.
+m7	Keep your decorative prompt under 500 characters.
+m8	Proceed
+m9	Proceed
+q1	proceed
+q2	Sending coins needs an internet connection. Please reconnect and try again.
+v1	false
+v2	true
+v3	true
+v4	false
+b1	false,false
+b2	false,true
+k1	true
+k2	true
+k3	false
+k4	true
+w5	true
+w6	true
+w7	false
+w8	false
+e1x	true
+e2x	false
+e3x	false
+p1x	Run
+p2x	Reschedule
+p3x	Nothing
+p4x	Nothing
+r1x	true
+r2x	false
+r3x	false
+c1x	false
+c2x	true
+f1x	true
+f2x	false
+t1	busy
+t2	msg:No online account is connected, so only this device's records were erased.
+t3	msg:No online account is connected, so only this device's records were erased.
+t4	msg:Your choice couldn't be saved, so nothing was erased online. Please try again.
+t5	paused;effects(true,false,false,Erasing your online copy…);token;stale1
+t6	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;stale2
+t7	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:Your online records were erased. The copies on this device remain, and backup is off. Your account, purchases and coins are kept.
+t8	paused;effects(true,false,false,Erasing your online copy…);token;permit;rpc;msg:The online erase couldn't be confirmed. Backup stays off. Please try again before assuming your online copy is gone.
+dr1	Cleared
+dr2	ConfirmRejected
+dr3	NoPending
+ps1	false
+ps2	true
+ps3	true
+sv1	Saved to your health log. No coins were awarded for this health entry.
+gf1	ITEM:BB
+gf2	ITEM:FALLBACK
+gf3	ITEM:MP
+gf4	ITEM:FALLBACK
+gf5	ITEM:SC
+gf6	ITEM:BB
+gf7	NONE
+pg1	true
+pg2	false
+rn1	true
+rn2	false
+rn3	false
+rn4	VerifiedApplied
+rn5	ListOnly
+gq1	true
+gq2	false
+gq3	true
+gq4	false

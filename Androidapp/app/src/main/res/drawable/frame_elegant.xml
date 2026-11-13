@@ -1,0 +1,75 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Outer Beveled Metallic Rim -->
+    <path
+        android:pathData="M100,100m-76,0a76,76 0,1 1,152 0a76,76 0,1 1,-152 0"
+        android:strokeWidth="14"
+        android:strokeColor="#D4AF37" />
+
+    <!-- Pearl Track Channel Bed (Darker gold recessed channel) -->
+    <path
+        android:pathData="M100,100m-68,0a68,68 0,1 1,136 0a68,68 0,1 1,-136 0"
+        android:strokeWidth="6"
+        android:strokeColor="#785006" />
+
+    <!-- Continuous Circle of Micro-Pearls (Rendered along circumference) -->
+    <!-- 0 deg / Right -->
+    <path android:pathData="M168,100m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 15 deg -->
+    <path android:pathData="M165,117m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 30 deg -->
+    <path android:pathData="M158,134m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 45 deg -->
+    <path android:pathData="M148,148m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 60 deg -->
+    <path android:pathData="M134,158m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 75 deg -->
+    <path android:pathData="M117,165m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 90 deg / Bottom -->
+    <path android:pathData="M100,168m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 105 deg -->
+    <path android:pathData="M83,165m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 120 deg -->
+    <path android:pathData="M66,158m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 135 deg -->
+    <path android:pathData="M52,148m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 150 deg -->
+    <path android:pathData="M42,134m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 165 deg -->
+    <path android:pathData="M35,117m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 180 deg / Left -->
+    <path android:pathData="M32,100m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 195 deg -->
+    <path android:pathData="M35,83m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 210 deg -->
+    <path android:pathData="M42,66m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 225 deg -->
+    <path android:pathData="M52,52m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 240 deg -->
+    <path android:pathData="M66,42m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 255 deg -->
+    <path android:pathData="M83,35m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 270 deg / Top -->
+    <path android:pathData="M100,32m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 285 deg -->
+    <path android:pathData="M117,35m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 300 deg -->
+    <path android:pathData="M134,42m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 315 deg -->
+    <path android:pathData="M148,52m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 330 deg -->
+    <path android:pathData="M158,66m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+    <!-- 345 deg -->
+    <path android:pathData="M165,83m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" android:fillColor="#FFFDF7" />
+
+    <!-- Inner Polished Rose Gold Rim -->
+    <path
+        android:pathData="M100,100m-60,0a60,60 0,1 1,120 0a60,60 0,1 1,-120 0"
+        android:strokeWidth="5"
+        android:strokeColor="#E8967D" />
+
+</vector>

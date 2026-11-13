@@ -1,0 +1,72 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Glowing Green Glass Frame Accent -->
+    <path
+        android:pathData="M50,20 L150,20 A18,18 0 0,1 168,38 L168,162 A18,18 0 0,1 150,180 L50,180 A18,18 0 0,1 32,162 L32,38 A18,18 0 0,1 50,20 Z"
+        android:strokeWidth="6"
+        android:strokeColor="#8000FF66" />
+
+    <!-- Smartphone Body Outer Shell -->
+    <path
+        android:pathData="M52,24 L148,24 A14,14 0 0,1 162,38 L162,162 A14,14 0 0,1 148,176 L52,176 A14,14 0 0,1 38,162 L38,38 A14,14 0 0,1 52,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="40"
+                android:startY="20"
+                android:endX="160"
+                android:endY="180">
+                <item android:offset="0.0" android:color="#FF1A382B" />
+                <item android:offset="0.5" android:color="#FF0B2219" />
+                <item android:offset="1.0" android:color="#FF05140E" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Glassy Screen Surface -->
+    <path
+        android:pathData="M44,32 L156,32 A8,8 0 0,1 164,40 L164,160 A8,8 0 0,1 156,168 L44,168 A8,8 0 0,1 36,160 L36,40 A8,8 0 0,1 44,32 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="40"
+                android:startY="30"
+                android:endX="160"
+                android:endY="170">
+                <item android:offset="0.0" android:color="#3300FF66" />
+                <item android:offset="0.4" android:color="#1500FF66" />
+                <item android:offset="1.0" android:color="#0D003311" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Vibrant M-PESA Curved Arrow Symbol -->
+    <path
+        android:pathData="M70,80 C70,68 85,55 100,55 C120,55 135,68 135,80 C135,88 126,94 118,97 L132,118 L114,118 L102,100 L98,100 L98,118 L82,118 L82,72 L100,72 C108,72 115,75 115,80 C115,85 108,87 100,87 L98,87 L98,80 L70,80 Z"
+        android:fillColor="#FF00FF66" />
+
+    <path
+        android:pathData="M65,128 L135,128 A12,12 0 0,1 147,140 L147,144 A12,12 0 0,1 135,156 L65,156 A12,12 0 0,1 53,144 L53,140 A12,12 0 0,1 65,128 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="50"
+                android:startY="128"
+                android:endX="150"
+                android:endY="156">
+                <item android:offset="0.0" android:color="#FF00E65C" />
+                <item android:offset="1.0" android:color="#FF00A63C" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Sparkle Highlights -->
+    <path
+        android:pathData="M152,42 L154,48 L160,50 L154,52 L152,58 L150,52 L144,50 L150,48 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

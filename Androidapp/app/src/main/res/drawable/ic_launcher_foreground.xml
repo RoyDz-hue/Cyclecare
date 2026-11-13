@@ -1,0 +1,127 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Safe-zone scaled (center 66%) CycleCare Lunar-Lotus Emblem -->
+    <group
+        android:pivotX="100"
+        android:pivotY="100"
+        android:scaleX="0.68"
+        android:scaleY="0.68">
+
+        <!-- Outer Orbit Ring -->
+        <path
+            android:pathData="M100,100m-84,0a84,84 0,1 1,168 0a84,84 0,1 1,-168 0"
+            android:strokeWidth="2.5"
+            android:strokeColor="#55E5C378" />
+
+        <!-- Gilded Crescent Moon -->
+        <path
+            android:pathData="M114,34 C66,34 34,68 34,106 C34,142 64,168 110,168 C126,168 142,161 153,150 C145,154 134,156 122,155 C82,152 56,126 56,96 C56,66 80,42 114,34 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="38"
+                    android:startY="36"
+                    android:endX="140"
+                    android:endY="165">
+                    <item android:offset="0.0" android:color="#FFFFF9E6" />
+                    <item android:offset="0.35" android:color="#FFF3D078" />
+                    <item android:offset="0.75" android:color="#FFD49B35" />
+                    <item android:offset="1.0" android:color="#FF8C5A08" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Sculpted Botanical Lotus — Outer Left & Right Petals -->
+        <path
+            android:pathData="M100,148 C68,148 44,128 42,102 C62,104 82,118 100,148 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="42"
+                    android:startY="102"
+                    android:endX="100"
+                    android:endY="148">
+                    <item android:offset="0.0" android:color="#FFFFCDD8" />
+                    <item android:offset="0.5" android:color="#FFE8839B" />
+                    <item android:offset="1.0" android:color="#FF9E3B52" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M100,148 C132,148 156,128 158,102 C138,104 118,118 100,148 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="158"
+                    android:startY="102"
+                    android:endX="100"
+                    android:endY="148">
+                    <item android:offset="0.0" android:color="#FFFFCDD8" />
+                    <item android:offset="0.5" android:color="#FFE8839B" />
+                    <item android:offset="1.0" android:color="#FF9E3B52" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Sculpted Botanical Lotus — Mid Left & Right Petals -->
+        <path
+            android:pathData="M100,148 C74,140 58,114 66,80 C84,90 94,114 100,148 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="66"
+                    android:startY="80"
+                    android:endX="100"
+                    android:endY="148">
+                    <item android:offset="0.0" android:color="#FFFFE4EC" />
+                    <item android:offset="0.5" android:color="#FFF498AF" />
+                    <item android:offset="1.0" android:color="#FFB84A62" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M100,148 C126,140 142,114 134,80 C116,90 106,114 100,148 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="134"
+                    android:startY="80"
+                    android:endX="100"
+                    android:endY="148">
+                    <item android:offset="0.0" android:color="#FFFFE4EC" />
+                    <item android:offset="0.5" android:color="#FFF498AF" />
+                    <item android:offset="1.0" android:color="#FFB84A62" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Central Luminous Pearl-Gold Dewdrop -->
+        <path
+            android:pathData="M100,62 C100,62 76,94 76,116 C76,132 87,144 100,144 C113,144 124,132 124,116 C124,94 100,62 100,62 Z"
+            android:strokeWidth="1.5"
+            android:strokeColor="#FFE5C378">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="94"
+                    android:centerY="104"
+                    android:gradientRadius="42">
+                    <item android:offset="0.0" android:color="#FFFFFFFF" />
+                    <item android:offset="0.35" android:color="#FFFFF3D6" />
+                    <item android:offset="0.75" android:color="#FFE8BA68" />
+                    <item android:offset="1.0" android:color="#FFC2842B" />
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Four-Point Star Sparkle -->
+        <path
+            android:pathData="M138,54 L141,62 L149,65 L141,68 L138,76 L135,68 L127,65 L135,62 Z"
+            android:fillColor="#FFFFF3D1" />
+    </group>
+</vector>

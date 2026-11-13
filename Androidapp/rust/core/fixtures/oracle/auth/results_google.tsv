@@ -1,0 +1,10 @@
+g01	gurl	ok	https://supabase.example.co/auth/v1/authorize?provider=google&redirect_to=cyclecare%3A%2F%2Fauth%2Fcallback&code_challenge=-az8BR5Wm5j6NY0gGmQ0T85lArA2kzAL_CEP5qbo39g&code_challenge_method=s256	action=GOOGLE	reqs=0
+g02	gurl	throw	To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.	action=null	reqs=0
+g03	gurl	ok	https://accounts.google.com/o/oauth2/auth?x=1	action=GOOGLE_LINK	reqs=1
+g04	gurl	throw	We couldn't link your account right now. Please try again later.	action=null	reqs=1
+g05	gurl	ok	https://accounts.google.com/redir?y=2	action=GOOGLE_LINK	reqs=1
+g06	gurl	throw	We couldn't link your account right now. Please try again later.	action=null	reqs=1
+g07	gurl	ok	https://supabase.example.co/auth/v1/authorize?provider=google&redirect_to=cyclecare%3A%2F%2Fauth%2Fcallback&code_challenge=S8Zqmhjg5yesvxJEdZHJqM6b3e_h5lfS3_1L30BfntY&code_challenge_method=s256	action=GOOGLE	reqs=0
+g08	gurl	admin	true	reqs=1
+g09	gurl	admin	false	reqs=1
+g10	gurl	admin	false	reqs=0

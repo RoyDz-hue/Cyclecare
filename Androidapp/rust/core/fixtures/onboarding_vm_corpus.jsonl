@@ -1,0 +1,20 @@
+s01|1||~|Today|~||5|false|false|~||28|APPROXIMATE:Today|2026-11-02|2026-11-06|true|~|1||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s02|1||~|A few days ago|~||5|false|false|~||28|APPROXIMATE:A few days ago|2026-10-29|2026-11-02|true|~|5||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s03|1||~|About two weeks ago|~||5|false|false|~||28|APPROXIMATE:About two weeks ago|2026-10-19|2026-10-23|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s04|1||~|I don’t know|~||5|false|false|~||28|UNKNOWN|2026-11-02|2026-11-06|false|~|1||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s05|1||2026-10-20|~|~||5|false|false|~||28|EXACT|2026-10-20|2026-10-24|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s06|1||2026-10-25|~|2026-10-24|5 days|5|false|false|Period end date cannot be earlier than start date||28|EXACT|2026-10-25|2026-10-24|true|~|9||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s07|1||2026-10-20|~|2026-10-24|5 days|5|false|true|~||28|EXACT|2026-10-20|2026-10-24|true|2026-10-24|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s08|1||2026-10-10|~|2026-10-19|10 days|5|false|false|Your period lasted 10 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.||28|EXACT|2026-10-10|2026-10-19|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s09|1||2026-10-10|~|2026-10-19|10 days|5|false|true|~||28|EXACT|2026-10-10|2026-10-19|true|2026-10-19|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s10|1||2026-10-10|~|~||5|false|false|Period end date cannot be earlier than start date||28|EXACT|2026-10-10|2026-10-14|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s11|1||~|A few days ago|2026-11-01|4 days|4|false|false|~||28|APPROXIMATE:A few days ago|2026-10-29|2026-11-01|true|~|5||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s12|1||~|Today|~|Still ongoing|1|true|false|~||28|APPROXIMATE:Today|2026-11-02|2026-11-02|true|~|1||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s13|1||~|About two weeks ago|~||5|false|false|~||28|APPROXIMATE:About two weeks ago|2026-10-19|2026-10-23|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s14|1|Track my periods,Understand my cycle|2026-10-20|~|2026-10-24|5 days|5|false|true|~|28 days|28|EXACT|2026-10-20|2026-10-24|true|2026-10-24|10|Cramps,Bloating|true|q1=a+b|2026-10-20|2026-10-24|EXACT|28 days|28|5|Track my periods,Understand my cycle|Cramps,Bloating|true|2026-10-20|28|5|true|false|2026-10-20..2026-10-24
+s15|1||~|I don’t know|~||5|false|false|~||28|UNKNOWN|2026-11-02|2026-11-06|false|~|1||false||||UNKNOWN|UNKNOWN|28|5|||false||28|5|false|false|~
+s16|1||~|About a week ago|2026-10-26|1 days|1|false|false|~||28|APPROXIMATE:About a week ago|2026-10-26|2026-10-26|true|~|8||false||2026-10-26||APPROXIMATE:About a week ago|UNKNOWN|28|1|||false|2026-10-26|28|1|false|false|2026-10-26..2026-10-27
+s17|1||2026-10-20|~|~||5|false|false|Period dates cannot be in the future||28|EXACT|2026-10-20|2026-10-24|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s18|1||~|~|~||5|false|false|~||28|UNKNOWN|2026-10-22|2026-10-26|false|~|10||false|q=b;m=y|~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s19|1||2026-10-21|~|~||5|false|false|~||28|EXACT|2026-10-21|2026-10-25|true|~|10||false||~|~|~|~|~|~|~|~|~|~|~|~|~|~|~
+s20|1||~|Today|~|Still ongoing|1|true|false|~||28|APPROXIMATE:Today|2026-11-02|2026-11-02|true|~|1||false||2026-11-02||APPROXIMATE:Today|UNKNOWN|28|1|||false|2026-11-02|28|1|false|true|2026-11-02..2026-11-03

@@ -1,0 +1,330 @@
+{
+  "cases": [
+    {
+      "flow": "",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "8b00ccd53dc0ba6b687913ee16b0a2edff1a4b74ffdba93423bc5def285637d8",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "8a604973728d6fa0e4b14c6a6ddc30cb817979dd5d7d1ffe3c80f22ff5e0d4ef",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "181185045cdd72c39e9c21dd0be58603d86f15e7e7516fe92a75c9b58c9c1b28",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "2ba8bb08cf19adaa43b670e902c973823d8e97ed785f530a63f0ec9f4021472e",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"bad\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "SPOTTING",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"SPOTTING\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "f4dc45066fe9e982d98cf797c0d4a970f2b5cc8f9ef60b31d1d527b1d1e7671f",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "SPOTTING",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"SPOTTING\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "61b5b8d6fe3c36a5da0a8cd258ab1d3c1aaff831029ab4325d3d7da4d1bc0810",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "SPOTTING",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"SPOTTING\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "a0a173ba27026431b33d78c8020755db149ffdc246747f662eac45d96e7a005d",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "SPOTTING",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"SPOTTING\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "24afc777c2c68dcee23249aefcee91c15e096cd7e0081357f7c32f1bb9d4c46b",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"bad\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "LIGHT",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"LIGHT\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "3a827ee4fdbb3ff956052b65360fecffd3e694df1e9c95821c3eaba659f57bcb",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "LIGHT",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": "2024-03-17",
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"LIGHT\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "aafec098463603d9b5e19b07f8c5d193529f318bbe36149abc1307a354a7ece6",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-17\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "LIGHT",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": "2024-02-29",
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"LIGHT\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "a9a7ce1013bb54b0d7de44764a0511232981e899b6b91b90896df487f800fdac",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-02-29\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "LIGHT",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": "2024-03-01",
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"LIGHT\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "d5b69ed14f82ceac0e98252a48390bacfc882c1b2856c3e21dfd3cf3587d8f23",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "MODERATE",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"MODERATE\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "f03c00611fdd9bc99766b92067bbefe2569a6950610621b130f375e1cefe885f",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "MODERATE",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": "2024-03-17",
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"MODERATE\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "1c6d6144de56e3e4bb4ec8a0376715f26ecf23e609c26b7ace583105d69f606e",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-17\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "MODERATE",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": "2024-02-29",
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"MODERATE\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "9fdf0b25ab0b986e9086fdbf1a306d3318a25a5fce7f5aa28d43e90b2b045cf1",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-02-29\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "MODERATE",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": "2024-03-01",
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"MODERATE\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "2d064d41f9853753b2bc7d0e8f0a478d395fb9987001dd43f19abc3f881c5141",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "HEAVY",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "f20f7c2f75f59dab5c48f64b49efcc5226f32cb8e4e9b712a65eca076dde9f35",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "HEAVY",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": "2024-03-17",
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "5d1293cbaa9ca13f41141be1c7201e85b34e07c665fb15c453e595048e1a6047",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-17\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "HEAVY",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": "2024-02-29",
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "1a37de90e53cdfc1a3ee2f16678f695194f2eccbdbf595aadbfda954f882dabd",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-02-29\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "HEAVY",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": "2024-03-01",
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "bc069eb847c9ec8e7df0e980b35d0b69386f892e9d1e152639d5c148ae91b4c8",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNUSUALLY_HEAVY",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"UNUSUALLY_HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "0fa999f9e0414fdaa186ec50b79c3b8d752f8f994f3dd4e01e606bbbd7194686",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNUSUALLY_HEAVY",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": "2024-03-17",
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"UNUSUALLY_HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "63e520ab860059554f5c395b8b4e532775040efd0796e53e5cdb503730dd8768",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-17\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNUSUALLY_HEAVY",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": "2024-02-29",
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"UNUSUALLY_HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "79f24e5a9b22ca277157c3cf60ae7773da9d65159932117d01c6476e65e9bd87",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-02-29\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNUSUALLY_HEAVY",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": "2024-03-01",
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"UNUSUALLY_HEAVY\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "07ad8723838990adba2f4f25ed1b8028cd75a056ee8651933f981eff389ce640",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNKNOWN",
+      "date": "2024-03-16",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-16\",\"flow\":\"UNKNOWN\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "4ab28ca6e42e2a3654832ac8c5f0eca37c0e773d6df77090922bb4d04b2955ba",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNKNOWN",
+      "date": "2024-03-17",
+      "anchorBefore": "2024-03-01",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-17\",\"flow\":\"UNKNOWN\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "930ecbd0e0befa71c0a18510e3eeebb7795662c30046797554b69b7b814b1b3e",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"2024-03-01\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNKNOWN",
+      "date": "2024-02-29",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-02-29\",\"flow\":\"UNKNOWN\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "aaf16b228c218d1e1086838f58d67764b2e7fe4a684a00f7b8c946f96e0d9e6b",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "UNKNOWN",
+      "date": "2024-03-01",
+      "anchorBefore": "bad",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"UNKNOWN\",\"energy\":\"NORMAL\",\"mood\":\"CALM\",\"symptoms\":\"cramps,headache\",\"vaginal_health\":\"itching\",\"urinary_health\":\"urgency\",\"cervical_mucus\":\"EGG_WHITE\",\"ovulation_test\":\"POSITIVE\",\"bbt_celsius\":36.599998474121094,\"sleep_hours\":7.300000190734863,\"sleep_quality\":\"GOOD\",\"water_glasses\":6,\"notes\":\"α \\\/ quote\\\" \\n\",\"pain_intensity\":2}",
+      "hash": "b1e13ed30f89f2f3334de2087c5233c69820c5c42e60f7287d17fc8218f73409",
+      "settingsPayloadAfter": "{\"selected_goals\":\"cycle\",\"last_period_start_date\":\"bad\",\"average_cycle_length\":28,\"period_duration\":5,\"luteal_phase_days\":14,\"pregnancy_mode\":false,\"pregnancy_due_date\":\"\"}",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"\",\"mood\":\"\",\"symptoms\":\"\",\"vaginal_health\":\"\",\"urinary_health\":\"\",\"cervical_mucus\":\"\",\"ovulation_test\":\"NONE\",\"bbt_celsius\":0,\"sleep_hours\":0,\"sleep_quality\":\"\",\"water_glasses\":0,\"notes\":\"bits\",\"pain_intensity\":0}",
+      "hash": "2f5b6b78e14beb772bc9e63d39856d6bfe194f0a6adda75fcaeb8fbf8eceb316",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"\",\"mood\":\"\",\"symptoms\":\"\",\"vaginal_health\":\"\",\"urinary_health\":\"\",\"cervical_mucus\":\"\",\"ovulation_test\":\"NONE\",\"bbt_celsius\":-0,\"sleep_hours\":-0,\"sleep_quality\":\"\",\"water_glasses\":0,\"notes\":\"bits\",\"pain_intensity\":0}",
+      "hash": "28f9f79323d4a68e52822129b4a469caa1f751a46c9940eb9b49d6381351d5a6",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"\",\"mood\":\"\",\"symptoms\":\"\",\"vaginal_health\":\"\",\"urinary_health\":\"\",\"cervical_mucus\":\"\",\"ovulation_test\":\"NONE\",\"bbt_celsius\":36.650001525878906,\"sleep_hours\":36.650001525878906,\"sleep_quality\":\"\",\"water_glasses\":0,\"notes\":\"bits\",\"pain_intensity\":0}",
+      "hash": "55040719e0454fa23190215cee96c38bba6687cc512696e1d945d57b2c476c8a",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"\",\"mood\":\"\",\"symptoms\":\"\",\"vaginal_health\":\"\",\"urinary_health\":\"\",\"cervical_mucus\":\"\",\"ovulation_test\":\"NONE\",\"bbt_celsius\":1.401298464324817E-45,\"sleep_hours\":1.401298464324817E-45,\"sleep_quality\":\"\",\"water_glasses\":0,\"notes\":\"bits\",\"pain_intensity\":0}",
+      "hash": "e99a5b2247885d1e704156042d765e353dd9a330123c228ca519a70dda0c5a94",
+      "recorded": true
+    },
+    {
+      "flow": "",
+      "date": "2024-03-01",
+      "anchorBefore": "",
+      "anchorAfter": null,
+      "payload": "{\"date\":\"2024-03-01\",\"flow\":\"\",\"energy\":\"\",\"mood\":\"\",\"symptoms\":\"\",\"vaginal_health\":\"\",\"urinary_health\":\"\",\"cervical_mucus\":\"\",\"ovulation_test\":\"NONE\",\"bbt_celsius\":3.4028234663852886E38,\"sleep_hours\":3.4028234663852886E38,\"sleep_quality\":\"\",\"water_glasses\":0,\"notes\":\"bits\",\"pain_intensity\":0}",
+      "hash": "134e67f0cab3f2981b501ef946b9bcfe232ebf2bed8f893c12af1d71fdf03f00",
+      "recorded": true
+    }
+  ],
+  "deleteHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+}

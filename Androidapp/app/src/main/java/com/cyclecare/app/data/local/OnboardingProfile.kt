@@ -1,0 +1,34 @@
+package com.cyclecare.app.data.local
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+/**
+ * Room database entity storing user cycle tracking profile and preferences
+ * collected during the progressive CycleCare onboarding journey.
+ */
+@Entity(tableName = "onboarding_profiles")
+data class OnboardingProfile(
+    @PrimaryKey
+    val id: Int = 1,
+    val isCompleted: Boolean = true,
+    val completedAtTimestamp: Long = System.currentTimeMillis(),
+    val isAgeVerified: Boolean = true,
+    val isTermsAgreed: Boolean = true,
+    val accountMode: String = "PRIVATE", // "PRIVATE" or "SYNC_ACCOUNT"
+    val selectedGoalsCsv: String = "",
+    val lastPeriodDateString: String = "", // YYYY-MM-DD
+    // Raw episode record: the period end date exactly as entered/confirmed.
+    // Kept separate from periodDurationDays (the typical-duration estimate)
+    // so a real unusual entry is never silently rewritten to fit 2..10.
+    val lastPeriodEndDateString: String = "", // YYYY-MM-DD, "" when unknown/ongoing
+    val approximatePeriodChoice: String = "EXACT", // e.g., "EXACT", "Today", "A few days ago", etc.
+    val cycleLengthOption: String = "",
+    val cycleLengthDays: Int = 28,
+    val periodDurationDays: Int = 5,
+    val remindFertileWindow: Boolean = false,
+    val typicalSymptomsCsv: String = "",
+    val typicalEnergy: String = "",
+    val typicalSleepQuality: String = "",
+    val hasCompletedDeepBaseline: Boolean = false
+)

@@ -1,0 +1,62 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Outer Gold Ring -->
+    <path
+        android:pathData="M100,16 A84,84 0 1,1 99.9,16 Z"
+        android:strokeWidth="8"
+        android:strokeColor="#FFD4AF37" />
+
+    <!-- Royal Blue Sunken Core Surface -->
+    <path
+        android:pathData="M100,24 A76,76 0 1,1 99.9,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="100"
+                android:centerY="100"
+                android:gradientRadius="76">
+                <item android:offset="0.0" android:color="#FF0079C1" />
+                <item android:offset="0.6" android:color="#FF00457C" />
+                <item android:offset="1.0" android:color="#FF001C38" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- First P Emblem (Light Blue Glass) -->
+    <path
+        android:pathData="M72,60 L108,60 C122,60 132,68 132,82 C132,96 120,104 104,104 L88,104 L88,140 L72,140 L72,60 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="72"
+                android:startY="60"
+                android:endX="132"
+                android:endY="140">
+                <item android:offset="0.0" android:color="#FF0079C1" />
+                <item android:offset="1.0" android:color="#FF00457C" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Second Interlocking P Emblem (Golden Accent) -->
+    <path
+        android:pathData="M88,72 L120,72 C134,72 144,80 144,94 C144,108 132,116 116,116 L100,116 L100,148 L88,148 L88,72 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="88"
+                android:startY="72"
+                android:endX="144"
+                android:endY="148">
+                <item android:offset="0.0" android:color="#FFFFD700" />
+                <item android:offset="0.5" android:color="#FFE5B23A" />
+                <item android:offset="1.0" android:color="#FFB8860B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

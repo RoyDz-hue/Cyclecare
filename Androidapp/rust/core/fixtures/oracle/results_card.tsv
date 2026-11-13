@@ -1,0 +1,11 @@
+cc01	Valid
+cc02	Valid
+cc03	Invalid:Invalid card number. Checksum verification failed.
+cc04	Invalid:Card number must be between 13 and 19 digits.
+cc05	Invalid:Card number must be between 13 and 19 digits.
+cc06	Invalid:Card number must be between 13 and 19 digits.
+cc07	Valid
+cc08	Valid
+cc09	Invalid:Card number must contain digits only.
+cc10	Invalid:Card number is required.
+cc11	Valid

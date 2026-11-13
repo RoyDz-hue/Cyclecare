@@ -1,0 +1,8 @@
+cv01	Valid
+cv02	Valid
+cv03	Invalid:CVV must be 3 or 4 digits.
+cv04	Invalid:CVV must be 3 or 4 digits.
+cv05	Invalid:CVV must be numeric.
+cv06	Invalid:CVV is required.
+cv07	Valid
+cv08	Valid

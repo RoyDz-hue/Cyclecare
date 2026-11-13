@@ -1,0 +1,6 @@
+v01	TYPICAL	Your period lasted 3 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.
+v02	TYPICAL	Your period lasted 7 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.
+v03	UNUSUAL_CONFIRM	Your period lasted 8 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.
+v04	UNUSUAL_CONFIRM	Your period lasted 274 days. That's longer than usual. Please check the dates. If they're right, it's worth mentioning to a healthcare professional.
+v05	UNUSUAL_CONFIRM	Your period has lasted 8 days so far. That's longer than usual. Please check the start date. If it's right, it's worth speaking with a healthcare professional soon.
+v06	TYPICAL	Your period has lasted 1 days so far. That's longer than usual. Please check the start date. If it's right, it's worth speaking with a healthcare professional soon.

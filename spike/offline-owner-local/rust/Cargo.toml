@@ -1,0 +1,12 @@
+[package]
+name = "offline-owner-local"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+serde_json = "1"
+sha2 = "0.10"
+ryu = "1"
+regex = "1"
+unicode-general-category = "1"
+[workspace]

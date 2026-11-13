@@ -1,0 +1,7 @@
+org-json-aosp14.jar: the 8 org/json classes (JSON, JSONArray, JSONException, JSONObject, JSONObject$1, JSONStringer, JSONStringer$Scope, JSONTokener) extracted unmodified from
+org.robolectric:android-all-instrumented:14-robolectric-10818077-i7
+https://maven-central.storage-download.googleapis.com/maven2/org/robolectric/android-all-instrumented/14-robolectric-10818077-i7/android-all-instrumented-14-robolectric-10818077-i7.jar
+jar sha1 dd5e1d356107e9d99ebf58beb5329debe2849140 (matches the mirror's .sha1), 151,142,227 bytes. This is the exact artifact Codemagic build 6ae99731 prefetched for Robolectric SDK 34 (Android 14 AOSP).
+No Robolectric instrumentation in these classes (javap shows no robo members), so they run on a plain JVM.
+Public full artifact (non-instrumented): org.robolectric:android-all:14-robolectric-10818077 (same mirror path, sha1 94b1490a891e9be559aa35c87cd8a0c163f32d83).
+JDK 17: /home/sandbox/jdk17 (java 17.0.21, has javac) exists in the workspace box.

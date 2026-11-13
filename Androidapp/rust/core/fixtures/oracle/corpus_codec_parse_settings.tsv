@@ -1,0 +1,12 @@
+ps01	settings	{"selected_goals":"a,b","last_period_start_date":"2026-10-01","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps02	profile	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps03	settings	{"selected_goals":"","last_period_start_date":"2026-13-01","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps04	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":true,"pregnancy_due_date":"2026-02-30"}
+ps05	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":20,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps06	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":"false","pregnancy_due_date":""}
+ps07	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":"","surprise":1}
+ps08	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false}
+ps09	settings	{"selected_goals":5,"last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps10	settings	{"selected_goals":"","last_period_start_date":"2026-02-29","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}
+ps11	settings	{"selected_goals":"g","last_period_start_date":"2026-10-01","average_cycle_length":30,"period_duration":6,"luteal_phase_days":15,"pregnancy_mode":true,"pregnancy_due_date":"2027-01-01"}	isOnboardingCompleted=true,isAppLockEnabled=true,lockTimeoutMinutes=5,isDiscreetNotificationMode=false,remindPeriod=true,remindFertile=true,remindDailyLog=true
+ps12	settings	{"selected_goals":"","last_period_start_date":"","average_cycle_length":28,"period_duration":5,"luteal_phase_days":14,"pregnancy_mode":false,"pregnancy_due_date":""}	-

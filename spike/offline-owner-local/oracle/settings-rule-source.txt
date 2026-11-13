@@ -1,0 +1,7 @@
+            val changed = read?.copy(
+                cycleLengthOption = if (newSettings.averageCycleLength != previousAverageCycleLength) {
+                    "${newSettings.averageCycleLength} days"
+                } else read.cycleLengthOption,
+                cycleLengthDays = newSettings.averageCycleLength,
+                periodDurationDays = newSettings.periodDuration
+            )
