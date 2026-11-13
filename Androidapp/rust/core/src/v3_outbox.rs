@@ -209,7 +209,10 @@ pub fn run_v3_outbox(
                         break;
                     }
                     let next = now_ms() + retry_backoff_ms(e.attempts);
-                    dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                    // Same as :110 - a throw inside the catch block is not
+                    // re-caught; propagate like the Kotlin throw (fixes the
+                    // dropped-Result warning, semantics-exact).
+                    dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
                     continue;
                 }
                 let new_revision = e.base_revision + 1;
@@ -224,7 +227,9 @@ pub fn run_v3_outbox(
                             break;
                         }
                         let next = now_ms() + retry_backoff_ms(e.attempts);
-                        dao.retry(owner, &e.operation_id, next, "Backup needs another try");
+                        // Same as :110 - propagate like the Kotlin throw
+                        // (fixes the dropped-Result warning, semantics-exact).
+                        dao.retry(owner, &e.operation_id, next, "Backup needs another try")?;
                     }
                 }
             }
