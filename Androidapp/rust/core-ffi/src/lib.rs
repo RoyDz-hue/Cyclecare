@@ -1394,6 +1394,41 @@ fn dispatch(contract: &str, payload: &str) -> String {
                 _ => err("unknown op"),
             }
         })(),
+        "settings_steppers_v1" => (|| {
+            // NEW IMPLEMENTATION (recovery rebuild): JNI wiring of the
+            // existing parity port settings_core stepper cluster
+            // (ui/screens/SettingsScreen.kt cycleLengthIsSet :144-146 and
+            // the four stepper guards :510-538, main@31b88f5 lineage;
+            // settings_core JVM-oracle corpus, cycleLength + stepper
+            // sections). Pure decisions only; onUpdateSettings persistence
+            // stays at the original Kotlin point - only the guarded next
+            // value (or the no-op verdict) crosses back. The no-op verdict
+            // (next:null) declines to the twin, whose identical guard
+            // yields the same no-op.
+            let op = match v.get("op").and_then(|x| x.as_str()) { Some(s) => s, None => return err("op missing or not a string") };
+            match op {
+                "cycle_length_is_set" => {
+                    let raw = match v.get("option") {
+                        None => None,
+                        Some(x) if x.is_null() => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s), None => return err("option not a string") },
+                    };
+                    serde_json::json!({"ok":{"version":1,"is_set":corelib::settings_core::cycle_length_is_set(raw)}}).to_string()
+                }
+                "decrease_cycle_length" | "increase_cycle_length" | "decrease_period_duration" | "increase_period_duration" => {
+                    let value = match v.get("value").and_then(|x| x.as_i64()) { Some(n) => n, None => return err("value missing or not an integer") };
+                    let value = match i32::try_from(value) { Ok(n) => n, Err(_) => return err("value outside i32") };
+                    let next = match op {
+                        "decrease_cycle_length" => corelib::settings_core::decrease_cycle_length(value),
+                        "increase_cycle_length" => corelib::settings_core::increase_cycle_length(value),
+                        "decrease_period_duration" => corelib::settings_core::decrease_period_duration(value),
+                        _ => corelib::settings_core::increase_period_duration(value),
+                    };
+                    serde_json::json!({"ok":{"version":1,"next":next}}).to_string()
+                }
+                _ => err("unknown op"),
+            }
+        })(),
         "care_gateway_parse_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port care_ai::parse_gateway_response (CareAiService

@@ -140,10 +140,13 @@ fun SettingsScreenContent(
     modifier: Modifier = Modifier
 ) {
     val settings = uiState.settings
-    val cycleLengthChoice = uiState.onboardingProfile?.cycleLengthOption?.trim()?.lowercase().orEmpty()
-    val cycleLengthIsSet = cycleLengthChoice.isNotBlank() && cycleLengthChoice != "unknown" &&
-        !cycleLengthChoice.contains("don't know") && !cycleLengthChoice.contains("don’t know") &&
-        !cycleLengthChoice.contains("changes")
+    // NEW IMPLEMENTATION (recovery rebuild): native-first via the
+    // settings_steppers_v1 bridge (cycle_length_is_set op). The verbatim
+    // Kotlin twin runs on any null reply; the profile option is captured
+    // once at the original read point and passed to both.
+    val cycleLengthOptionRaw = uiState.onboardingProfile?.cycleLengthOption
+    val cycleLengthIsSet = com.cyclecare.app.rust.CycleCareCoreBridge.settingsCycleLengthIsSet(cycleLengthOptionRaw)
+        ?: kotlinCycleLengthIsSet(cycleLengthOptionRaw)
     var showUnifiedEraseDialog by remember { mutableStateOf(false) }
     var showAllObservations by remember { mutableStateOf(false) }
     var showAllPatterns by remember { mutableStateOf(false) }
@@ -507,13 +510,21 @@ fun SettingsScreenContent(
                             subtitle = "An estimate is fine; cycles can vary.",
                             valueText = if (cycleLengthIsSet) "${settings.averageCycleLength} days" else "Not set",
                             onDecrease = {
-                                if (settings.averageCycleLength > 21) {
-                                    onUpdateSettings(settings.copy(averageCycleLength = settings.averageCycleLength - 1))
+                                // NEW IMPLEMENTATION (recovery rebuild): native-first
+                                // stepper guard via settings_steppers_v1; the value is
+                                // captured once and persistence stays at this original
+                                // onUpdateSettings point.
+                                val v = settings.averageCycleLength
+                                val next = com.cyclecare.app.rust.CycleCareCoreBridge.settingsStepper("decrease_cycle_length", v) ?: kotlinDecreaseCycleLength(v)
+                                if (next != null) {
+                                    onUpdateSettings(settings.copy(averageCycleLength = next))
                                 }
                             },
                             onIncrease = {
-                                if (settings.averageCycleLength < 45) {
-                                    onUpdateSettings(settings.copy(averageCycleLength = settings.averageCycleLength + 1))
+                                val v = settings.averageCycleLength
+                                val next = com.cyclecare.app.rust.CycleCareCoreBridge.settingsStepper("increase_cycle_length", v) ?: kotlinIncreaseCycleLength(v)
+                                if (next != null) {
+                                    onUpdateSettings(settings.copy(averageCycleLength = next))
                                 }
                             }
                         )
@@ -525,13 +536,17 @@ fun SettingsScreenContent(
                             subtitle = "Typical number of bleeding days",
                             valueText = "${settings.periodDuration} days",
                             onDecrease = {
-                                if (settings.periodDuration > 2) {
-                                    onUpdateSettings(settings.copy(periodDuration = settings.periodDuration - 1))
+                                val v = settings.periodDuration
+                                val next = com.cyclecare.app.rust.CycleCareCoreBridge.settingsStepper("decrease_period_duration", v) ?: kotlinDecreasePeriodDuration(v)
+                                if (next != null) {
+                                    onUpdateSettings(settings.copy(periodDuration = next))
                                 }
                             },
                             onIncrease = {
-                                if (settings.periodDuration < 10) {
-                                    onUpdateSettings(settings.copy(periodDuration = settings.periodDuration + 1))
+                                val v = settings.periodDuration
+                                val next = com.cyclecare.app.rust.CycleCareCoreBridge.settingsStepper("increase_period_duration", v) ?: kotlinIncreasePeriodDuration(v)
+                                if (next != null) {
+                                    onUpdateSettings(settings.copy(periodDuration = next))
                                 }
                             }
                         )
@@ -1070,3 +1085,22 @@ private fun RankCoinsRow(uiState: CycleUiState) {
 
 /** A complete passcode is exactly 4 digits. Partial drafts are never valid. */
 internal fun isCompletePin(pin: String): Boolean = pin.length == 4 && pin.all { it.isDigit() }
+
+// NEW IMPLEMENTATION (recovery rebuild): verbatim Kotlin twins for the
+// settings_steppers_v1 native-first wiring above. Each runs on any null
+// reply; bodies are the original SettingsScreen expressions verbatim.
+
+private fun kotlinCycleLengthIsSet(cycleLengthOption: String?): Boolean {
+    val cycleLengthChoice = cycleLengthOption?.trim()?.lowercase().orEmpty()
+    return cycleLengthChoice.isNotBlank() && cycleLengthChoice != "unknown" &&
+        !cycleLengthChoice.contains("don't know") && !cycleLengthChoice.contains("don’t know") &&
+        !cycleLengthChoice.contains("changes")
+}
+
+private fun kotlinDecreaseCycleLength(v: Int): Int? = if (v > 21) v - 1 else null
+
+private fun kotlinIncreaseCycleLength(v: Int): Int? = if (v < 45) v + 1 else null
+
+private fun kotlinDecreasePeriodDuration(v: Int): Int? = if (v > 2) v - 1 else null
+
+private fun kotlinIncreasePeriodDuration(v: Int): Int? = if (v < 10) v + 1 else null

@@ -1332,6 +1332,42 @@ object CycleCareCoreBridge {
             else -> null
         }
     }
+    // NEW IMPLEMENTATION (recovery rebuild): settings_steppers_v1 bridge.
+    // Pure stepper/is-set decisions for SettingsScreen; persistence stays
+    // at the original Kotlin point - only the guarded next value (or the
+    // no-op verdict) crosses back.
+    fun settingsCycleLengthIsSet(option: String?): Boolean? {
+        val payload = JSONObject()
+            .put("op", "cycle_length_is_set")
+            .put("option", option ?: JSONObject.NULL)
+        val reply = call("settings_steppers_v1", payload) ?: return null
+        return decodeSettingsIsSet(reply)
+    }
+
+    internal fun decodeSettingsIsSet(reply: JSONObject): Boolean? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        return ok.opt("is_set") as? Boolean
+    }
+
+    fun settingsStepper(op: String, value: Int): Int? {
+        val payload = JSONObject()
+            .put("op", op)
+            .put("value", value)
+        val reply = call("settings_steppers_v1", payload) ?: return null
+        return decodeSettingsStepper(reply)
+    }
+
+    internal fun decodeSettingsStepper(reply: JSONObject): Int? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // The no-op verdict (next:null) declines: the twin's identical
+        // guard yields the same no-op.
+        return ok.opt("next") as? Int
+    }
+
     /**
      * NEW IMPLEMENTATION (2026-11-13): native-first sound feedback decision
      * core (sound_feedback_v1). Pure decision: the caller's single

@@ -8,8 +8,9 @@ import org.junit.Test
  * SupabaseNotificationService falls back to when notification_parse_v1
  * declines. The twin bodies are the original parseIsoTimestamp /
  * explicitPriorityOrNormal expressions verbatim; these pins ground them in
- * JVM semantics, mirroring the cases the Rust notifications corpus pins
- * against the same Kotlin behavior (NotificationParsingTest), plus the
+ * JVM semantics. The Rust-side pins are the Kotlin NotificationParsingTest
+ * cases mirrored in tests/notifications.rs plus these new tests (there is
+ * no cfg(test) corpus module for notifications), together with the
  * strict-parsing rejects the conservative FFI declines assume.
  * Expected timestamp constants are proleptic-Gregorian epoch arithmetic
  * (1970 epoch, UTC), equal to java.util time for these modern dates.
