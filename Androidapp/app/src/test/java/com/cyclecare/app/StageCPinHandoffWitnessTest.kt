@@ -50,15 +50,6 @@ class StageCPinHandoffWitnessTest {
         }
     }
 
-    private fun newHelper(context: Context, name: String): SupportSQLiteOpenHelper =
-        FrameworkSQLiteOpenHelperFactory().create(
-            SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
-                .callback(object : SupportSQLiteOpenHelper.Callback(1) {
-                    override fun onConfigure(db: SupportSQLiteDatabase) {}
-                    override fun onCreate(db: SupportSQLiteDatabase) {}
-                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
-                }).build()
-        )
 
     private fun scratchDb(): ScratchDb {
         val name = "stage-c-pin-${UUID.randomUUID()}"; dbNames += name
@@ -313,3 +304,13 @@ class StageCPinHandoffWitnessTest {
         assertFalse("plaintext no longer the stored value", reopened.pin == "4471")
     }
 }
+
+private fun newHelper(context: Context, name: String): SupportSQLiteOpenHelper =
+    FrameworkSQLiteOpenHelperFactory().create(
+        SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
+            .callback(object : SupportSQLiteOpenHelper.Callback(1) {
+                override fun onConfigure(db: SupportSQLiteDatabase) {}
+                override fun onCreate(db: SupportSQLiteDatabase) {}
+                override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            }).build()
+    )
