@@ -1035,6 +1035,33 @@ object CycleCareCoreBridge {
         }
     }
 
+    /**
+     * NEW IMPLEMENTATION (2026-11-13): native-first transaction-status
+     * history mapping (transaction_history_status_v1). Pure interpretation
+     * of the caller's httpSuccessful/body captures; a null reply (native
+     * absent, {"error"}, or strict-decode failure) means the caller runs its
+     * verbatim Kotlin twin.
+     */
+    fun transactionHistoryStatus(httpSuccessful: Boolean, body: String): String? {
+        val reply = call("transaction_history_status_v1", JSONObject()
+            .put("httpSuccessful", httpSuccessful)
+            .put("body", body)) ?: return null
+        return decodeTransactionHistoryStatus(reply)
+    }
+
+    internal fun decodeTransactionHistoryStatus(reply: JSONObject): String? {
+        val ok = reply.optJSONObject("ok") ?: return null
+        val version = ok.opt("version")
+        if (version !is Int || version != 1) return null
+        // The mapped history status is a closed vocabulary (historyStatus's
+        // outputs); anything else is drift and declines to the twin.
+        return when (val status = ok.opt("status")) {
+            "success", "pending", "failed", "cancelled", "canceled", "expired",
+            "refunded", "reversed", "ambiguous" -> status as String
+            else -> null
+        }
+    }
+
     internal fun decodeRemotePricingParse(reply: JSONObject): Map<String, com.cyclecare.app.data.economy.RemoteLocalPricing.LocalizedPrice>? {
         val ok = reply.optJSONObject("ok") ?: return null
         val version = ok.opt("version")

@@ -180,8 +180,13 @@ pub fn number_to_string(v: &JsonValue) -> String {
     }
 }
 
-/// org.json optString(key, default): absent/NULL -> default; String as-is;
-/// Boolean -> toString; Number -> numberToString; nested -> JSON text.
+/// AOSP android-14.0.0_r50 org.json optString(key, default):
+/// JSON.toString(opt(name)) ?: default, and JSON.toString is the String
+/// itself for strings, String.valueOf(value) for any other non-NULL value
+/// (Double 5.0 -> "5.0", no numberToString collapse), the literal "null"
+/// for JSONObject.NULL. Nested arrays/objects render their toString, and a
+/// toString collapse (non-finite inside) yields the DEFAULT. Arm-by-arm
+/// evidence comments are at the match below.
 pub fn aosp_opt_string(obj: &JsonValue, key: &str, default: &str) -> String {
     let v = match obj {
         JsonValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),

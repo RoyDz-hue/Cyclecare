@@ -229,6 +229,37 @@ impl PaymentStatusVerifier {
     }
 }
 
+/// SupabasePaymentService.checkTransactionStatus's response interpretation
+/// (main@31b88f5): the gated JSONArray -> getJSONObject(0) ->
+/// optString("status", "pending").lowercase() -> historyStatus chain. The
+/// source's fall-through (gate false, empty array) and every THROW path
+/// (JSONArray parse failure, getJSONObject on a non-object row) land in its
+/// catch (Exception) -> "ambiguous"; this returns "ambiguous" for exactly
+/// those paths. Pure interpretation: no I/O, no clock, no token.
+pub fn transaction_history_status(http_successful: bool, body: &str) -> String {
+    // response.isSuccessful && body.isNotBlank() - Kotlin isBlank.
+    if !http_successful || crate::kotlin_text::kotlin_is_blank(body) {
+        return "ambiguous".to_string();
+    }
+    // JSONArray(body): AOSP lenient tokener; a non-array root throws (caught
+    // -> "ambiguous"). Trailing content after the array is tolerated.
+    let items = match crate::sync_codec::JsonParser::new(body).parse() {
+        Ok(JsonValue::Array(items)) => items,
+        _ => return "ambiguous".to_string(),
+    };
+    // array.length() > 0, then getJSONObject(0) which throws on a non-object
+    // row (same catch). A NULL or scalar first row is therefore "ambiguous".
+    let obj = match items.first() {
+        Some(o @ JsonValue::Object(_)) => o,
+        _ => return "ambiguous".to_string(),
+    };
+    // optString("status", "pending"): absent -> "pending"; JSONObject.NULL ->
+    // the literal "null" (AOSP String.valueOf semantics, see aosp_opt_string).
+    let status = crate::sync_codec::aosp_opt_string(obj, "status", "pending");
+    // .lowercase() (Unicode) before historyStatus, which trims+lowercases again.
+    PaymentStatusVerifier::history_status(&status.to_lowercase())
+}
+
 /// java.net.URLEncoder.encode(s, UTF-8): [a-zA-Z0-9.-*_] verbatim, space -> '+',
 /// every other byte %XX uppercase.
 pub fn url_encode_utf8(s: &str) -> String {
@@ -291,5 +322,43 @@ mod tests {
         assert_eq!(V::capture_status(true, "{\"status\":200.0}"), PS::Ambiguous);
         assert_eq!(V::capture_status(true, "{\"status\":\"pending\",\"status\":\"refunded\"}"), PS::Refunded);
         assert_eq!(V::capture_status(true, "{\"status\":null}"), PS::Ambiguous);
+    }
+
+    /// Wired-surface pins for transaction_history_status (NEW IMPLEMENTATION,
+    /// 2026-11-13); mirrored by the Kotlin twin parity test against real
+    /// org.json. Written, NOT executed in this workspace.
+    #[test]
+    fn transaction_history_status_pins() {
+        use super::transaction_history_status as ths;
+        // Gate: !isSuccessful or blank body -> "ambiguous" (Kotlin isBlank:
+        // NBSP-only body is blank).
+        assert_eq!(ths(false, "[{\"status\":\"success\"}]"), "ambiguous");
+        assert_eq!(ths(true, ""), "ambiguous");
+        assert_eq!(ths(true, " \u{00A0} "), "ambiguous");
+        // JSONArray(body) throws on non-array roots -> "ambiguous".
+        assert_eq!(ths(true, "not json"), "ambiguous");
+        assert_eq!(ths(true, "{\"status\":\"success\"}"), "ambiguous");
+        // Empty array; non-object first row (getJSONObject(0) throws).
+        assert_eq!(ths(true, "[]"), "ambiguous");
+        assert_eq!(ths(true, "[null]"), "ambiguous");
+        assert_eq!(ths(true, "[\"x\"]"), "ambiguous");
+        // Mappings through optString("status","pending").lowercase() ->
+        // historyStatus (which also trims).
+        assert_eq!(ths(true, "[{\"status\":\"SUCCESS\"}]"), "success");
+        assert_eq!(ths(true, "[{\"status\":\"Paid\"}]"), "success");
+        assert_eq!(ths(true, "[{\"status\":\" processing \"}]"), "pending");
+        assert_eq!(ths(true, "[{\"status\":\"CANCELLED\"}]"), "cancelled");
+        assert_eq!(ths(true, "[{\"status\":\"refunded\"}]"), "refunded");
+        assert_eq!(ths(true, "[{\"status\":\"weird\"}]"), "ambiguous");
+        // Absent status -> default "pending".
+        assert_eq!(ths(true, "[{}]"), "pending");
+        // Explicit null -> literal "null" (String.valueOf(NULL)) -> ambiguous.
+        assert_eq!(ths(true, "[{\"status\":null}]"), "ambiguous");
+        // Numeric status coerces (String.valueOf: 200.0 -> "200.0").
+        assert_eq!(ths(true, "[{\"status\":200}]"), "ambiguous");
+        assert_eq!(ths(true, "[{\"status\":200.0}]"), "ambiguous");
+        // Only the FIRST row is read; duplicate keys last-wins.
+        assert_eq!(ths(true, "[{\"status\":\"success\"},{\"status\":\"failed\"}]"), "success");
+        assert_eq!(ths(true, "[{\"status\":\"pending\",\"status\":\"failed\"}]"), "failed");
     }
 }

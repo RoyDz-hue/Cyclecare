@@ -246,6 +246,25 @@ class SupabasePaymentService(
         PaymentStatusVerifier.captureStatus(httpSuccessful, body)
 
     /**
+     * Verbatim pre-wiring Kotlin (NEW IMPLEMENTATION twin, 2026-11-13): the
+     * original checkTransactionStatus response interpretation, reached
+     * whenever the native transaction_history_status_v1 reply is null. The
+     * JSONArray/getJSONObject throws land in the caller's catch exactly as
+     * before (the twin runs inside the same try), yielding "ambiguous".
+     */
+    private fun kotlinTransactionHistoryStatus(httpSuccessful: Boolean, body: String): String {
+        if (httpSuccessful && body.isNotBlank()) {
+            val array = JSONArray(body)
+            if (array.length() > 0) {
+                val obj = array.getJSONObject(0)
+                val status = obj.optString("status", "pending").lowercase()
+                return PaymentStatusVerifier.historyStatus(status)
+            }
+        }
+        return "ambiguous"
+    }
+
+    /**
      * Execute PayPal Capture Edge Function
      */
     suspend fun capturePaypalOrder(externalReference: String): Boolean =
@@ -298,17 +317,16 @@ class SupabasePaymentService(
                 .build()
 
             val response = client.newCall(request).execute()
+            // NEW IMPLEMENTATION (2026-11-13): native-first via
+            // transaction_history_status_v1. The response body is a
+            // consumable-once stream: capture it ONCE here, in the original
+            // read order (body, then isSuccessful), and hand the same two
+            // captures to the native route and, on any null reply, to the
+            // verbatim Kotlin twin. No transport, token, or write moves.
             val body = response.body?.string() ?: ""
-
-            if (response.isSuccessful && body.isNotBlank()) {
-                val array = JSONArray(body)
-                if (array.length() > 0) {
-                    val obj = array.getJSONObject(0)
-                    val status = obj.optString("status", "pending").lowercase()
-                    return@withContext PaymentStatusVerifier.historyStatus(status)
-                }
-            }
-            "ambiguous"
+            val httpSuccessful = response.isSuccessful
+            CycleCareCoreBridge.transactionHistoryStatus(httpSuccessful, body)
+                ?: kotlinTransactionHistoryStatus(httpSuccessful, body)
         } catch (e: Exception) {
             "ambiguous"
         }

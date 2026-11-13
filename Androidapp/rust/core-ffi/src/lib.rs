@@ -998,6 +998,21 @@ fn dispatch(contract: &str, payload: &str) -> String {
             let status = corelib::payment_safety::PaymentStatusVerifier::capture_status(http_successful, body);
             serde_json::json!({"ok":{"version":1,"status":status.kotlin_name()}}).to_string()
         })(),
+        "transaction_history_status_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
+            // parity port payment_safety::transaction_history_status
+            // (SupabasePaymentService.checkTransactionStatus's response
+            // interpretation, main@31b88f5 lineage). Pure interpretation:
+            // no I/O, no clock, no token; the httpSuccessful/body captures
+            // are taken by the Kotlin caller at the original read point.
+            // Lone-surrogate/hex-float constructs in the body trip the
+            // central unsupported-semantics marker and the transport
+            // declines to the Kotlin twin (real org.json).
+            let http_successful = match v.get("httpSuccessful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("httpSuccessful missing or not a boolean") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let status = corelib::payment_safety::transaction_history_status(http_successful, body);
+            serde_json::json!({"ok":{"version":1,"status":status}}).to_string()
+        })(),
         "session_token_expiry_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): JNI wiring of the existing
             // parity port session_token::token_expiry
