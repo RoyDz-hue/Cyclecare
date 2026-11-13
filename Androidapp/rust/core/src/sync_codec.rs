@@ -209,12 +209,16 @@ pub fn json_value_to_string(v: &JsonValue) -> String {
 /// JSONObject.java ctor -> JSON.typeMismatch(object, "JSONObject");
 /// JSON.java uses getClass().getName()). Value rendering follows AOSP
 /// toString (Double via Java Double.toString semantics; the NULL object
-/// renders "null", class "org.json.JSONObject$Null"). The `actual == null`
+/// renders "null"). NULL'S CLASS NAME IS SDK-DEPENDENT: the pinned SDK34
+/// oracle (reviewer-executed probe, 2026-11-13) has NULL as an anonymous
+/// class -> "org.json.JSONObject$1"; libcore main refactored it to a named
+/// class -> "org.json.JSONObject$Null". This port pins the SDK34 oracle,
+/// matching the Robolectric sdk=34 twin. The `actual == null`
 /// AOSP branch is unreachable from the JSONObject(String) ctor (nextValue
 /// never returns null) and is not reproduced.
 pub fn aosp_type_mismatch(actual: &JsonValue, required_type: &str) -> String {
     let (value, class) = match actual {
-        JsonValue::Null => ("null".to_string(), "org.json.JSONObject$Null"),
+        JsonValue::Null => ("null".to_string(), "org.json.JSONObject$1"),
         JsonValue::Bool(b) => (b.to_string(), "java.lang.Boolean"),
         JsonValue::Int(i) => (i.to_string(), "java.lang.Integer"),
         JsonValue::Long(l) => (l.to_string(), "java.lang.Long"),
@@ -279,12 +283,14 @@ impl<'a> JsonParser<'a> {
         Ok(v)
     }
 
-    /// AOSP JSONTokener.syntaxError: "msg at character N of INPUT".
-    /// pos is counted in CHARS here; AOSP counts UTF-16 units, so an input
-    /// carrying non-BMP chars before the error point reports a lower pos
-    /// (best-effort from the AOSP source port, not corpus-locked).
+    /// AOSP JSONTokener.syntaxError: "msg at character N of INPUT". AOSP's
+    /// pos counts UTF-16 UNITS (its index walks the Java String); self.pos
+    /// counts chars, so the reported position is recomputed as the UTF-16
+    /// length of the consumed prefix - exact for every input, including
+    /// non-BMP chars before the error point (a non-BMP char is 2 units).
     fn syntax_error<T>(&self, msg: &str) -> Result<T, String> {
-        Err(format!("{} at character {} of {}", msg, self.pos, self.src))
+        let utf16_pos: usize = self.chars[..self.pos].iter().map(|c| c.len_utf16()).sum();
+        Err(format!("{} at character {} of {}", msg, utf16_pos, self.src))
     }
 
     /// nextCleanInternal: skips whitespace and AOSP's three comment forms

@@ -311,6 +311,11 @@ class CallbackAuthFallbackParityTest {
         val mismatch = googleLinkResponseTwin(true, "[]", null)
         assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW, mismatch.kind)
         assertTrue(mismatch.message!!.contains("cannot be converted to JSONObject"))
+        // Literal-null body: SDK34 oracle class name org.json.JSONObject$1
+        // (reviewer-executed oracle probe), matching the native pin.
+        val nullBody = googleLinkResponseTwin(true, "null", null)
+        assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW, nullBody.kind)
+        assertEquals("Value null of type org.json.JSONObject\$1 cannot be converted to JSONObject", nullBody.message)
         assertEquals("x", googleLinkResponseTwin(true, """{"url":"x"}""", null).url)
         assertEquals("https://loc.example", googleLinkResponseTwin(true, """{"url":" "}""", "https://loc.example").url)
         assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR,

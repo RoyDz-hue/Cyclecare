@@ -491,6 +491,21 @@ mod tests {
             interpret_google_link_response(true, "5", None),
             GoogleLinkResponseDecision::ParseThrow(
                 "Value 5 of type java.lang.Integer cannot be converted to JSONObject".to_string()));
+        // Literal null body: nextValue yields JSONObject.NULL, whose class
+        // name is the SDK34-oracle anonymous "org.json.JSONObject$1"
+        // (reviewer-executed oracle probe; libcore main's named $Null is
+        // the same class renamed - SDK skew disclosed at aosp_type_mismatch).
+        assert_eq!(
+            interpret_google_link_response(true, "null", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Value null of type org.json.JSONObject$1 cannot be converted to JSONObject".to_string()));
+        // UTF-16 positions: AOSP's syntax-error pos counts UTF-16 UNITS,
+        // not chars. Here the 💩 before the error point is 2 units, so the
+        // position is 7 (a char-counting port would report 6).
+        assert_eq!(
+            interpret_google_link_response(true, "{\"💩\" 1}", None),
+            GoogleLinkResponseDecision::ParseThrow(
+                "Expected ':' after object key at character 7 of {\"💩\" 1}".to_string()));
         // optString coercion: an explicit null url is the STRING "null" -
         // non-blank, so it IS the resolved url (weird, source-true).
         assert_eq!(
