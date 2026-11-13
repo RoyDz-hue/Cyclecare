@@ -1291,6 +1291,113 @@ object CycleCareCoreBridge {
      * completeAuthCode. TOKENS: proceed to the /user request with the raw
      * link fields (expiry values stay STRINGS - the commit converts with
      * toLongOrNull at its own clock point). */
+    // ---------- Google auth URL surface (NEW IMPLEMENTATION wiring,
+    // 2026-11-13; auth_google::interpret_*). NON-CLOCK decisions only:
+    // SecureRandom (PKCE) and the clock-governed token resolution stay at
+    // their original Kotlin points; the verifier and the token never cross
+    // (a presence bool does). ----------
+
+    enum class GooglePreKind { ERROR, PROCEED }
+    data class GooglePreDecision(val kind: GooglePreKind, val message: String?)
+
+    internal fun decodeGooglePreDecision(reply: JSONObject): GooglePreDecision? {
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error" -> GooglePreDecision(GooglePreKind.ERROR, strictMessage(ok) ?: return null)
+            "proceed" -> GooglePreDecision(GooglePreKind.PROCEED, null)
+            else -> null
+        }
+    }
+
+    /** createGoogleSignInUrl's pre-guards (secure storage, then the
+     * signed-in guard) - both reads are side-effect-free. */
+    fun authGoogleSignInPre(secureStorageAvailable: Boolean, userId: String?): GooglePreDecision? {
+        val reply = call("auth_google_sign_in_pre_v1", JSONObject()
+            .put("secureStorageAvailable", secureStorageAvailable)
+            .put("userId", userId ?: JSONObject.NULL)) ?: return null
+        return decodeGooglePreDecision(reply)
+    }
+
+    /** createGoogleLinkUrl's secure gate. Call BEFORE token resolution so
+     * the source's observable order (no refresh network call when secure
+     * storage is unavailable) is preserved. */
+    fun authGoogleLinkSecurePre(secureStorageAvailable: Boolean): GooglePreDecision? {
+        val reply = call("auth_google_link_secure_pre_v1", JSONObject()
+            .put("secureStorageAvailable", secureStorageAvailable)) ?: return null
+        return decodeGooglePreDecision(reply)
+    }
+
+    /** createGoogleLinkUrl's token-presence gate. The token itself never
+     * crosses - a resolution bool does. */
+    fun authGoogleLinkTokenPre(tokenResolved: Boolean): GooglePreDecision? {
+        val reply = call("auth_google_link_token_pre_v1", JSONObject()
+            .put("tokenResolved", tokenResolved)) ?: return null
+        return decodeGooglePreDecision(reply)
+    }
+
+    enum class GoogleResolveKind { LINK, SIGN_IN }
+
+    /** resolveGoogleAuthUrl's branch: ANONYMOUS + non-blank userId -> LINK. */
+    fun authGoogleResolve(accountMode: String?, userId: String?): GoogleResolveKind? {
+        val reply = call("auth_google_resolve_v1", JSONObject()
+            .put("accountMode", accountMode ?: JSONObject.NULL)
+            .put("userId", userId ?: JSONObject.NULL)) ?: return null
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "link" -> GoogleResolveKind.LINK
+            "sign_in" -> GoogleResolveKind.SIGN_IN
+            else -> null
+        }
+    }
+
+    /** The authorize-URL assembly (URLEncoder + concatenation; the link
+     * flow trims the base, uses the identities path and appends
+     * skip_http_redirect=true). The challenge crosses in; the verifier
+     * never does. */
+    fun authGoogleAuthorizeUrl(authApiUrl: String, challenge: String, linkFlow: Boolean): String? {
+        val reply = call("auth_google_authorize_url_v1", JSONObject()
+            .put("authApiUrl", authApiUrl)
+            .put("challenge", challenge)
+            .put("linkFlow", linkFlow)) ?: return null
+        val ok = strictOk(reply) ?: return null
+        if (ok.opt("verdict") != "url") return null
+        return ok.opt("url") as? String
+    }
+
+    enum class GoogleLinkResponseKind { ERROR_CLEAR, PARSE_THROW, URL }
+    data class GoogleLinkResponseDecision(val kind: GoogleLinkResponseKind, val message: String?, val url: String?)
+
+    /** createGoogleLinkUrl's response interpretation. ERROR_CLEAR carries
+     * the source's clearPendingAuthFlow() commit (call site) + an
+     * IllegalStateException; PARSE_THROW has NO commit and the AOSP
+     * JSONException message propagates (call site throws JSONException). */
+    fun authGoogleLinkResponse(successful: Boolean, body: String, location: String?): GoogleLinkResponseDecision? {
+        val reply = call("auth_google_link_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body)
+            .put("location", location ?: JSONObject.NULL)) ?: return null
+        val ok = strictOk(reply) ?: return null
+        return when (ok.opt("verdict")) {
+            "error_clear" -> GoogleLinkResponseDecision(GoogleLinkResponseKind.ERROR_CLEAR,
+                strictMessage(ok) ?: return null, null)
+            "parse_throw" -> GoogleLinkResponseDecision(GoogleLinkResponseKind.PARSE_THROW,
+                strictMessage(ok) ?: return null, null)
+            "url" -> GoogleLinkResponseDecision(GoogleLinkResponseKind.URL, null,
+                ok.opt("url") as? String ?: return null)
+            else -> null
+        }
+    }
+
+    /** isCycleCareAdmin's response interpretation (trim + ignoreCase true). */
+    fun authAdminResponse(successful: Boolean, body: String?): Boolean? {
+        val reply = call("auth_admin_response_v1", JSONObject()
+            .put("successful", successful)
+            .put("body", body ?: JSONObject.NULL)) ?: return null
+        val ok = strictOk(reply) ?: return null
+        if (ok.opt("verdict") != "bool") return null
+        return ok.opt("value") as? Boolean
+    }
+
     enum class CbParseParamsKind { INVALID, PARAMS }
     data class CbParseParamsDecision(val kind: CbParseParamsKind, val pairs: List<Pair<String, String>> = emptyList())
 

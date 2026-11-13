@@ -1004,6 +1004,114 @@ fn dispatch(contract: &str, payload: &str) -> String {
                     serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
             }
         })(),
+        "auth_google_sign_in_pre_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): createGoogleSignInUrl's
+            // NON-CLOCK pre-guards (auth_google::interpret_google_sign_in_pre).
+            let secure = match v.get("secureStorageAvailable").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("secureStorageAvailable missing or not a bool") };
+            let user_id = match v.get("userId") {
+                None => None,
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err("userId not a string or null") },
+            };
+            match corelib::auth_google::interpret_google_sign_in_pre(secure, user_id.as_deref()) {
+                corelib::auth_google::GooglePreDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_google::GooglePreDecision::Proceed =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"proceed"}}).to_string(),
+            }
+        })(),
+        "auth_google_link_secure_pre_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): createGoogleLinkUrl's secure
+            // gate (auth_google::interpret_google_link_secure_pre), called
+            // BEFORE the source's clock-governed token resolution.
+            let secure = match v.get("secureStorageAvailable").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("secureStorageAvailable missing or not a bool") };
+            match corelib::auth_google::interpret_google_link_secure_pre(secure) {
+                corelib::auth_google::GooglePreDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_google::GooglePreDecision::Proceed =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"proceed"}}).to_string(),
+            }
+        })(),
+        "auth_google_link_token_pre_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): createGoogleLinkUrl's token
+            // gate (auth_google::interpret_google_link_token_pre). The
+            // TOKEN ITSELF never crosses - a resolution bool does (same
+            // accounting as the verifier bool).
+            let resolved = match v.get("tokenResolved").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("tokenResolved missing or not a bool") };
+            match corelib::auth_google::interpret_google_link_token_pre(resolved) {
+                corelib::auth_google::GooglePreDecision::Error(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error","message":m}}).to_string(),
+                corelib::auth_google::GooglePreDecision::Proceed =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"proceed"}}).to_string(),
+            }
+        })(),
+        "auth_google_resolve_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): resolveGoogleAuthUrl's branch
+            // (auth_google::interpret_google_resolve).
+            macro_rules! opt_s {
+                ($key:literal) => {
+                    match v.get($key) {
+                        None => None,
+                        Some(serde_json::Value::Null) => None,
+                        Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err(concat!($key, " not a string or null")) },
+                    }
+                };
+            }
+            let account_mode = opt_s!("accountMode");
+            let user_id = opt_s!("userId");
+            match corelib::auth_google::interpret_google_resolve(account_mode.as_deref(), user_id.as_deref()) {
+                corelib::auth_google::GoogleResolveDecision::Link =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"link"}}).to_string(),
+                corelib::auth_google::GoogleResolveDecision::SignIn =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"sign_in"}}).to_string(),
+            }
+        })(),
+        "auth_google_authorize_url_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): the authorize-URL assembly
+            // (auth_google::assemble_google_authorize_url). The challenge
+            // crosses IN (Kotlin-generated; the VERIFIER never crosses);
+            // the assembled URL crosses OUT - the caller builds the same
+            // string today (same-device JNI copy, standing accounting).
+            let base = match v.get("authApiUrl").and_then(|x| x.as_str()) { Some(s) => s, None => return err("authApiUrl missing or not a string") };
+            let challenge = match v.get("challenge").and_then(|x| x.as_str()) { Some(s) => s, None => return err("challenge missing or not a string") };
+            let link_flow = match v.get("linkFlow").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("linkFlow missing or not a bool") };
+            let url = corelib::auth_google::assemble_google_authorize_url(base, challenge, link_flow);
+            serde_json::json!({"ok":{"version":1,"verdict":"url","url":url}}).to_string()
+        })(),
+        "auth_google_link_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): createGoogleLinkUrl's
+            // NON-CLOCK response interpretation (auth_google::
+            // interpret_google_link_response). The response body crosses
+            // IN; the commit and the throw stay at the Kotlin call site.
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body").and_then(|x| x.as_str()) { Some(s) => s, None => return err("body missing or not a string") };
+            let location = match v.get("location") {
+                None => None,
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err("location not a string or null") },
+            };
+            match corelib::auth_google::interpret_google_link_response(successful, body, location.as_deref()) {
+                corelib::auth_google::GoogleLinkResponseDecision::ErrorClear(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"error_clear","message":m}}).to_string(),
+                corelib::auth_google::GoogleLinkResponseDecision::ParseThrow(m) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"parse_throw","message":m}}).to_string(),
+                corelib::auth_google::GoogleLinkResponseDecision::Url(u) =>
+                    serde_json::json!({"ok":{"version":1,"verdict":"url","url":u}}).to_string(),
+            }
+        })(),
+        "auth_admin_response_v1" => (|| {
+            // NEW IMPLEMENTATION (2026-11-13): isCycleCareAdmin's response
+            // interpretation (auth_google::interpret_admin_response):
+            // body?.trim().equals("true", ignoreCase = true).
+            let successful = match v.get("successful").and_then(|x| x.as_bool()) { Some(b) => b, None => return err("successful missing or not a bool") };
+            let body = match v.get("body") {
+                None => None,
+                Some(serde_json::Value::Null) => None,
+                Some(x) => match x.as_str() { Some(s) => Some(s.to_string()), None => return err("body not a string or null") },
+            };
+            let value = corelib::auth_google::interpret_admin_response(successful, body.as_deref());
+            serde_json::json!({"ok":{"version":1,"verdict":"bool","value":value}}).to_string()
+        })(),
         "auth_cb_parse_params_v1" => (|| {
             // NEW IMPLEMENTATION (2026-11-13): parseAuthCallbackParameters'
             // NON-CLOCK gate + absorb + conflict logic (auth_uri::

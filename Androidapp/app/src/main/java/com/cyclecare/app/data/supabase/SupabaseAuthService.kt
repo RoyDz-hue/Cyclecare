@@ -58,15 +58,19 @@ class SupabaseAuthService(
     /** Build a Supabase Google OAuth URL using PKCE; existing local accounts must not be replaced. */
     fun createGoogleSignInUrl(): String = createGoogleSignInUrl(requestOrigin())
     private fun createGoogleSignInUrl(origin:RequestOrigin): String {
-        check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Sign-in is disabled until device security is restored." }
-        if (!authPreferences.userId.isNullOrBlank()) {
-            throw IllegalStateException("To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.")
-        }
+        // Native-first NON-CLOCK pre-guards (NEW IMPLEMENTATION wiring,
+        // 2026-11-13): the secure-storage check and the signed-in guard,
+        // in source order (both reads are side-effect-free). Both gates
+        // throw IllegalStateException in the source; messages verbatim.
+        val pre = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleSignInPre(isSecureStorageAvailable, authPreferences.userId)
+            ?: googleSignInPreKotlin()
+        if (pre.kind == com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR)
+            throw IllegalStateException(pre.message)
         val challenge = beginPkceFlow(AUTH_ACTION_GOOGLE,origin).challenge
-        val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
-        return "$authApiUrl/authorize?provider=google" +
-            "&redirect_to=${encodedRedirect()}" +
-            "&code_challenge=$encodedChallenge&code_challenge_method=s256"
+        // Native-first URL assembly (URLEncoder + concatenation); the
+        // challenge is Kotlin-generated and the verifier never crosses.
+        return com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleAuthorizeUrl(authApiUrl, challenge, false)
+            ?: googleAuthorizeUrlKotlin(challenge, false)
     }
 
     /**
@@ -78,7 +82,11 @@ class SupabaseAuthService(
         val origin=requestOrigin().also{it.job=kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]}
         return withContext(Dispatchers.IO) {
         check(originCurrent(origin)){"stale_auth_attempt"}
-        if (authPreferences.accountMode == "ANONYMOUS" && !authPreferences.userId.isNullOrBlank()) {
+        // Native-first NON-CLOCK branch (NEW IMPLEMENTATION wiring,
+        // 2026-11-13); the two reads are single captures passed through.
+        val googleRoute = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleResolve(
+            authPreferences.accountMode, authPreferences.userId) ?: googleResolveKotlin()
+        if (googleRoute == com.cyclecare.app.rust.CycleCareCoreBridge.GoogleResolveKind.LINK) {
             createGoogleLinkUrl(origin)
         } else {
             createGoogleSignInUrl(origin)
@@ -93,18 +101,29 @@ class SupabaseAuthService(
      * upgrades the guest account instead of creating a new one.
      */
     private suspend fun createGoogleLinkUrl(origin:RequestOrigin): String {
-        check(isSecureStorageAvailable) { "Secure credential storage is unavailable. Linking is disabled until device security is restored." }
-        val token = SupabaseSessionManager.validAccessToken(authPreferences)
-            ?: throw IllegalStateException("Your guest session needs a refresh. Reconnect and try again.")
+        // Native-first NON-CLOCK gates (NEW IMPLEMENTATION wiring,
+        // 2026-11-13), preserving the source's OBSERVABLE order: the
+        // secure gate runs BEFORE the clock-governed token resolution (no
+        // refresh network call when secure storage is unavailable), the
+        // token-presence gate after it. The token itself never crosses.
+        val secureGate = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleLinkSecurePre(isSecureStorageAvailable)
+            ?: googleLinkSecurePreKotlin()
+        if (secureGate.kind == com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR)
+            throw IllegalStateException(secureGate.message)
+        val resolvedToken = SupabaseSessionManager.validAccessToken(authPreferences)
+        val tokenGate = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleLinkTokenPre(resolvedToken != null)
+            ?: googleLinkTokenPreKotlin(resolvedToken != null)
+        if (tokenGate.kind == com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR)
+            throw IllegalStateException(tokenGate.message)
+        val token = resolvedToken!!
         val flow = beginPkceFlow(AUTH_ACTION_GOOGLE_LINK,origin)
         val challenge = flow.challenge
         val current={originCurrent(origin)&&flow.matches(authPreferences)}
-        val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
+        // Native-first URL assembly (the identities path + skip flag).
+        val authorizeUrl = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleAuthorizeUrl(authApiUrl, challenge, true)
+            ?: googleAuthorizeUrlKotlin(challenge, true)
         val request = Request.Builder()
-            .url("${authApiUrl.trimEnd('/')}/user/identities/authorize?provider=google" +
-                "&redirect_to=${encodedRedirect()}" +
-                "&code_challenge=$encodedChallenge&code_challenge_method=s256" +
-                "&skip_http_redirect=true")
+            .url(authorizeUrl)
             .header("apikey", apiKey)
             .header("Authorization", "Bearer $token")
             .get()
@@ -113,18 +132,24 @@ class SupabaseAuthService(
         val body = response.body?.string().orEmpty()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
         check(current()){"stale_auth_attempt"}
-        if (!response.isSuccessful) {
-            authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()}
-            throw IllegalStateException(AuthErrorMessages.forResponse(body, AuthOperation.ACCOUNT_LINK))
+        // Native-first NON-CLOCK response interpretation (NEW
+        // IMPLEMENTATION wiring, 2026-11-13). ERROR_CLEAR carries the
+        // source's clearPendingAuthFlow() commit + IllegalStateException;
+        // PARSE_THROW reproduces the source's UNCAUGHT JSONObject(body)
+        // throw (no commit, AOSP message, JSONException type).
+        val linkDecision = com.cyclecare.app.rust.CycleCareCoreBridge.authGoogleLinkResponse(
+            response.isSuccessful, body, response.header("Location"))
+            ?: googleLinkResponseKotlin(response.isSuccessful, body, response.header("Location"))
+        when (linkDecision.kind) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR -> {
+                authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()}
+                throw IllegalStateException(linkDecision.message)
+            }
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW ->
+                throw org.json.JSONException(linkDecision.message)
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.URL -> {}
         }
-        val url = JSONObject(body).optString("url").ifBlank {
-            response.header("Location").orEmpty()
-        }
-        if (url.isBlank()) {
-            authPreferences.mutatePublicationIdentityIfCurrent(origin.identity,current){clearPendingAuthFlow()}
-            throw IllegalStateException(AuthErrorMessages.fallback(AuthOperation.ACCOUNT_LINK))
-        }
-        return url
+        return linkDecision.url ?: throw IllegalStateException(AuthErrorMessages.fallback(AuthOperation.ACCOUNT_LINK))
     }
 
     suspend fun signUp(email: String, password: String): AuthResult {
@@ -562,7 +587,11 @@ class SupabaseAuthService(
                 .post("{}".toRequestBody(jsonMediaType))
                 .build()
             client.newCall(request).execute().use { response ->
-                response.isSuccessful && response.body?.string()?.trim().equals("true", ignoreCase = true)
+                // Single body read (the stream is consumable once), then
+                // native-first interpretation (NEW IMPLEMENTATION wiring).
+                val adminBody = response.body?.string()
+                com.cyclecare.app.rust.CycleCareCoreBridge.authAdminResponse(response.isSuccessful, adminBody)
+                    ?: adminResponseKotlin(response.isSuccessful, adminBody)
             }
         } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled} catch (_: Exception) {
             false
@@ -733,6 +762,93 @@ class SupabaseAuthService(
         if (result.containsKey("code") && (result.containsKey("access_token") || result.containsKey("refresh_token"))) return null
         return result
     }
+
+    /** Verbatim Kotlin fallback of the native Google sign-in pre-guards
+     * (NEW IMPLEMENTATION wiring, 2026-11-13): the original
+     * createGoogleSignInUrl guard statements, as a decision. */
+    private fun googleSignInPreKotlin(): com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision {
+        if (!isSecureStorageAvailable)
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR,
+                "Secure credential storage is unavailable. Sign-in is disabled until device security is restored.")
+        if (!authPreferences.userId.isNullOrBlank())
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR,
+                "To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.")
+        return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.PROCEED, null)
+    }
+
+    /** Verbatim Kotlin fallback of the native Google link secure gate. */
+    private fun googleLinkSecurePreKotlin(): com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision {
+        if (!isSecureStorageAvailable)
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR,
+                "Secure credential storage is unavailable. Linking is disabled until device security is restored.")
+        return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.PROCEED, null)
+    }
+
+    /** Verbatim Kotlin fallback of the native Google link token gate. */
+    private fun googleLinkTokenPreKotlin(tokenResolved: Boolean): com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision {
+        if (!tokenResolved)
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.ERROR,
+                "Your guest session needs a refresh. Reconnect and try again.")
+        return com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreDecision(
+            com.cyclecare.app.rust.CycleCareCoreBridge.GooglePreKind.PROCEED, null)
+    }
+
+    /** Verbatim Kotlin fallback of the native resolveGoogleAuthUrl branch. */
+    private fun googleResolveKotlin(): com.cyclecare.app.rust.CycleCareCoreBridge.GoogleResolveKind =
+        if (authPreferences.accountMode == "ANONYMOUS" && !authPreferences.userId.isNullOrBlank())
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleResolveKind.LINK
+        else com.cyclecare.app.rust.CycleCareCoreBridge.GoogleResolveKind.SIGN_IN
+
+    /** Verbatim Kotlin fallback of the native authorize-URL assembly. */
+    private fun googleAuthorizeUrlKotlin(challenge: String, linkFlow: Boolean): String {
+        val encodedChallenge = URLEncoder.encode(challenge, StandardCharsets.UTF_8.name())
+        return if (linkFlow) {
+            "${authApiUrl.trimEnd('/')}/user/identities/authorize?provider=google" +
+                "&redirect_to=${encodedRedirect()}" +
+                "&code_challenge=$encodedChallenge&code_challenge_method=s256" +
+                "&skip_http_redirect=true"
+        } else {
+            "$authApiUrl/authorize?provider=google" +
+                "&redirect_to=${encodedRedirect()}" +
+                "&code_challenge=$encodedChallenge&code_challenge_method=s256"
+        }
+    }
+
+    /** Verbatim Kotlin fallback of the native Google link response
+     * interpretation: the original statements (the JSONObject throw
+     * propagates as PARSE_THROW, matching the uncaught source shape). */
+    private fun googleLinkResponseKotlin(isSuccessful: Boolean, body: String, location: String?):
+        com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseDecision {
+        if (!isSuccessful)
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR,
+                AuthErrorMessages.forResponse(body, AuthOperation.ACCOUNT_LINK), null)
+        val parsed = try {
+            JSONObject(body).optString("url")
+        } catch (e: org.json.JSONException) {
+            return com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW, e.message, null)
+        }
+        val resolved = parsed.ifBlank { location.orEmpty() }
+        return if (resolved.isBlank()) {
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR,
+                AuthErrorMessages.fallback(AuthOperation.ACCOUNT_LINK), null)
+        } else {
+            com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseDecision(
+                com.cyclecare.app.rust.CycleCareCoreBridge.GoogleLinkResponseKind.URL, null, resolved)
+        }
+    }
+
+    /** Verbatim Kotlin fallback of the native admin interpretation. */
+    private fun adminResponseKotlin(isSuccessful: Boolean, body: String?): Boolean =
+        isSuccessful && body?.trim().equals("true", ignoreCase = true)
 
     /** Synthetic scheduling probe only. No production caller installs it. */
     internal var afterPkceCreatedForTests:(()->Unit)?=null

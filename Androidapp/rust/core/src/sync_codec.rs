@@ -202,6 +202,30 @@ pub fn json_value_to_string(v: &JsonValue) -> String {
     out
 }
 
+/// AOSP JSON.typeMismatch(actual, requiredType), the JSONObject(JSONTokener)
+/// ctor's non-object rejection: "Value <actual> of type <actual.getClass()
+/// .getName()> cannot be converted to <requiredType>". getName() is the
+/// FULLY QUALIFIED name (verified against libcore main, 2026-11-13:
+/// JSONObject.java ctor -> JSON.typeMismatch(object, "JSONObject");
+/// JSON.java uses getClass().getName()). Value rendering follows AOSP
+/// toString (Double via Java Double.toString semantics; the NULL object
+/// renders "null", class "org.json.JSONObject$Null"). The `actual == null`
+/// AOSP branch is unreachable from the JSONObject(String) ctor (nextValue
+/// never returns null) and is not reproduced.
+pub fn aosp_type_mismatch(actual: &JsonValue, required_type: &str) -> String {
+    let (value, class) = match actual {
+        JsonValue::Null => ("null".to_string(), "org.json.JSONObject$Null"),
+        JsonValue::Bool(b) => (b.to_string(), "java.lang.Boolean"),
+        JsonValue::Int(i) => (i.to_string(), "java.lang.Integer"),
+        JsonValue::Long(l) => (l.to_string(), "java.lang.Long"),
+        JsonValue::Double(d) => (java_double_to_string(*d), "java.lang.Double"),
+        JsonValue::Str(s) => (s.clone(), "java.lang.String"),
+        JsonValue::Array(_) => (json_value_to_string(actual), "org.json.JSONArray"),
+        JsonValue::Object(_) => (json_value_to_string(actual), "org.json.JSONObject"),
+    };
+    format!("Value {value} of type {class} cannot be converted to {required_type}")
+}
+
 fn write_value(v: &JsonValue, out: &mut String) {
     match v {
         JsonValue::Null => out.push_str("null"),
@@ -240,21 +264,27 @@ fn write_value(v: &JsonValue, out: &mut String) {
 pub struct JsonParser<'a> {
     chars: Vec<char>,
     pos: usize,
-    _src: &'a str,
+    src: &'a str,
 }
 
 impl<'a> JsonParser<'a> {
     pub fn new(src: &'a str) -> Self {
-        JsonParser { chars: src.chars().collect(), pos: 0, _src: src }
+        JsonParser { chars: src.chars().collect(), pos: 0, src }
     }
 
+    /// AOSP JSONTokener.nextValue: the FIRST value only, no trailing-content
+    /// check (the JSONObject(JSONTokener) ctor does not check one either).
     pub fn parse(&mut self) -> Result<JsonValue, String> {
         let v = self.next_value()?;
         Ok(v)
     }
 
+    /// AOSP JSONTokener.syntaxError: "msg at character N of INPUT".
+    /// pos is counted in CHARS here; AOSP counts UTF-16 units, so an input
+    /// carrying non-BMP chars before the error point reports a lower pos
+    /// (best-effort from the AOSP source port, not corpus-locked).
     fn syntax_error<T>(&self, msg: &str) -> Result<T, String> {
-        Err(format!("{} at character {}", msg, self.pos))
+        Err(format!("{} at character {} of {}", msg, self.pos, self.src))
     }
 
     /// nextCleanInternal: skips whitespace and AOSP's three comment forms

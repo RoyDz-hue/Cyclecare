@@ -20,7 +20,9 @@ import java.util.UUID
  * Regression pins for the VERBATIM Kotlin fallback twins of the native
  * auth-callback wiring (NEW IMPLEMENTATION wiring, 2026-11-13):
  * completeEmailLink's parameter interpretation and /user interpretation,
- * completeAuthCode's pre-flight and token-response interpretation. Every
+ * completeAuthCode's pre-flight and token-response interpretation, and the
+ * Google auth URL surface (pre-guards, resolve branch, URL assembly, link
+ * response and admin interpretation). Every
  * commit and the expiry clock read stay at the call sites - NOT in these
  * seams. Reflection reaches the private twins; production callers stay
  * untouched. Written for execution on a build host; not executed in this
@@ -54,6 +56,52 @@ class CallbackAuthFallbackParityTest {
         val m = SupabaseAuthService::class.java.getDeclaredMethod("interpretCbCodePreKotlin")
         m.isAccessible = true
         return m.invoke(service(prefs)) as CycleCareCoreBridge.CbCodePreDecision
+    }
+
+    private fun googleSignInPreTwin(prefs: AuthPreferences): CycleCareCoreBridge.GooglePreDecision {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod("googleSignInPreKotlin")
+        m.isAccessible = true
+        return m.invoke(service(prefs)) as CycleCareCoreBridge.GooglePreDecision
+    }
+
+    private fun googleLinkSecurePreTwin(prefs: AuthPreferences): CycleCareCoreBridge.GooglePreDecision {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod("googleLinkSecurePreKotlin")
+        m.isAccessible = true
+        return m.invoke(service(prefs)) as CycleCareCoreBridge.GooglePreDecision
+    }
+
+    private fun googleLinkTokenPreTwin(tokenResolved: Boolean): CycleCareCoreBridge.GooglePreDecision {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod("googleLinkTokenPreKotlin", Boolean::class.java)
+        m.isAccessible = true
+        return m.invoke(service(freshPrefs()), tokenResolved) as CycleCareCoreBridge.GooglePreDecision
+    }
+
+    private fun googleResolveTwin(prefs: AuthPreferences): CycleCareCoreBridge.GoogleResolveKind {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod("googleResolveKotlin")
+        m.isAccessible = true
+        return m.invoke(service(prefs)) as CycleCareCoreBridge.GoogleResolveKind
+    }
+
+    private fun googleAuthorizeUrlTwin(challenge: String, linkFlow: Boolean): String {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod(
+            "googleAuthorizeUrlKotlin", String::class.java, Boolean::class.java)
+        m.isAccessible = true
+        return m.invoke(service(freshPrefs()), challenge, linkFlow) as String
+    }
+
+    private fun googleLinkResponseTwin(isSuccessful: Boolean, body: String, location: String?):
+        CycleCareCoreBridge.GoogleLinkResponseDecision {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod(
+            "googleLinkResponseKotlin", Boolean::class.java, String::class.java, String::class.java)
+        m.isAccessible = true
+        return m.invoke(service(freshPrefs()), isSuccessful, body, location) as CycleCareCoreBridge.GoogleLinkResponseDecision
+    }
+
+    private fun adminResponseTwin(isSuccessful: Boolean, body: String?): Boolean {
+        val m = SupabaseAuthService::class.java.getDeclaredMethod(
+            "adminResponseKotlin", Boolean::class.java, String::class.java)
+        m.isAccessible = true
+        return m.invoke(service(freshPrefs()), isSuccessful, body) as Boolean
     }
 
     private fun codeResponseTwin(prefs: AuthPreferences, action: String, linkingGuest: Boolean,
@@ -222,6 +270,59 @@ class CallbackAuthFallbackParityTest {
     }
 
     @Test
+    fun googleSurfaceTwins() {
+        // sign-in pre: signed-in guard (isBlank: a whitespace-only userId
+        // blocks), then PROCEED.
+        val signedIn = freshPrefs().apply { userId = "u1" }
+        assertEquals(CycleCareCoreBridge.GooglePreKind.ERROR, googleSignInPreTwin(signedIn).kind)
+        assertEquals("To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.",
+            googleSignInPreTwin(signedIn).message)
+        val blankId = freshPrefs().apply { userId = " " }
+        assertEquals(CycleCareCoreBridge.GooglePreKind.ERROR, googleSignInPreTwin(blankId).kind)
+        assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleSignInPreTwin(freshPrefs()).kind)
+        // link gates.
+        assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleLinkSecurePreTwin(freshPrefs()).kind)
+        assertEquals(CycleCareCoreBridge.GooglePreKind.ERROR, googleLinkTokenPreTwin(false).kind)
+        assertEquals("Your guest session needs a refresh. Reconnect and try again.",
+            googleLinkTokenPreTwin(false).message)
+        assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleLinkTokenPreTwin(true).kind)
+        // resolve: ANONYMOUS + non-blank userId -> LINK.
+        val guest = freshPrefs().apply { accountMode = "ANONYMOUS"; userId = "anon-1" }
+        assertEquals(CycleCareCoreBridge.GoogleResolveKind.LINK, googleResolveTwin(guest))
+        assertEquals(CycleCareCoreBridge.GoogleResolveKind.SIGN_IN, googleResolveTwin(freshPrefs()))
+        // assembly shapes: sign-in keeps the raw base + /authorize; link
+        // trims, uses the identities path and appends the skip flag.
+        val signInUrl = googleAuthorizeUrlTwin("chal lenge", false)
+        assertTrue(signInUrl.contains("/authorize?provider=google"))
+        assertFalse(signInUrl.contains("identities"))
+        assertFalse(signInUrl.contains("skip_http_redirect"))
+        assertTrue(signInUrl.contains("code_challenge=chal+lenge")) // URLEncoder space -> '+'
+        val linkUrl = googleAuthorizeUrlTwin("chal", true)
+        assertTrue(linkUrl.contains("/user/identities/authorize?provider=google"))
+        assertTrue(linkUrl.endsWith("&skip_http_redirect=true"))
+        // link response: status failure -> ERROR_CLEAR; parse failure ->
+        // PARSE_THROW (no commit); non-object -> typeMismatch throw;
+        // blank url -> Location; blank both -> ERROR_CLEAR.
+        assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR,
+            googleLinkResponseTwin(false, "x", null).kind)
+        val thrown = googleLinkResponseTwin(true, "", null)
+        assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW, thrown.kind)
+        assertTrue(thrown.message!!.startsWith("End of input at character 0"))
+        val mismatch = googleLinkResponseTwin(true, "[]", null)
+        assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.PARSE_THROW, mismatch.kind)
+        assertTrue(mismatch.message!!.contains("cannot be converted to JSONObject"))
+        assertEquals("x", googleLinkResponseTwin(true, """{"url":"x"}""", null).url)
+        assertEquals("https://loc.example", googleLinkResponseTwin(true, """{"url":" "}""", "https://loc.example").url)
+        assertEquals(CycleCareCoreBridge.GoogleLinkResponseKind.ERROR_CLEAR,
+            googleLinkResponseTwin(true, "{}", null).kind)
+        // admin: trim + ignoreCase; null body -> false.
+        assertTrue(adminResponseTwin(true, " TRUE "))
+        assertFalse(adminResponseTwin(true, "false"))
+        assertFalse(adminResponseTwin(false, "true"))
+        assertFalse(adminResponseTwin(true, null))
+    }
+
+    @Test
     fun parseParamsDecoderShapes() {
         // invalid verdict -> INVALID (a real parse outcome, not drift).
         val invalid = CycleCareCoreBridge.decodeCbParseParamsDecision(
@@ -255,6 +356,10 @@ class CallbackAuthFallbackParityTest {
         assertNull(CycleCareCoreBridge.decodeCbLinkParamsDecision(JSONObject().put("ok", JSONObject()
             .put("version", 1).put("verdict", "tokens")
             .put("accessToken", "").put("refreshToken", "r"))))
+        // Google surface: unknown verdicts and missing required fields.
+        assertNull(CycleCareCoreBridge.decodeGooglePreDecision(JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "error"))))
+        assertNull(CycleCareCoreBridge.decodeGooglePreDecision(JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "maybe"))))
+        assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(JSONObject().put("ok", JSONObject().put("version", 1).put("verdict", "unknown"))))
         // Parse-params strictness: missing pairs array, non-array pair,
         // wrong pair arity and non-string members are all drift -> null.
         assertNull(CycleCareCoreBridge.decodeCbParseParamsDecision(
