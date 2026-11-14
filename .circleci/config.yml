@@ -1,0 +1,79 @@
+# CycleCare CI - for Roy's existing free CircleCI account (30,000 credits/mo, no card).
+# Scope: Cyclecare repo only, side branch only, on-demand runs only. No scheduled triggers.
+# Place at .circleci/config.yml on the target branch (repo root).
+# NOTE: the Android project lives in the Androidapp/ subdirectory of this repo,
+# so all gradle/rust paths below are prefixed with Androidapp/.
+version: 2.1
+
+jobs:
+  # Primary: Kotlin/JVM witness + unit tests (the gating requirement).
+  # packageRustCore is tolerant of a missing Rust .so (logs "Kotlin fallback will be used"),
+  # so no Rust toolchain is needed for this job.
+  unit-tests:
+    docker:
+      - image: cimg/android:2026.10.1
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Ensure SDK platform 36 + build-tools present
+          command: |
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null || true
+      - restore_cache:
+          key: cyclecare-gradle-{{ checksum "Androidapp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "Androidapp/gradle/libs.versions.toml" }}
+      - run:
+          name: Kotlin unit + witness tests (debug)
+          command: |
+            cd Androidapp
+            ./gradlew testDebugUnitTest --no-daemon --stacktrace
+      - save_cache:
+          key: cyclecare-gradle-{{ checksum "Androidapp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "Androidapp/gradle/libs.versions.toml" }}
+          paths:
+            - ~/.gradle
+      - store_test_results:
+          path: Androidapp/app/build/test-results
+      - store_artifacts:
+          path: Androidapp/app/build/reports/tests
+
+  # OPTIONAL (uncomment when an APK verification run is wanted):
+  # Builds the Rust core natively, then assembles a debug APK.
+  # assemble-debug:
+  #   docker:
+  #     - image: cimg/android:2026.10.1-ndk
+  #   resource_class: medium
+  #   steps:
+  #     - checkout
+  #     - run:
+  #         name: Install pinned Rust toolchain + Android target
+  #         command: |
+  #           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+  #           export PATH="$HOME/.cargo/bin:$PATH"
+  #           rustup toolchain install 1.99.1
+  #           rustup target add --toolchain 1.99.1 aarch64-linux-android
+  #     - run:
+  #         name: Build Rust core (pinned) + verify artifact
+  #         command: |
+  #           export PATH="$HOME/.cargo/bin:$PATH"
+  #           export ANDROID_NDK_HOME="$ANDROID_NDK"
+  #           cd Androidapp
+  #           ./rust/build-android.sh aarch64-linux-android 1.99.1
+  #           ./rust/verify-android-artifact.sh
+  #     - run:
+  #         name: Assemble debug APK
+  #         command: |
+  #           cd Androidapp
+  #           ./gradlew assembleDebug --no-daemon --stacktrace
+  #     - store_artifacts:
+  #         path: Androidapp/app/build/outputs/apk
+
+workflows:
+  cyclecare:
+    jobs:
+      # Branch guard: this workflow can only run on the designated test branch.
+      # One push of the config = the single approved test-build attempt; no manual
+      # re-dispatch, and no other branch (or future merge) can consume a run.
+      - unit-tests:
+          filters:
+            branches:
+              only: ci-20261113/circleci-test-build
