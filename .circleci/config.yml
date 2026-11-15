@@ -28,7 +28,7 @@ jobs:
           command: |
             set -e
             mkdir -p "$HOME/.gradle/init.d"
-            cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" <<'GRADLE'
+            cat > "$HOME/.gradle/init.d/cyclecare-robolectric-mirror.gradle" \<<'GRADLE'
             settingsEvaluated { settings ->
                 settings.dependencyResolutionManagement.repositories {
                     exclusiveContent {
