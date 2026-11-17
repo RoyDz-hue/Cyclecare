@@ -46,7 +46,29 @@ jobs:
       - restore_cache:
           key: cyclecare-gradle-{{ checksum "Androidapp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "Androidapp/gradle/libs.versions.toml" }}
       - run:
+          # Run #4 lost its failure evidence when the default 10-minute
+          # no-output window killed the Gradle step: log one line per test
+          # event so progress stays visible and every outcome is recorded.
+          name: Enable per-test event logging
+          command: |
+            set -e
+            mkdir -p "$HOME/.gradle/init.d"
+            cat > "$HOME/.gradle/init.d/cyclecare-test-logging.gradle" \<<'GRADLE'
+            allprojects {
+                tasks.withType(Test).configureEach {
+                    testLogging {
+                        events 'PASSED', 'FAILED', 'SKIPPED'
+                        exceptionFormat 'full'
+                        showStackTraces true
+                        showCauses true
+                    }
+                }
+            }
+            GRADLE
+      - run:
           name: Kotlin unit + witness tests (debug)
+          # Generous no-output budget on top of per-test event logging.
+          no_output_timeout: 30m
           command: |
             cd Androidapp
             ./gradlew testDebugUnitTest --no-daemon --stacktrace
@@ -58,6 +80,10 @@ jobs:
           path: Androidapp/app/build/test-results
       - store_artifacts:
           path: Androidapp/app/build/reports/tests
+      # Raw XML kept as artifacts too: run #4's evidence loss showed the
+      # test-results UI alone is not enough when a run dies early.
+      - store_artifacts:
+          path: Androidapp/app/build/test-results
 
   # OPTIONAL (uncomment when an APK verification run is wanted):
   # Builds the Rust core natively, then assembles a debug APK.
