@@ -57,7 +57,7 @@ jobs:
             allprojects {
                 tasks.withType(Test).configureEach {
                     testLogging {
-                        events 'PASSED', 'FAILED', 'SKIPPED'
+                        events 'started', 'passed', 'failed', 'skipped'
                         exceptionFormat 'full'
                         showStackTraces true
                         showCauses true
