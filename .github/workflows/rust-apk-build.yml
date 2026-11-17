@@ -7,6 +7,11 @@ name: Rust APK packaging verification
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      # One approved packaging attempt: only a push to this dedicated branch
+      # fires this workflow. No further pushes without fresh approval.
+      - gh-actions-20261117/rust-apk-build
 
 permissions:
   contents: read
