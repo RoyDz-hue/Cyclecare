@@ -271,14 +271,14 @@ class CallbackAuthFallbackParityTest {
 
     @Test
     fun googleSurfaceTwins() {
-        // sign-in pre: signed-in guard (isBlank: a whitespace-only userId
-        // blocks), then PROCEED.
+        // sign-in pre: signed-in guard (a non-blank userId blocks; a
+        // whitespace-only userId is blank and does NOT block), then PROCEED.
         val signedIn = freshPrefs().apply { userId = "u1" }
         assertEquals(CycleCareCoreBridge.GooglePreKind.ERROR, googleSignInPreTwin(signedIn).kind)
         assertEquals("To preserve this device's CycleCare data, sign out before using Google sign-in. Guest account linking through Google is not enabled yet.",
             googleSignInPreTwin(signedIn).message)
         val blankId = freshPrefs().apply { userId = " " }
-        assertEquals(CycleCareCoreBridge.GooglePreKind.ERROR, googleSignInPreTwin(blankId).kind)
+        assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleSignInPreTwin(blankId).kind)
         assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleSignInPreTwin(freshPrefs()).kind)
         // link gates.
         assertEquals(CycleCareCoreBridge.GooglePreKind.PROCEED, googleLinkSecurePreTwin(freshPrefs()).kind)

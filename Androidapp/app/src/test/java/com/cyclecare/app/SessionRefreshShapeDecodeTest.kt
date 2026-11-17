@@ -23,6 +23,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class SessionRefreshShapeDecodeTest {
 
+    private fun shapeBodyWith(key: String, value: Any?): JSONObject =
+        shapeBody().also { it.getJSONObject("ok").put(key, value) }
+
     private fun shapeBody(): JSONObject = JSONObject("""{"ok":{"version":1,"verdict":"shape","accessToken":"newacc","rotatedRefresh":"rot1","expiresAt":1767225600,"expiresIn":0,"userEmail":"a@b.c","anonymous":false}}""")
 
     @Test
@@ -60,40 +63,40 @@ class SessionRefreshShapeDecodeTest {
         // when empty; the ORIGINAL validTokenForOwner check rejects it at
         // its own execution point. Rejecting it here would change WHICH
         // check fires, so the decoder passes it through.
-        assertEquals("", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("accessToken", ""))!!.accessToken)
+        assertEquals("", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("accessToken", ""))!!.accessToken)
         // But a non-string is drift.
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("accessToken", 42)))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("accessToken", 42)))
     }
 
     @Test
     fun rotatedRefreshStringOrNullOnly() {
         // Empty string has a source shape (the later isBlank check owns it).
-        assertEquals("", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("rotatedRefresh", ""))!!.rotatedRefresh)
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("rotatedRefresh", 42)))
+        assertEquals("", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("rotatedRefresh", ""))!!.rotatedRefresh)
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("rotatedRefresh", 42)))
     }
 
     @Test
     fun expiryFieldsAreRawIntegers() {
         // 0 and negatives have source shapes (the source's later branches
         // decide); fractional and string forms are drift.
-        assertEquals(-5L, CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("expiresAt", -5))!!.expiresAt)
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("expiresAt", 1.5)))
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("expiresAt", "1767225600")))
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("expiresIn", true)))
+        assertEquals(-5L, CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("expiresAt", -5))!!.expiresAt)
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("expiresAt", 1.5)))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("expiresAt", "1767225600")))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("expiresIn", true)))
     }
 
     @Test
     fun userEmailNullOrNonemptyString() {
         // The port never emits a blank email (blank -> keep-old marker), so
         // an empty string here is drift; null is the keep-old marker.
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("userEmail", "")))
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("userEmail", 42)))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("userEmail", "")))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("userEmail", 42)))
     }
 
     @Test
     fun anonymousStringRejected() {
         // optBoolean would coerce "true" into an account-mode decision.
-        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("anonymous", "true")))
+        assertNull(CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("anonymous", "true")))
     }
 
     @Test
@@ -112,6 +115,6 @@ class SessionRefreshShapeDecodeTest {
 
     @Test
     fun extraKeysTolerated() {
-        assertEquals("newacc", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBody().put("future", 1))!!.accessToken)
+        assertEquals("newacc", CycleCareCoreBridge.decodeSessionRefreshShape(shapeBodyWith("future", 1))!!.accessToken)
     }
 }
