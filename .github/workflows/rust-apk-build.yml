@@ -1,0 +1,81 @@
+# CycleCare Rust core APK packaging verification (Route A port to GitHub Actions).
+# Scope: manual dispatch only, one approved packaging attempt. Builds the REAL
+# Rust cdylib (pinned toolchain + NDK per repo contract) and the debug APK with
+# the repo's own fail-closed gates. Debug-signed diagnostics only: no release,
+# no distribution, no device install.
+name: Rust APK packaging verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-apk-build
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install pinned Rust toolchain (1.99.1) + aarch64 target
+        run: |
+          set -e
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add --toolchain 1.99.1 aarch64-linux-android
+
+      - name: Install pinned Android NDK (28.2.13676358, repo contract) + accept SDK licenses
+        run: |
+          set -e
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.0.0"
+          # Fail closed: the exact pinned NDK must exist, no fallback to another version.
+          test -d "$ANDROID_HOME/ndk/28.2.13676358"
+
+      - name: Build Rust core cdylib (aarch64, pinned, NDK clang API 24)
+        run: |
+          set -e
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          # Fail-closed freshness contract for verify-android-artifact.sh:
+          # wipe the triple's target dir AND record the gate start.
+          mkdir -p build-logs
+          rm -rf Androidapp/rust/core-ffi/target/aarch64-linux-android
+          date +%s > build-logs/.gate-start
+          Androidapp/rust/build-android.sh aarch64-linux-android 1.99.1
+
+      - name: Gate 1 - verify raw native artifact (16KB alignment, JNI exports)
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          bash Androidapp/rust/verify-android-artifact.sh aarch64-linux-android "$ANDROID_NDK_HOME" build-logs/rust-artifact.sha256
+
+      - name: Assemble debug APK
+        run: |
+          cd Androidapp
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Gate 2 - verify FINAL packaged APK native bytes + DEX bridge
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          ls Androidapp/app/build/outputs/apk/debug/
+          bash Androidapp/rust/verify-apk-rust-content.sh \
+            Androidapp/app/build/outputs/apk/debug/app-debug.apk \
+            build-logs/rust-artifact.sha256 "$ANDROID_NDK_HOME" build-logs/apk-record.txt
+
+      - name: Upload APK + build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-apk-build-${{ github.run_id }}
+          path: |
+            Androidapp/app/build/outputs/apk
+            build-logs
